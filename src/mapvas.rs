@@ -71,18 +71,7 @@ impl MapVas {
             ..
           } => {
             if self.dragging {
-              let p0 = self
-                .canvas
-                .transform()
-                .inversed()
-                .transform_point(self.mousex, self.mousey);
-              let p1 = self
-                .canvas
-                .transform()
-                .inversed()
-                .transform_point(position.x as f32, position.y as f32);
-
-              self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
+                self.translate(position.x as f32, position.y as f32 ,  self.mousex, self.mousey );
             }
 
             self.mousex = position.x as f32;
@@ -338,4 +327,22 @@ impl MapVas {
       .expect("Something went wrong when adding image.");
     self.loaded_images.insert(tile, image_id);
   }
+
+  fn translate(&mut self, from_x:f32, from_y:f32, to_x:f32,to_y:f32){
+        let p0 = self
+                .canvas
+                .transform()
+                .inversed()
+                .transform_point(to_x, to_y);
+              let p1 = self
+                .canvas
+                .transform()
+                .inversed()
+                .transform_point(from_x,from_y);
+
+              self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
+
+
+  }
+
 }
