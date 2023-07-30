@@ -9,7 +9,7 @@ use glutin::{
   display::GetGlDisplay,
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
-use log::{debug, trace};
+use log::{debug, error, trace};
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
@@ -71,7 +71,12 @@ impl MapVas {
             ..
           } => {
             if self.dragging {
-                self.translate(position.x as f32, position.y as f32 ,  self.mousex, self.mousey );
+              self.translate(
+                self.mousex,
+                self.mousey,
+                position.x as f32,
+                position.y as f32,
+              );
             }
 
             self.mousex = position.x as f32;
@@ -82,16 +87,7 @@ impl MapVas {
             delta: winit::event::MouseScrollDelta::LineDelta(_, y),
             ..
           } => {
-            let pt = self
-              .canvas
-              .transform()
-              .inversed()
-              .transform_point(self.mousex, self.mousey);
-
-            self.canvas.translate(pt.0, pt.1);
-            self.canvas.scale(1.0 + (y / 10.0), 1.0 + (y / 10.0));
-            self.canvas.translate(-pt.0, -pt.1);
-            trace!("Mouse wheel {}", y);
+            self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
           }
           WindowEvent::KeyboardInput {
             input:
@@ -212,7 +208,19 @@ impl MapVas {
   }
 
   fn handle_key(&mut self, key: &VirtualKeyCode) {
-    debug!("Key {:?}", key);
+    const SCROLL_SPEED: f32 = 10.;
+    const ZOOM_SPEED: f32 = 1.1;
+    match key {
+      VirtualKeyCode::Left => self.translate(0., 0., SCROLL_SPEED, 0.),
+      VirtualKeyCode::Right => self.translate(SCROLL_SPEED, 0., 0., 0.),
+      VirtualKeyCode::Up => self.translate(0., 0., 0., SCROLL_SPEED),
+      VirtualKeyCode::Down => self.translate(0., SCROLL_SPEED, 0., 0.),
+      // Plus and equals to zoom in to avoid holding shift.
+      VirtualKeyCode::Equals => self.zoom_canvas_center(ZOOM_SPEED),
+      VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
+      VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
+      _ => error!("Key {:?}", key),
+    };
   }
 
   fn get_current_canvas_section(&self) -> (PixelPosition, PixelPosition, f32) {
@@ -328,21 +336,35 @@ impl MapVas {
     self.loaded_images.insert(tile, image_id);
   }
 
-  fn translate(&mut self, from_x:f32, from_y:f32, to_x:f32,to_y:f32){
-        let p0 = self
-                .canvas
-                .transform()
-                .inversed()
-                .transform_point(to_x, to_y);
-              let p1 = self
-                .canvas
-                .transform()
-                .inversed()
-                .transform_point(from_x,from_y);
+  fn translate(&mut self, to_x: f32, to_y: f32, from_x: f32, from_y: f32) {
+    let p0 = self
+      .canvas
+      .transform()
+      .inversed()
+      .transform_point(to_x, to_y);
+    let p1 = self
+      .canvas
+      .transform()
+      .inversed()
+      .transform_point(from_x, from_y);
 
-              self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
-
-
+    self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
   }
 
+  fn zoom_canvas(&mut self, factor: f32, center_x: f32, center_y: f32) {
+    let pt = self
+      .canvas
+      .transform()
+      .inversed()
+      .transform_point(center_x, center_y);
+
+    self.canvas.translate(pt.0, pt.1);
+    self.canvas.scale(factor, factor);
+    self.canvas.translate(-pt.0, -pt.1);
+  }
+
+  fn zoom_canvas_center(&mut self, factor: f32) {
+    let size = self.window.inner_size();
+    self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
+  }
 }
