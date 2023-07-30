@@ -9,11 +9,11 @@ use glutin::{
   display::GetGlDisplay,
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
-use log::{debug, error, trace};
+use log::{debug, trace};
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::num::NonZeroU32;
 use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
