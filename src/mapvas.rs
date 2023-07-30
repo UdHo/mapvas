@@ -204,7 +204,7 @@ impl MapVas {
       loaded_images: HashMap::default(),
     }
     .run(event_loop)
-    .await;
+    .await
   }
 
   fn handle_key(&mut self, key: &VirtualKeyCode) {
