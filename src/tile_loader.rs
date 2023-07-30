@@ -1,5 +1,5 @@
 use async_std::task::block_on;
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::File;
@@ -115,7 +115,7 @@ impl CachedTileLoader {
         }
       }
       Err(e) => {
-        error!("Download of tile {:?} failed with: {:?}.", tile, e);
+        debug!("Download of tile {:?} failed with: {:?}.", tile, e);
         Err(e)
       }
     }
