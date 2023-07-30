@@ -1,5 +1,8 @@
-use crate::coordinates::{tiles_in_box, PixelPosition, Tile, TileCoordinate, TILE_SIZE};
-use crate::tile_loader::{CachedTileLoader, TileGetter};
+use super::{
+  coordinates::{tiles_in_box, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
+  map_event::{MapEvent, Segment},
+  tile_loader::{CachedTileLoader, TileGetter},
+};
 use femtovg::{renderer::OpenGl, Canvas, Path};
 use femtovg::{Color, ImageFlags, ImageId, Paint};
 use glutin::prelude::*;
@@ -24,12 +27,8 @@ use winit::{
   window::Window,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MapEvent {
-  TileDataArrived { tile: Tile, data: Vec<u8> },
-}
-
 pub struct MapVas {
+  event_loop: Option<EventLoop<MapEvent>>,
   canvas: Canvas<OpenGl>,
   context: glutin::context::PossiblyCurrentContext,
   surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
@@ -40,80 +39,94 @@ pub struct MapVas {
   tile_loader: CachedTileLoader,
   event_proxy: EventLoopProxy<MapEvent>,
   loaded_images: HashMap<Tile, ImageId>,
+  paths: Vec<Path>,
 }
 
 impl MapVas {
-  async fn run(mut self, event_loop: EventLoop<MapEvent>) {
-    event_loop.run(move |event, _, control_flow| {
-      *control_flow = ControlFlow::Wait;
-
-      match event {
-        Event::LoopDestroyed => *control_flow = ControlFlow::Exit,
-        Event::WindowEvent { ref event, .. } => match event {
-          WindowEvent::Resized(physical_size) => {
-            self.surface.resize(
-              &self.context,
-              physical_size.width.try_into().unwrap(),
-              physical_size.height.try_into().unwrap(),
-            );
-          }
-          WindowEvent::MouseInput {
-            button: MouseButton::Left,
-            state,
-            ..
-          } => match state {
-            ElementState::Pressed => self.dragging = true,
-            ElementState::Released => self.dragging = false,
-          },
-          WindowEvent::CursorMoved {
-            device_id: _,
-            position,
-            ..
-          } => {
-            if self.dragging {
-              self.translate(
-                self.mousex,
-                self.mousey,
-                position.x as f32,
-                position.y as f32,
-              );
-            }
-
-            self.mousex = position.x as f32;
-            self.mousey = position.y as f32;
-          }
-          WindowEvent::MouseWheel {
-            device_id: _,
-            delta: winit::event::MouseScrollDelta::LineDelta(_, y),
-            ..
-          } => {
-            self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
-          }
-          WindowEvent::KeyboardInput {
-            input:
-              KeyboardInput {
-                virtual_keycode: Some(key),
-                state: ElementState::Pressed,
-                ..
-              },
-            ..
-          } => self.handle_key(key),
-
-          WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-          _ => trace!("Unhandled window event: {:?}", event),
-        },
-
-        Event::RedrawRequested(_) => self.redraw(),
-        Event::MainEventsCleared => self.window.request_redraw(),
-        Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
-          self.add_tile_image(tile, data)
-        }
-        _ => trace!("Unhandled event: {:?}", event),
-      }
-    });
+  pub fn get_event_proxy(&self) -> EventLoopProxy<MapEvent> {
+    self.event_proxy.clone()
   }
 
-  pub async fn new() {
+  pub async fn run(mut self) {
+    self
+      .event_loop
+      .take()
+      .expect("Main event loop started twice.")
+      .run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+          Event::LoopDestroyed => *control_flow = ControlFlow::Exit,
+          Event::WindowEvent { ref event, .. } => match event {
+            WindowEvent::Resized(physical_size) => {
+              self.surface.resize(
+                &self.context,
+                physical_size.width.try_into().unwrap(),
+                physical_size.height.try_into().unwrap(),
+              );
+            }
+            WindowEvent::MouseInput {
+              button: MouseButton::Left,
+              state,
+              ..
+            } => match state {
+              ElementState::Pressed => self.dragging = true,
+              ElementState::Released => self.dragging = false,
+            },
+            WindowEvent::CursorMoved {
+              device_id: _,
+              position,
+              ..
+            } => {
+              if self.dragging {
+                self.translate(
+                  self.mousex,
+                  self.mousey,
+                  position.x as f32,
+                  position.y as f32,
+                );
+              }
+
+              self.mousex = position.x as f32;
+              self.mousey = position.y as f32;
+            }
+            WindowEvent::MouseWheel {
+              device_id: _,
+              delta: winit::event::MouseScrollDelta::LineDelta(_, y),
+              ..
+            } => {
+              self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
+            }
+            WindowEvent::KeyboardInput {
+              input:
+                KeyboardInput {
+                  virtual_keycode: Some(key),
+                  state: ElementState::Pressed,
+                  ..
+                },
+              ..
+            } => self.handle_key(key),
+
+            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+            _ => trace!("Unhandled window event: {:?}", event),
+          },
+
+          Event::RedrawRequested(_) => self.redraw(),
+          Event::MainEventsCleared => self.window.request_redraw(),
+          Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
+            self.add_tile_image(tile, data)
+          }
+          Event::UserEvent(MapEvent::DrawEvent { segment }) => {
+            error!("{:?}", segment);
+            self.draw_segment(segment)
+          }
+          Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
+          _ => trace!("Unhandled event: {:?}", event),
+        }
+      });
+  }
+
+  pub fn new() -> MapVas {
     let event_loop = EventLoopBuilder::<MapEvent>::with_user_event().build();
     let (canvas, window, context, surface) = {
       let window_builder = WindowBuilder::new()
@@ -191,7 +204,9 @@ impl MapVas {
       (canvas, window, gl_context, surface)
     };
 
+    let event_proxy = event_loop.create_proxy();
     Self {
+      event_loop: Some(event_loop),
       canvas,
       context,
       surface,
@@ -200,11 +215,10 @@ impl MapVas {
       mousey: 0.0,
       mousex: 0.0,
       tile_loader: CachedTileLoader::default(),
-      event_proxy: event_loop.create_proxy(),
+      event_proxy,
       loaded_images: HashMap::default(),
+      paths: Vec::default(),
     }
-    .run(event_loop)
-    .await;
   }
 
   fn handle_key(&mut self, key: &VirtualKeyCode) {
@@ -287,12 +301,11 @@ impl MapVas {
 
     self.draw_map();
 
-    let mut path = Path::new();
-    path.move_to(10., 10.);
-    path.line_to(100., 200.);
-
-    let stroke = Paint::color(Color::rgb(200, 0, 0));
-    self.canvas.stroke_path(&path, &stroke);
+    let mut stroke = Paint::color(Color::rgb(200, 0, 0));
+    stroke.set_line_width(3. / self.get_zoom_factor());
+    for path in &self.paths {
+      self.canvas.stroke_path(&path, &stroke);
+    }
 
     self.canvas.save();
     self.canvas.flush();
@@ -363,8 +376,25 @@ impl MapVas {
     self.canvas.translate(-pt.0, -pt.1);
   }
 
+  fn get_zoom_factor(&self) -> f32 {
+    self.get_current_canvas_section().2
+  }
+
   fn zoom_canvas_center(&mut self, factor: f32) {
     let size = self.window.inner_size();
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
+  }
+
+  fn draw_segment(&mut self, segment: Segment) {
+    let from: PixelPosition = segment.from.into();
+    let to: PixelPosition = segment.to.into();
+    self.draw_seg(from, to)
+  }
+
+  fn draw_seg(&mut self, from: PixelPosition, to: PixelPosition) {
+    let mut path = Path::new();
+    path.move_to(from.x, from.y);
+    path.line_to(to.x, to.y);
+    self.paths.push(path);
   }
 }

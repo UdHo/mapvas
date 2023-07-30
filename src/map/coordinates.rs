@@ -1,17 +1,19 @@
-#[derive(Debug, PartialEq, Copy, Clone, serde::Serialize, serde::Deserialize)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct Coordinate {
   pub lat: f32,
   pub lon: f32,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct TileCoordinate {
   pub x: f32,
   pub y: f32,
   pub zoom: u8,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct PixelPosition {
   pub x: f32,
   pub y: f32,
@@ -39,12 +41,18 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> Vec<Tile> {
 
 const CANVAS_SIZE: f32 = 1000.;
 pub const TILE_SIZE: f32 = 250.;
+
 impl From<TileCoordinate> for PixelPosition {
   fn from(tile_coord: TileCoordinate) -> Self {
     PixelPosition {
       x: tile_coord.x * TILE_SIZE / 2f32.powi(tile_coord.zoom as i32 - 2),
       y: tile_coord.y * TILE_SIZE / 2f32.powi(tile_coord.zoom as i32 - 2),
     }
+  }
+}
+impl From<Coordinate> for PixelPosition {
+  fn from(coord: Coordinate) -> Self {
+    TileCoordinate::from_coordinate(coord, 2).into()
   }
 }
 
@@ -63,7 +71,7 @@ impl From<PixelPosition> for Coordinate {
   }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, Hash, Eq)]
+#[derive(Debug, PartialEq, Copy, Clone, Hash, Eq, Serialize, Deserialize)]
 pub struct Tile {
   pub x: u32,
   pub y: u32,
