@@ -1,34 +1,32 @@
+use crate::coordinates::Tile;
+use anyhow::Result;
 use async_std::task::block_on;
 use log::{debug, error, info, trace};
 use std::collections::HashSet;
-use std::fmt;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 
-use crate::coordinates::Tile;
+/// Errors in [`TileLoader`].
+#[derive(Error, Debug)]
+pub enum TileLoaderError {
+  #[error("Tile not availble.")]
+  TileNotAvailableError { tile: Tile },
+  #[error("Download already in progress.")]
+  TileDownloadInProgressError { tile: Tile },
+}
 
 /// The png data of a tile.
 pub type TileData = Vec<u8>;
-/// TileData wrapped in a result.
-pub type TileDataResult = std::result::Result<TileData, TileNotAvailableError>;
-
-/// A single error type returned if a [`TileLoader`] fails to retrieve the tile.
-#[derive(Debug, Clone)]
-pub struct TileNotAvailableError;
-impl fmt::Display for TileNotAvailableError {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Tile not available")
-  }
-}
 
 /// The interface the cached and non-cached tile loader.
 pub trait TileGetter {
   /// Tries to fetch the tile data asyncroneously.
-  async fn tile_data(&self, tile: &Tile) -> TileDataResult;
+  async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
   /// A blocking version of tile_data.
-  fn tile_data_blocking(&self, tile: &Tile) -> TileDataResult {
+  fn tile_data_blocking(&self, tile: &Tile) -> Result<TileData> {
     block_on(self.tile_data(tile))
   }
 }
@@ -54,11 +52,11 @@ impl TileCache {
 }
 
 impl TileGetter for TileCache {
-  async fn tile_data(&self, tile: &Tile) -> TileDataResult {
+  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     if self.path(&tile).exists() {
-      return std::fs::read(self.path(tile)).map_err(|_| TileNotAvailableError);
+      return Ok(std::fs::read(self.path(tile))?);
     }
-    Err(TileNotAvailableError)
+    Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
   }
 }
 
@@ -69,12 +67,12 @@ struct TileLoader {
 }
 
 impl TileGetter for TileLoader {
-  async fn tile_data(&self, tile: &Tile) -> TileDataResult {
+  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     {
       let mut data = self.tiles_in_download.lock().unwrap();
       let is_in_progress = data.get(tile);
       if is_in_progress.is_some() {
-        return Err(TileNotAvailableError);
+        return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
       }
       data.insert(*tile);
     }
@@ -84,13 +82,13 @@ impl TileGetter for TileLoader {
     let result = surf::get(&url)
       .recv_bytes()
       .await
-      .map_err(|_| TileNotAvailableError);
+      .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile });
 
     {
       let mut data = self.tiles_in_download.lock().unwrap();
       data.remove(tile);
     }
-    return result;
+    Ok(result?)
   }
 }
 
@@ -101,16 +99,16 @@ pub struct CachedTileLoader {
 }
 
 impl CachedTileLoader {
-  async fn get_from_cache(&self, tile: &Tile) -> TileDataResult {
+  async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
     self.tile_cache.tile_data(&tile).await
   }
 
-  async fn download(&self, tile: &Tile) -> TileDataResult {
+  async fn download(&self, tile: &Tile) -> Result<TileData> {
     match self.tile_loader.tile_data(tile).await {
       Ok(data) => {
         self.tile_cache.cache_tile(&tile, &data);
         match data.len() {
-          0..=100 => Err(TileNotAvailableError),
+          0..=100 => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
           _ => Ok(data),
         }
       }
@@ -140,7 +138,7 @@ impl Default for CachedTileLoader {
 }
 
 impl TileGetter for CachedTileLoader {
-  async fn tile_data(&self, tile: &Tile) -> TileDataResult {
+  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     trace!("Loading tile {:?}", &tile);
     match self.get_from_cache(tile).await {
       Ok(data) => Ok(data),
