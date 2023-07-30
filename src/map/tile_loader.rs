@@ -1,4 +1,4 @@
-use crate::coordinates::Tile;
+use crate::map::coordinates::Tile;
 use anyhow::Result;
 use async_std::task::block_on;
 use log::{debug, error, info, trace};
