@@ -40,7 +40,6 @@ pub struct MapVas {
   tile_loader: CachedTileLoader,
   event_proxy: EventLoopProxy<MapEvent>,
   loaded_images: HashMap<Tile, ImageId>,
-  tile_in_download: HashSet<Tile>,
 }
 
 impl MapVas {
@@ -230,13 +229,11 @@ impl MapVas {
   fn get_current_canvas_section(&self) -> (PixelPosition, PixelPosition, f32) {
     let mut trans = self.canvas.transform();
     let zoom = trans[0];
-    error!("Current transform: {:?}", trans);
     trans.inverse();
 
     let nw = trans.transform_point(0., 0.);
     let size = self.window.inner_size();
     let se = trans.transform_point(size.width as f32, size.height as f32);
-    error!("Current canvas section: {:?} {:?}", nw, se);
     (
       PixelPosition { x: nw.0, y: nw.1 },
       PixelPosition { x: se.0, y: se.1 },
@@ -250,11 +247,7 @@ impl MapVas {
     let size = self.window.inner_size();
     let vertical_tile_number = (size.height as f32 / TILE_SIZE).round();
 
-    let zoom_level = ((zoom * vertical_tile_number).log2() as i32).clamp(2, 20);
-    error!(
-      "Vertical_tile_number {}, zoom {}, zoom_level {}",
-      vertical_tile_number, zoom, zoom_level
-    );
+    let zoom_level = ((zoom * vertical_tile_number).log2() as i32).clamp(2, 19);
     let nw_tile = TileCoordinate::from_pixel_position(nw.clamp(), zoom_level as u8);
     let se_tile = TileCoordinate::from_pixel_position(se.clamp(), zoom_level as u8);
     tiles_in_box(nw_tile, se_tile)
@@ -262,15 +255,15 @@ impl MapVas {
 
   fn draw_map(&mut self) {
     let tiles = &self.get_tiles_to_draw();
-    error!("Drawing {} tiles.", tiles.len());
+    debug!("Drawing {} tiles: {:?}", tiles.len(), tiles);
     for tile in tiles {
-      let image = self.find_image_or_download(*tile);
-      if image.is_none() {
+      let found_tile_image = self.find_image_or_download(*tile);
+      if found_tile_image.is_none() {
         continue;
       }
-      let (nw, se) = tile.position();
+      let (nw, se) = found_tile_image.unwrap().0.position();
       let fill_paint = Paint::image(
-        *image.unwrap(),
+        *found_tile_image.unwrap().1,
         nw.x,
         nw.y,
         se.x - nw.x,
@@ -309,23 +302,33 @@ impl MapVas {
     self.surface.swap_buffers(&self.context).unwrap();
   }
 
-  fn find_image_or_download(&self, tile: Tile) -> Option<&ImageId> {
+  fn find_image_or_download(&self, tile: Tile) -> Option<(Tile, &ImageId)> {
     let image_id = self.loaded_images.get(&tile);
-
-    if image_id.is_none() {
-      let tile_loader = self.tile_loader.clone();
-      let event_proxy = self.event_proxy.clone();
-      tokio::spawn(async move {
-        match tile_loader.tile_data(&tile).await {
-          Ok(data) => event_proxy
-            .send_event(MapEvent::TileDataArrived { tile, data })
-            .unwrap_or_default(),
-          Err(_) => (),
+    match image_id {
+      Some(id) => Some((tile, id)),
+      None => {
+        let tile_loader = self.tile_loader.clone();
+        let event_proxy = self.event_proxy.clone();
+        tokio::spawn(async move {
+          match tile_loader.tile_data(&tile).await {
+            Ok(data) => event_proxy
+              .send_event(MapEvent::TileDataArrived { tile, data })
+              .unwrap_or_default(),
+            Err(_) => (),
+          }
+        });
+        // Load parent tile instead
+        let mut parent = tile.parent();
+        while let Some(current_tile) = parent {
+          let id = self.loaded_images.get(&current_tile);
+          match id {
+            Some(i) => return Some((current_tile, i)),
+            _ => parent = current_tile.parent(),
+          }
         }
-      });
+        None
+      }
     }
-
-    image_id
   }
 
   fn add_tile_image(&mut self, tile: Tile, data: Vec<u8>) {
