@@ -13,7 +13,7 @@ use log::{debug, trace};
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
@@ -334,8 +334,8 @@ impl MapVas {
   fn add_tile_image(&mut self, tile: Tile, data: Vec<u8>) {
     let image_id = self
       .canvas
-      .load_image_mem(&data, ImageFlags::GENERATE_MIPMAPS)
-      .expect("oops2");
+      .load_image_mem(&data, ImageFlags::empty())
+      .expect("Something went wrong when adding image.");
     self.loaded_images.insert(tile, image_id);
   }
 }

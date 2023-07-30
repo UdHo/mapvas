@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.72"
 async-std = "1.12.0"
 env_logger = "0.10.0"
 femtovg = "0.7.1"
@@ -18,5 +19,6 @@ rayon = "1.7.0"
 resource = "0.5.0"
 serde = "1.0.178"
 surf = "2.3.2"
+thiserror = "1.0.44"
 tokio = {version = "1", features = ["full"]}
 winit = "0.28.6"
