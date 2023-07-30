@@ -2,11 +2,14 @@
 #![feature(async_fn_in_trait)]
 
 use axum::{routing::post, Router};
-use map::mapvas::{MapEvent, MapVas};
+use map::mapvas::MapVas;
+use remote::serve_axum;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
 use tower_http::trace::{self, TraceLayer};
+
+use crate::map::map_event::MapEvent;
 
 pub mod map;
 pub mod remote;
@@ -48,7 +51,7 @@ async fn main() {
   let widget: MapVas = map::mapvas::MapVas::new();
   let proxy = widget.get_event_proxy();
   let app = Router::new()
-    .route("/", post(remote::serve_axum))
+    .route("/", post(serve_axum))
     .with_state(proxy.clone())
     .layer(
       TraceLayer::new_for_http()

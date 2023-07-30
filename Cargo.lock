@@ -1567,6 +1567,7 @@ dependencies = [
  "rayon",
  "resource",
  "serde",
+ "serde_json",
  "surf",
  "thiserror",
  "tokio",

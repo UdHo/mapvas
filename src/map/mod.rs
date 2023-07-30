@@ -1,3 +1,4 @@
 pub mod coordinates;
+pub mod map_event;
 pub mod mapvas;
-pub mod tile_loader;
+mod tile_loader;
