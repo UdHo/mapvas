@@ -1,10 +1,10 @@
 #![feature(async_closure)]
 #![feature(async_fn_in_trait)]
 
-use axum::{routing::get, routing::post, Router};
+use axum::{routing::post, Router};
 use map::mapvas::{MapEvent, MapVas};
-use std::{env, error::Error, net::SocketAddr, sync::Arc};
-use tokio::sync::oneshot::channel;
+use std::{net::SocketAddr};
+
 use tower_http::trace::{self, TraceLayer};
 
 pub mod map;
