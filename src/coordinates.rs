@@ -76,6 +76,17 @@ impl Tile {
     self.x <= max_tile && self.y <= max_tile
   }
 
+  pub fn parent(&self) -> Option<Self> {
+    match self.zoom {
+      0 => None,
+      _ => Some(Self {
+        x: self.x >> 1,
+        y: self.y >> 1,
+        zoom: self.zoom - 1,
+      }),
+    }
+  }
+
   pub fn position(&self) -> (PixelPosition, PixelPosition) {
     (
       PixelPosition::from(TileCoordinate {
