@@ -5,6 +5,6 @@ mod mapvas;
 mod tile_loader;
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-    mapvas::MapVas::new().await;
+  env_logger::init();
+  mapvas::MapVas::new().await;
 }
