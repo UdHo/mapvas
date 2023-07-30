@@ -3,7 +3,8 @@
 
 use axum::{routing::post, Router};
 use map::mapvas::{MapEvent, MapVas};
-use std::{net::SocketAddr};
+use std::net::SocketAddr;
+use tracing_subscriber::EnvFilter;
 
 use tower_http::trace::{self, TraceLayer};
 
@@ -40,6 +41,7 @@ async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
 async fn main() {
   tracing_subscriber::fmt()
     .with_target(false)
+    .with_env_filter(EnvFilter::from_default_env())
     .compact()
     .init();
 
