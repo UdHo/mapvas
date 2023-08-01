@@ -31,14 +31,8 @@ mod tests {
     };
 
     assert_eq!(
-      serde_json::to_string(&MapEvent::DrawEvent {
-        segment: Segment {
-          from: heinsberg,
-          to: berlin
-        }
-      })
-      .unwrap(),
-      "".to_string()
+      serde_json::to_string(&crate::MapEvent::Shutdown).unwrap(),
+      "\"Shutdown\"".to_string()
     );
   }
 }

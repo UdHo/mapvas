@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct Coordinate {
+  #[serde(alias = "latitude")]
   pub lat: f32,
+  #[serde(alias = "longitude")]
   pub lon: f32,
 }
 
