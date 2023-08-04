@@ -42,6 +42,10 @@ async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
 
 #[tokio::main]
 async fn main() {
+  let instance = single_instance::SingleInstance::new("MapVasViewer").unwrap();
+  if !instance.is_single() {
+    return;
+  }
   tracing_subscriber::fmt()
     .with_target(false)
     .with_env_filter(EnvFilter::from_default_env())
