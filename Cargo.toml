@@ -27,3 +27,7 @@ winit = "0.28.6"
 tracing = "0.1.37"
 serde_json = "1.0.104"
 single-instance = "0.3.3"
+
+[[bin]]
+name = "mapvas"
+path = "src/mapvas/main.rs"

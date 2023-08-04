@@ -2,17 +2,12 @@
 #![feature(async_fn_in_trait)]
 
 use axum::{routing::post, Router};
-use map::mapvas::MapVas;
-use remote::serve_axum;
+use mapvas::remote::serve_axum;
+use mapvas::{map::mapvas::MapVas, MapEvent};
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
 use tower_http::trace::{self, TraceLayer};
-
-use crate::map::map_event::MapEvent;
-
-pub mod map;
-pub mod remote;
 
 async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
   let ctrl_c = async {
@@ -52,7 +47,7 @@ async fn main() {
     .compact()
     .init();
 
-  let widget: MapVas = map::mapvas::MapVas::new();
+  let widget: MapVas = MapVas::new();
   let proxy = widget.get_event_proxy();
   let app = Router::new()
     .route("/", post(serve_axum))
