@@ -1,6 +1,6 @@
 use super::{
   coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
-  map_event::{MapEvent, Segment},
+  map_event::{Layer, MapEvent, Shape, Style},
   tile_loader::{CachedTileLoader, TileGetter},
 };
 use femtovg::{renderer::OpenGl, Canvas, Path};
@@ -39,7 +39,7 @@ pub struct MapVas {
   tile_loader: CachedTileLoader,
   event_proxy: EventLoopProxy<MapEvent>,
   loaded_images: HashMap<Tile, ImageId>,
-  paths: Vec<Path>,
+  layers: HashMap<String, Vec<(Path, Style)>>,
 }
 
 impl MapVas {
@@ -86,7 +86,6 @@ impl MapVas {
                   position.y as f32,
                 );
               }
-
               self.mousex = position.x as f32;
               self.mousey = position.y as f32;
             }
@@ -116,10 +115,7 @@ impl MapVas {
           Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
             self.add_tile_image(tile, data)
           }
-          Event::UserEvent(MapEvent::DrawEvent { coords }) => {
-            error!("{:?}", coords);
-            self.draw_path(&coords)
-          }
+          Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
           Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
           _ => trace!("Unhandled event: {:?}", event),
         }
@@ -217,7 +213,7 @@ impl MapVas {
       tile_loader: CachedTileLoader::default(),
       event_proxy,
       loaded_images: HashMap::default(),
-      paths: Vec::default(),
+      layers: HashMap::default(),
     }
   }
 
@@ -301,10 +297,16 @@ impl MapVas {
 
     self.draw_map();
 
-    let mut stroke = Paint::color(Color::rgb(200, 0, 0));
-    stroke.set_line_width(3. / self.get_zoom_factor());
-    for path in &self.paths {
-      self.canvas.stroke_path(&path, &stroke);
+    let line_width = 3. / self.get_zoom_factor();
+    let mut default_stroke = Paint::color(Color::rgb(200, 0, 0));
+    default_stroke.set_line_width(line_width);
+    for layer in &self.layers {
+      for (path, style) in layer.1 {
+        error!("{:?}", style);
+        let mut stroke = Paint::color(style.color.to_rgb());
+        stroke.set_line_width(3. / self.get_zoom_factor());
+        self.canvas.stroke_path(&path, &stroke);
+      }
     }
 
     self.canvas.save();
@@ -385,11 +387,7 @@ impl MapVas {
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
   }
 
-  fn draw_path(&mut self, coords: &Vec<Coordinate>) {
-    if coords.len() <= 1 {
-      return;
-    }
-
+  fn coords_to_path(coords: &Vec<Coordinate>) -> Path {
     let points: Vec<PixelPosition> = coords.iter().map(|c| PixelPosition::from(*c)).collect();
     let mut path = Path::new();
     let start = points[0];
@@ -397,11 +395,20 @@ impl MapVas {
     for to in points.iter().skip(1) {
       path.line_to(to.x, to.y);
     }
-    self.paths.push(path);
+    path
   }
 
-  // let mut path = Path::new();
-  // path.move_to(from.x, from.y);
-  // path.line_to(to.x, to.y);
-  // self.paths.push(path);
+  fn handle_layer_event(&mut self, layer: Layer) {
+    let mut paths: Vec<(Path, Style)> = layer
+      .shapes
+      .iter()
+      .map(|shape| (Self::coords_to_path(&shape.coordinates), shape.style))
+      .collect();
+
+    self
+      .layers
+      .entry(layer.id)
+      .and_modify(|l| l.append(&mut paths))
+      .or_insert(paths);
+  }
 }
