@@ -1,8 +1,6 @@
-use std::str::FromStr;
-
-use serde::{Deserialize, Serialize};
-
 use super::coordinates::{Coordinate, Tile};
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Color {
@@ -21,7 +19,7 @@ impl Color {
   pub fn to_rgb(self) -> femtovg::Color {
     match self {
       Color::Blue => femtovg::Color::rgb(0, 0, 255),
-      Color::Red => femtovg::Color::rgb(0, 0, 255),
+      Color::Red => femtovg::Color::rgb(255, 0, 0),
       Color::Green => femtovg::Color::rgb(0, 255, 0),
       Color::Yellow => femtovg::Color::rgb(255, 255, 0),
       Color::Black => femtovg::Color::rgb(0, 0, 0),
