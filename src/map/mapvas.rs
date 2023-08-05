@@ -1,5 +1,5 @@
 use super::{
-  coordinates::{tiles_in_box, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
+  coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
   map_event::{MapEvent, Segment},
   tile_loader::{CachedTileLoader, TileGetter},
 };
@@ -116,9 +116,9 @@ impl MapVas {
           Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
             self.add_tile_image(tile, data)
           }
-          Event::UserEvent(MapEvent::DrawEvent { segment }) => {
-            error!("{:?}", segment);
-            self.draw_segment(segment)
+          Event::UserEvent(MapEvent::DrawEvent { coords }) => {
+            error!("{:?}", coords);
+            self.draw_path(&coords)
           }
           Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
           _ => trace!("Unhandled event: {:?}", event),
@@ -385,16 +385,23 @@ impl MapVas {
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
   }
 
-  fn draw_segment(&mut self, segment: Segment) {
-    let from: PixelPosition = segment.from.into();
-    let to: PixelPosition = segment.to.into();
-    self.draw_seg(from, to)
-  }
+  fn draw_path(&mut self, coords: &Vec<Coordinate>) {
+    if coords.len() <= 1 {
+      return;
+    }
 
-  fn draw_seg(&mut self, from: PixelPosition, to: PixelPosition) {
+    let points: Vec<PixelPosition> = coords.iter().map(|c| PixelPosition::from(*c)).collect();
     let mut path = Path::new();
-    path.move_to(from.x, from.y);
-    path.line_to(to.x, to.y);
+    let start = points[0];
+    path.move_to(start.x, start.y);
+    for to in points.iter().skip(1) {
+      path.line_to(to.x, to.y);
+    }
     self.paths.push(path);
   }
+
+  // let mut path = Path::new();
+  // path.move_to(from.x, from.y);
+  // path.line_to(to.x, to.y);
+  // self.paths.push(path);
 }

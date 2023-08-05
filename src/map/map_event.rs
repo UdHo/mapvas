@@ -9,10 +9,11 @@ pub struct Segment {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+//#[serde(untagged)]
 pub enum MapEvent {
   Shutdown,
   TileDataArrived { tile: Tile, data: Vec<u8> },
-  DrawEvent { segment: Segment },
+  DrawEvent { coords: Vec<Coordinate> },
 }
 
 #[cfg(test)]

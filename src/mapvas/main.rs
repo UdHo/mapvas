@@ -1,7 +1,7 @@
 #![feature(async_closure)]
 #![feature(async_fn_in_trait)]
 
-use axum::{routing::post, Router};
+use axum::{routing::get, routing::post, Router};
 use mapvas::remote::serve_axum;
 use mapvas::{map::mapvas::MapVas, MapEvent};
 use std::net::SocketAddr;
@@ -35,9 +35,11 @@ async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
   let _ = proxy.send_event(MapEvent::Shutdown);
 }
 
+async fn healthcheck() {}
+
 #[tokio::main]
 async fn main() {
-  let instance = single_instance::SingleInstance::new("MapVasViewer").unwrap();
+  let instance = single_instance::SingleInstance::new("MapVas").unwrap();
   if !instance.is_single() {
     return;
   }
@@ -51,6 +53,7 @@ async fn main() {
   let proxy = widget.get_event_proxy();
   let app = Router::new()
     .route("/", post(serve_axum))
+    .route("/healtcheck", get(healthcheck))
     .with_state(proxy.clone())
     .layer(
       TraceLayer::new_for_http()
