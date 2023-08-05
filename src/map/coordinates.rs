@@ -8,6 +8,12 @@ pub struct Coordinate {
   pub lon: f32,
 }
 
+impl Coordinate {
+  pub fn is_valid(&self) -> bool {
+    -90.0 < self.lat && self.lat < 90.0 && -180.0 < self.lon && self.lon < 180.0
+  }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct TileCoordinate {
   pub x: f32,
