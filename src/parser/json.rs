@@ -14,23 +14,31 @@ use super::Parser;
 #[derive(Debug)]
 pub struct JsonParser {
   data: String,
+  color: Color,
 }
 
 impl JsonParser {
   pub fn new() -> Self {
     Self {
       data: String::new(),
+      color: Color::default(),
     }
+  }
+
+  pub fn with_color(mut self, color: Color) -> Self {
+    self.color = color;
+    self
   }
 
   fn convert_routes(&self, routes: &Vec<Route>) -> Option<crate::MapEvent> {
     let colors = Color::all();
+    let color_offset = colors.iter().position(|&c| c == self.color).unwrap_or(0);
     let mut shapes: Vec<Shape> = vec![];
     for (r_index, route) in routes.iter().enumerate() {
       for (l_index, leg) in route.legs.iter().enumerate() {
         shapes.push(
           Shape::new(leg.points.clone())
-            .with_color(colors[(2 * r_index + (l_index % 2)) % colors.len()]),
+            .with_color(colors[(color_offset + 2 * r_index + (l_index % 2)) % colors.len()]),
         );
       }
     }
@@ -46,12 +54,12 @@ impl JsonParser {
     boundary: Vec<Coordinate>,
   ) -> Option<MapEvent> {
     let mut shapes = vec![Shape::new(boundary)
-      .with_color(Color::Red)
+      .with_color(self.color)
       .with_fill(FillStyle::Transparent)];
     center.map(|c| {
       shapes.push(
         Shape::new(vec![c])
-          .with_color(Color::Red)
+          .with_color(self.color)
           .with_fill(FillStyle::Solid),
       )
     });

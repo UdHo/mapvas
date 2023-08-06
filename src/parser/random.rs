@@ -51,17 +51,7 @@ impl Parser for RandomParser {
       for _ in 1..length {
         coordinates.push(self.rand_move());
       }
-      let colors = vec![
-        Color::Blue,
-        Color::Red,
-        Color::Green,
-        Color::Yellow,
-        Color::Black,
-        Color::White,
-        Color::Grey,
-        Color::Brown,
-      ];
-
+      let colors = Color::all();
       let color = colors[self.rng.gen_range(0..colors.len())];
 
       let fill = match self.rng.gen_range(0.0..1.0) {

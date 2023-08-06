@@ -1,5 +1,9 @@
+use std::process::Stdio;
+use std::str::FromStr;
+
 use clap::Parser as CliParser;
 use log::error;
+use mapvas::map::map_event::Color;
 use mapvas::parser::{GrepParser, JsonParser, Parser, RandomParser};
 use mapvas::MapEvent;
 use single_instance::SingleInstance;
@@ -17,7 +21,10 @@ async fn spawn_mapvas_if_needed() {
     return;
   }
   drop(check);
-  let _ = std::process::Command::new("mapvas").spawn();
+  let _ = std::process::Command::new("mapvas")
+    .stderr(Stdio::null())
+    .stdout(Stdio::null())
+    .spawn();
   while let Err(_) = surf::get("http://localhost:8080/healthcheck").await {}
 }
 
@@ -27,14 +34,21 @@ struct Args {
   /// Which parser to use. Values: grep, random.
   #[arg(short, long, default_value = "grep")]
   parser: String,
+
   /// Inverts the normal lat/lon when using grep as parser.
   #[arg(short, long, default_value_t = false)]
   invert_coordinates: bool,
+
+  /// Sets the default color for most parsers. Values: red, blue, green, yellow, black,...
+  /// If you need more just look in the code.
+  #[arg(short, long, default_value = "blue")]
+  color: String,
 }
 
 #[tokio::main]
 async fn main() {
   let args = Args::parse();
+  let color = Color::from_str(&args.color).unwrap_or(Color::Green);
 
   env_logger::init();
 
@@ -44,8 +58,8 @@ async fn main() {
 
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
-    "json" => Box::new(JsonParser::new()),
-    "grep" => Box::new(GrepParser::new(args.invert_coordinates)),
+    "json" => Box::new(JsonParser::new().with_color(color)),
+    "grep" => Box::new(GrepParser::new(args.invert_coordinates).with_color(color)),
     _ => {
       error!("Unkown parser: {}. Falling back to grep.", args.parser);
       Box::new(GrepParser::new(args.invert_coordinates))

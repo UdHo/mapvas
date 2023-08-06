@@ -57,6 +57,12 @@ impl GrepParser {
       fill: FillStyle::default(),
     }
   }
+
+  pub fn with_color(mut self, color: Color) -> Self {
+    self.color = color;
+    self
+  }
+
   fn parse_color(&mut self, line: &String) {
     let color_re = RegexBuilder::new(r"(Blue|Red|Green|Yellow|Black|White|Grey|Brown)")
       .case_insensitive(true)

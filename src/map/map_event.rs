@@ -4,11 +4,11 @@ use std::str::FromStr;
 
 static ALL_COLORS: [Color; 11] = [
   Color::Blue,
-  Color::LightBlue,
+  Color::DarkBlue,
   Color::Red,
-  Color::LightRed,
+  Color::DarkRed,
   Color::Green,
-  Color::LightGreen,
+  Color::DarkGreen,
   Color::Black,
   Color::Grey,
   Color::Yellow,
@@ -20,14 +20,15 @@ static ALL_COLORS: [Color; 11] = [
 pub enum Color {
   #[default]
   Blue,
-  LightBlue,
+  DarkBlue,
   Red,
-  LightRed,
+  DarkRed,
   Green,
-  LightGreen,
+  DarkGreen,
+  Yellow,
+  DarkYellow,
   Black,
   Grey,
-  Yellow,
   White,
   Brown,
 }
@@ -36,12 +37,13 @@ impl Color {
   pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
     match self {
       Color::Blue => femtovg::Color::rgba(0, 0, 255, alpha),
-      Color::LightBlue => femtovg::Color::rgba(0, 0, 150, alpha),
+      Color::DarkBlue => femtovg::Color::rgba(0, 0, 150, alpha),
       Color::Red => femtovg::Color::rgba(255, 0, 0, alpha),
-      Color::LightRed => femtovg::Color::rgba(150, 0, 0, alpha),
+      Color::DarkRed => femtovg::Color::rgba(150, 0, 0, alpha),
       Color::Green => femtovg::Color::rgba(0, 255, 0, alpha),
-      Color::LightGreen => femtovg::Color::rgba(0, 150, 0, alpha),
+      Color::DarkGreen => femtovg::Color::rgba(0, 150, 0, alpha),
       Color::Yellow => femtovg::Color::rgba(255, 255, 0, alpha),
+      Color::DarkYellow => femtovg::Color::rgba(150, 150, 0, alpha),
       Color::Black => femtovg::Color::rgba(0, 0, 0, alpha),
       Color::White => femtovg::Color::rgba(255, 255, 255, alpha),
       Color::Grey => femtovg::Color::rgba(127, 127, 127, alpha),
@@ -64,9 +66,13 @@ impl FromStr for Color {
     let lowercase = input.to_lowercase();
     match lowercase.as_str() {
       "blue" => Ok(Color::Blue),
+      "darkblue" => Ok(Color::DarkBlue),
       "red" => Ok(Color::Red),
+      "darkred" => Ok(Color::DarkRed),
       "green" => Ok(Color::Green),
+      "darkgreen" => Ok(Color::DarkGreen),
       "yellow" => Ok(Color::Yellow),
+      "darkyellow" => Ok(Color::DarkYellow),
       "black" => Ok(Color::Black),
       "white" => Ok(Color::White),
       "grey" => Ok(Color::Grey),

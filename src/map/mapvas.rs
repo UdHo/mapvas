@@ -315,7 +315,7 @@ impl MapVas {
         let mut stroke = Paint::color(style.color.to_rgb());
         stroke.set_line_width(line_width);
         let fill = match style.fill {
-          FillStyle::Transparent => Some(Paint::color(style.color.to_rgba(120))),
+          FillStyle::Transparent => Some(Paint::color(style.color.to_rgba(50))),
           FillStyle::Solid => Some(Paint::color(style.color.to_rgb())),
           FillStyle::NoFill => None,
         };
