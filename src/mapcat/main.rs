@@ -1,25 +1,27 @@
 use std::str::FromStr;
 
-use log::debug;
+use log::{debug, error};
 use mapvas::{
   map::{
     coordinates::Coordinate,
-    map_event::{Color, Layer, Shape},
+    map_event::{Color, FillStyle, Layer, Shape},
   },
   MapEvent,
 };
 use regex::{Regex, RegexBuilder};
 use single_instance::SingleInstance;
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct GrepParser {
   invert_coordinates: bool,
   color: Color,
+  fill: FillStyle,
 }
 
 impl GrepParser {
   pub fn parse_line(&mut self, line: &String) -> Vec<Coordinate> {
     self.parse_color(line);
+    self.parse_fill(line);
     self.parse_shape(line)
   }
 
@@ -29,7 +31,21 @@ impl GrepParser {
       .build()
       .unwrap();
     for (_, [color]) in color_re.captures_iter(&line).map(|c| c.extract()) {
-      let _ = Color::from_str(color).map(|parsed_color| self.color = parsed_color);
+      let _ = Color::from_str(color)
+        .map(|parsed_color| self.color = parsed_color)
+        .map_err(|_| error!("Failed parsing {}", color));
+    }
+  }
+
+  fn parse_fill(&mut self, line: &String) {
+    let fill_re = RegexBuilder::new(r"(solid|transparent|nofill)")
+      .case_insensitive(true)
+      .build()
+      .unwrap();
+    for (_, [fill]) in fill_re.captures_iter(&line).map(|c| c.extract()) {
+      let _ = FillStyle::from_str(fill)
+        .map(|parsed_fill| self.fill = parsed_fill)
+        .map_err(|_| error!("Failed parsing {}", fill));
     }
   }
 
@@ -72,13 +88,15 @@ impl GrepParser {
   }
 }
 
-async fn send_path(coordinates: Vec<Coordinate>, color: Color) {
+async fn send_path(coordinates: Vec<Coordinate>, color: Color, fill: FillStyle) {
   if coordinates.is_empty() {
     return;
   }
 
   let mut layer = Layer::new("test".to_string());
-  layer.shapes.push(Shape::new(coordinates).with_color(color));
+  layer
+    .shapes
+    .push(Shape::new(coordinates).with_color(color).with_fill(fill));
 
   let event = MapEvent::Layer(layer);
   let _ = surf::post("http://localhost:8080/")
@@ -115,7 +133,8 @@ async fn main() {
     line.clear();
     tasks.spawn(async move {
       if !coords.is_empty() {
-        send_path(coords, parser.color).await;
+        error!("Sending {:?}", parser);
+        send_path(coords, parser.color, parser.fill).await;
       }
     });
   }

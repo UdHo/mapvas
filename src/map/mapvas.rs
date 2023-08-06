@@ -1,6 +1,8 @@
+use crate::map::map_event::FillStyle;
+
 use super::{
   coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
-  map_event::{Layer, MapEvent, Shape, Style},
+  map_event::{Layer, MapEvent, Style},
   tile_loader::{CachedTileLoader, TileGetter},
 };
 use femtovg::{renderer::OpenGl, Canvas, Path};
@@ -298,17 +300,25 @@ impl MapVas {
     self.draw_map();
 
     let line_width = 3. / self.get_zoom_factor();
-    let mut default_stroke = Paint::color(Color::rgb(200, 0, 0));
-    default_stroke.set_line_width(line_width);
     for layer in &self.layers {
       for (path, style) in layer.1 {
         error!("{:?}", style);
         let mut stroke = Paint::color(style.color.to_rgb());
-        stroke.set_line_width(3. / self.get_zoom_factor());
+        stroke.set_line_width(line_width);
         self.canvas.stroke_path(&path, &stroke);
+        match style.fill {
+          FillStyle::Transparent => {
+            let fill_paint = Paint::color(style.color.to_rgba(120));
+            self.canvas.fill_path(&path, &fill_paint)
+          }
+          FillStyle::Solid => {
+            let fill_paint = Paint::color(style.color.to_rgb());
+            self.canvas.fill_path(&path, &fill_paint)
+          }
+          FillStyle::NoFill => (),
+        }
       }
     }
-
     self.canvas.save();
     self.canvas.flush();
     self.surface.swap_buffers(&self.context).unwrap();
@@ -387,13 +397,16 @@ impl MapVas {
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
   }
 
-  fn coords_to_path(coords: &Vec<Coordinate>) -> Path {
+  fn coords_to_path(coords: &Vec<Coordinate>, close_path: bool) -> Path {
     let points: Vec<PixelPosition> = coords.iter().map(|c| PixelPosition::from(*c)).collect();
     let mut path = Path::new();
     let start = points[0];
     path.move_to(start.x, start.y);
     for to in points.iter().skip(1) {
       path.line_to(to.x, to.y);
+    }
+    if close_path {
+      path.line_to(start.x, start.y);
     }
     path
   }
@@ -402,7 +415,12 @@ impl MapVas {
     let mut paths: Vec<(Path, Style)> = layer
       .shapes
       .iter()
-      .map(|shape| (Self::coords_to_path(&shape.coordinates), shape.style))
+      .map(|shape| {
+        (
+          Self::coords_to_path(&shape.coordinates, shape.style.fill != FillStyle::NoFill),
+          shape.style,
+        )
+      })
       .collect();
 
     self
