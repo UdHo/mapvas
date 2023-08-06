@@ -30,6 +30,7 @@ single-instance = "0.3.3"
 env_logger = "0.10.0"
 regex = "1.9.1"
 rand = "0.8.5"
+clap = {version ="4.3.19", features=["derive"]}
 
 [[bin]]
 name = "mapvas"

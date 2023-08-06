@@ -41,6 +41,13 @@ impl Parser for GrepParser {
 }
 
 impl GrepParser {
+  pub fn new(invert_coordinates: bool) -> Self {
+    Self {
+      invert_coordinates,
+      color: Color::default(),
+      fill: FillStyle::default(),
+    }
+  }
   fn parse_color(&mut self, line: &String) {
     let color_re = RegexBuilder::new(r"(Blue|Red|Green|Yellow|Black|White|Grey|Brown)")
       .case_insensitive(true)
