@@ -16,17 +16,21 @@ pub enum Color {
 }
 
 impl Color {
-  pub fn to_rgb(self) -> femtovg::Color {
+  pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
     match self {
-      Color::Blue => femtovg::Color::rgb(0, 0, 255),
-      Color::Red => femtovg::Color::rgb(255, 0, 0),
-      Color::Green => femtovg::Color::rgb(0, 255, 0),
-      Color::Yellow => femtovg::Color::rgb(255, 255, 0),
-      Color::Black => femtovg::Color::rgb(0, 0, 0),
-      Color::White => femtovg::Color::rgb(255, 255, 255),
-      Color::Grey => femtovg::Color::rgb(127, 127, 127),
-      Color::Brown => femtovg::Color::rgb(153, 76, 0),
+      Color::Blue => femtovg::Color::rgba(0, 0, 255, alpha),
+      Color::Red => femtovg::Color::rgba(255, 0, 0, alpha),
+      Color::Green => femtovg::Color::rgba(0, 255, 0, alpha),
+      Color::Yellow => femtovg::Color::rgba(255, 255, 0, alpha),
+      Color::Black => femtovg::Color::rgba(0, 0, 0, alpha),
+      Color::White => femtovg::Color::rgba(255, 255, 255, alpha),
+      Color::Grey => femtovg::Color::rgba(127, 127, 127, alpha),
+      Color::Brown => femtovg::Color::rgba(153, 76, 0, alpha),
     }
+  }
+
+  pub fn to_rgb(self) -> femtovg::Color {
+    self.to_rgba(255)
   }
 }
 
@@ -61,6 +65,21 @@ pub struct Style {
   pub color: Color,
   pub fill: FillStyle,
 }
+
+impl FromStr for FillStyle {
+  type Err = ();
+  fn from_str(input: &str) -> Result<FillStyle, Self::Err> {
+    let lowercase = input.to_lowercase();
+    match lowercase.as_str() {
+      "solid" => Ok(FillStyle::Solid),
+      "transparent" => Ok(FillStyle::Transparent),
+      "nofill" => Ok(FillStyle::NoFill),
+      _ => Err(()),
+    }
+  }
+}
+
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
