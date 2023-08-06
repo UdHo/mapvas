@@ -29,6 +29,7 @@ use winit::{
   window::Window,
 };
 
+/// Keeps data for map and layer drawing.
 pub struct MapVas {
   event_loop: Option<EventLoop<MapEvent>>,
   canvas: Canvas<OpenGl>,
@@ -45,85 +46,8 @@ pub struct MapVas {
 }
 
 impl MapVas {
-  pub fn get_event_proxy(&self) -> EventLoopProxy<MapEvent> {
-    self.event_proxy.clone()
-  }
-
-  pub async fn run(mut self) {
-    self
-      .event_loop
-      .take()
-      .expect("Main event loop started twice.")
-      .run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
-
-        match event {
-          Event::LoopDestroyed => *control_flow = ControlFlow::Exit,
-          Event::WindowEvent { ref event, .. } => match event {
-            WindowEvent::Resized(physical_size) => {
-              self.surface.resize(
-                &self.context,
-                physical_size.width.try_into().unwrap(),
-                physical_size.height.try_into().unwrap(),
-              );
-            }
-            WindowEvent::MouseInput {
-              button: MouseButton::Left,
-              state,
-              ..
-            } => match state {
-              ElementState::Pressed => self.dragging = true,
-              ElementState::Released => self.dragging = false,
-            },
-            WindowEvent::CursorMoved {
-              device_id: _,
-              position,
-              ..
-            } => {
-              if self.dragging {
-                self.translate(
-                  self.mousex,
-                  self.mousey,
-                  position.x as f32,
-                  position.y as f32,
-                );
-              }
-              self.mousex = position.x as f32;
-              self.mousey = position.y as f32;
-            }
-            WindowEvent::MouseWheel {
-              device_id: _,
-              delta: winit::event::MouseScrollDelta::LineDelta(_, y),
-              ..
-            } => {
-              self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
-            }
-            WindowEvent::KeyboardInput {
-              input:
-                KeyboardInput {
-                  virtual_keycode: Some(key),
-                  state: ElementState::Pressed,
-                  ..
-                },
-              ..
-            } => self.handle_key(key),
-
-            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-            _ => trace!("Unhandled window event: {:?}", event),
-          },
-
-          Event::RedrawRequested(_) => self.redraw(),
-          Event::MainEventsCleared => self.window.request_redraw(),
-          Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
-            self.add_tile_image(tile, data)
-          }
-          Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
-          Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
-          _ => trace!("Unhandled event: {:?}", event),
-        }
-      });
-  }
-
+  /// Creates a non-running map widget.
+  /// Showing the widget requires the main event loop to be started with [Self::run()].
   pub fn new() -> MapVas {
     let event_loop = EventLoopBuilder::<MapEvent>::with_user_event().build();
     let (canvas, window, context, surface) = {
@@ -219,6 +143,87 @@ impl MapVas {
     }
   }
 
+  /// Starts running the event loop.
+  pub async fn run(mut self) {
+    self
+      .event_loop
+      .take()
+      .expect("Main event loop started twice.")
+      .run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+          Event::LoopDestroyed => *control_flow = ControlFlow::Exit,
+          Event::WindowEvent { ref event, .. } => match event {
+            WindowEvent::Resized(physical_size) => {
+              self.surface.resize(
+                &self.context,
+                physical_size.width.try_into().unwrap(),
+                physical_size.height.try_into().unwrap(),
+              );
+            }
+            WindowEvent::MouseInput {
+              button: MouseButton::Left,
+              state,
+              ..
+            } => match state {
+              ElementState::Pressed => self.dragging = true,
+              ElementState::Released => self.dragging = false,
+            },
+            WindowEvent::CursorMoved {
+              device_id: _,
+              position,
+              ..
+            } => {
+              if self.dragging {
+                self.translate(
+                  self.mousex,
+                  self.mousey,
+                  position.x as f32,
+                  position.y as f32,
+                );
+              }
+              self.mousex = position.x as f32;
+              self.mousey = position.y as f32;
+            }
+            WindowEvent::MouseWheel {
+              device_id: _,
+              delta: winit::event::MouseScrollDelta::LineDelta(_, y),
+              ..
+            } => {
+              self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
+            }
+            WindowEvent::KeyboardInput {
+              input:
+                KeyboardInput {
+                  virtual_keycode: Some(key),
+                  state: ElementState::Pressed,
+                  ..
+                },
+              ..
+            } => self.handle_key(key),
+
+            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+            _ => trace!("Unhandled window event: {:?}", event),
+          },
+
+          Event::RedrawRequested(_) => self.redraw(),
+          Event::MainEventsCleared => self.window.request_redraw(),
+          Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
+            self.add_tile_image(tile, data)
+          }
+          Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
+          Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
+          _ => trace!("Unhandled event: {:?}", event),
+        }
+      });
+  }
+
+  /// Gives a proxy that allows to send events from the outside the event loop.
+  pub fn get_event_proxy(&self) -> EventLoopProxy<MapEvent> {
+    self.event_proxy.clone()
+  }
+
   fn handle_key(&mut self, key: &VirtualKeyCode) {
     const SCROLL_SPEED: f32 = 10.;
     const ZOOM_SPEED: f32 = 1.1;
@@ -231,7 +236,7 @@ impl MapVas {
       VirtualKeyCode::Equals => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
-      _ => error!("Key {:?}", key),
+      _ => (),
     };
   }
 
@@ -264,7 +269,7 @@ impl MapVas {
 
   fn draw_map(&mut self) {
     let tiles = &self.get_tiles_to_draw();
-    debug!("Drawing {} tiles: {:?}", tiles.len(), tiles);
+    trace!("Drawing {} tiles: {:?}", tiles.len(), tiles);
     for tile in tiles {
       let found_tile_image = self.find_image_or_download(*tile);
       if found_tile_image.is_none() {
@@ -302,7 +307,6 @@ impl MapVas {
     let line_width = 3. / self.get_zoom_factor();
     for layer in &self.layers {
       for (path, style) in layer.1 {
-        error!("{:?}", style);
         let mut stroke = Paint::color(style.color.to_rgb());
         stroke.set_line_width(line_width);
         self.canvas.stroke_path(&path, &stroke);

@@ -1,5 +1,5 @@
 use mapvas::MapEvent;
-use parser::{GrepParser, Parser};
+use parser::{GrepParser, Parser, RandomParser};
 use single_instance::SingleInstance;
 
 pub mod parser;
@@ -28,7 +28,7 @@ async fn main() {
   spawn_mapvas_if_needed().await;
 
   let mut tasks = tokio::task::JoinSet::new();
-  let mut parser = GrepParser::default();
+  let mut parser = RandomParser::new();
   let stdin = async_std::io::stdin();
   let mut line = String::new();
   while let Ok(res) = stdin.read_line(&mut line).await {
