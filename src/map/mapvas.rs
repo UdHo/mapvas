@@ -14,7 +14,7 @@ use glutin::{
   display::GetGlDisplay,
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
-use log::trace;
+use log::{error, trace};
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
@@ -373,11 +373,18 @@ impl MapVas {
   }
 
   fn add_tile_image(&mut self, tile: Tile, data: Vec<u8>) {
-    let image_id = self
-      .canvas
-      .load_image_mem(&data, ImageFlags::empty())
-      .expect("Something went wrong when adding image.");
-    self.loaded_images.insert(tile, image_id);
+    let image_id = self.canvas.load_image_mem(&data, ImageFlags::empty());
+    match image_id {
+      Ok(id) => {
+        let _ = self.loaded_images.insert(tile, id);
+      }
+      Err(e) => {
+        error!(
+          "Error {:?} loading image for {:?} with {:?}.",
+          e, tile, data
+        );
+      }
+    };
   }
 
   fn translate(&mut self, to_x: f32, to_y: f32, from_x: f32, from_y: f32) {
@@ -396,6 +403,8 @@ impl MapVas {
   }
 
   fn zoom_canvas(&mut self, factor: f32, center_x: f32, center_y: f32) {
+    let current_factor = self.get_zoom_factor();
+    let corrected_factor = factor.clamp(1. / current_factor, 2.0f32.powi(15) / current_factor);
     let pt = self
       .canvas
       .transform()
@@ -403,7 +412,7 @@ impl MapVas {
       .transform_point(center_x, center_y);
 
     self.canvas.translate(pt.0, pt.1);
-    self.canvas.scale(factor, factor);
+    self.canvas.scale(corrected_factor, corrected_factor);
     self.canvas.translate(-pt.0, -pt.1);
   }
 
