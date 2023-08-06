@@ -399,7 +399,6 @@ impl MapVas {
       .transform()
       .inversed()
       .transform_point(from_x, from_y);
-
     self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
   }
 

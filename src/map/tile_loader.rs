@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-/// Errors in [`TileLoader`].
 #[derive(Error, Debug)]
 pub enum TileLoaderError {
   #[error("Tile not availble.")]
@@ -46,7 +45,7 @@ impl TileCache {
   fn cache_tile(&self, tile: &Tile, data: &Vec<u8>) {
     let succ = File::create(self.path(&tile)).map(|mut f| f.write_all(&data));
     if succ.is_err() {
-      error!("Error when writing file: {}", succ.unwrap_err());
+      debug!("Error when writing file: {}", succ.unwrap_err());
     }
   }
 }
@@ -78,7 +77,7 @@ impl TileGetter for TileLoader {
     }
 
     let url = format!("{}/{}/{}/{}.png", self.base_url, tile.zoom, tile.x, tile.y);
-    info!("Downloading {}.", url);
+    debug!("Downloading {}.", url);
     let result = surf::get(&url)
       .recv_bytes()
       .await
