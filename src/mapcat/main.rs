@@ -1,8 +1,6 @@
+use mapvas::parser::{Parser, RandomParser};
 use mapvas::MapEvent;
-use parser::{GrepParser, Parser, RandomParser};
 use single_instance::SingleInstance;
-
-pub mod parser;
 
 async fn send_event(event: &MapEvent) {
   let _ = surf::post("http://localhost:8080/")
