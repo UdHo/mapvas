@@ -40,14 +40,21 @@ impl JsonParser {
     Some(MapEvent::Layer(layer))
   }
 
-  fn convert_range(&self, center: Coordinate, boundary: Vec<Coordinate>) -> Option<MapEvent> {
-    error!("{:?} {:?}", center, boundary);
-    let shapes = vec![
-      Shape::new(boundary)
-        .with_color(Color::Red)
-        .with_fill(FillStyle::Transparent),
-      Shape::new(vec![center]).with_color(Color::Red),
-    ];
+  fn convert_range(
+    &self,
+    center: Option<Coordinate>,
+    boundary: Vec<Coordinate>,
+  ) -> Option<MapEvent> {
+    let mut shapes = vec![Shape::new(boundary)
+      .with_color(Color::Red)
+      .with_fill(FillStyle::Transparent)];
+    center.map(|c| {
+      shapes.push(
+        Shape::new(vec![c])
+          .with_color(Color::Red)
+          .with_fill(FillStyle::Solid),
+      )
+    });
     let mut layer = Layer::new("Range".to_string());
     layer.shapes = shapes;
     Some(MapEvent::Layer(layer))
@@ -66,7 +73,7 @@ struct Route {
 
 #[derive(Deserialize, Debug)]
 struct Polygon {
-  center: Coordinate,
+  center: Option<Coordinate>,
   boundary: Vec<Coordinate>,
 }
 
