@@ -1,104 +1,10 @@
-use std::str::FromStr;
-
-use log::{debug, error};
-use mapvas::{
-  map::{
-    coordinates::Coordinate,
-    map_event::{Color, FillStyle, Layer, Shape},
-  },
-  MapEvent,
-};
-use regex::{Regex, RegexBuilder};
+use mapvas::MapEvent;
+use parser::{GrepParser, Parser};
 use single_instance::SingleInstance;
 
-#[derive(Default, Copy, Clone, Debug)]
-pub struct GrepParser {
-  invert_coordinates: bool,
-  color: Color,
-  fill: FillStyle,
-}
+pub mod parser;
 
-impl GrepParser {
-  pub fn parse_line(&mut self, line: &String) -> Vec<Coordinate> {
-    self.parse_color(line);
-    self.parse_fill(line);
-    self.parse_shape(line)
-  }
-
-  fn parse_color(&mut self, line: &String) {
-    let color_re = RegexBuilder::new(r"(Blue|Red|Green|Yellow|Black|White|Grey|Brown)")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    for (_, [color]) in color_re.captures_iter(&line).map(|c| c.extract()) {
-      let _ = Color::from_str(color)
-        .map(|parsed_color| self.color = parsed_color)
-        .map_err(|_| error!("Failed parsing {}", color));
-    }
-  }
-
-  fn parse_fill(&mut self, line: &String) {
-    let fill_re = RegexBuilder::new(r"(solid|transparent|nofill)")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    for (_, [fill]) in fill_re.captures_iter(&line).map(|c| c.extract()) {
-      let _ = FillStyle::from_str(fill)
-        .map(|parsed_fill| self.fill = parsed_fill)
-        .map_err(|_| error!("Failed parsing {}", fill));
-    }
-  }
-
-  fn parse_shape(&self, line: &String) -> Vec<Coordinate> {
-    let coord_re = Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
-
-    let mut coordinates = vec![];
-    for (_, [lat, lon]) in coord_re.captures_iter(&line).map(|c| c.extract()) {
-      match self.parse_coordinate(lat, lon) {
-        Some(coord) => coordinates.push(coord),
-        None => (),
-      }
-    }
-    return coordinates;
-  }
-
-  fn parse_coordinate(&self, x: &str, y: &str) -> Option<Coordinate> {
-    let lat = match x.parse::<f32>() {
-      Ok(v) => v,
-      Err(e) => {
-        debug!("Could not parse {} {:?}.", x, e);
-        return None;
-      }
-    };
-    let lon = match y.parse::<f32>() {
-      Ok(v) => v,
-      Err(e) => {
-        debug!("Could not parse {} {:?}", y, e);
-        return None;
-      }
-    };
-    let mut coordinates = Coordinate { lat, lon };
-    if self.invert_coordinates {
-      std::mem::swap(&mut coordinates.lat, &mut coordinates.lon);
-    }
-    match coordinates.is_valid() {
-      true => Some(coordinates),
-      false => None,
-    }
-  }
-}
-
-async fn send_path(coordinates: Vec<Coordinate>, color: Color, fill: FillStyle) {
-  if coordinates.is_empty() {
-    return;
-  }
-
-  let mut layer = Layer::new("test".to_string());
-  layer
-    .shapes
-    .push(Shape::new(coordinates).with_color(color).with_fill(fill));
-
-  let event = MapEvent::Layer(layer);
+async fn send_event(event: &MapEvent) {
   let _ = surf::post("http://localhost:8080/")
     .body_json(&event)
     .expect("Cannot serialize json")
@@ -127,16 +33,27 @@ async fn main() {
   let mut line = String::new();
   while let Ok(res) = stdin.read_line(&mut line).await {
     if res == 0 {
+      match parser.finalize() {
+        Some(e) => {
+          let _ = tasks.spawn(async move {
+            send_event(&e).await;
+          });
+          ()
+        }
+        None => (),
+      }
       break;
     }
-    let coords = parser.parse_line(&line);
-    line.clear();
-    tasks.spawn(async move {
-      if !coords.is_empty() {
-        error!("Sending {:?}", parser);
-        send_path(coords, parser.color, parser.fill).await;
+    match parser.parse_line(&line) {
+      Some(e) => {
+        let _ = tasks.spawn(async move {
+          send_event(&e).await;
+        });
+        ()
       }
-    });
+      None => (),
+    }
+    line.clear();
   }
   // Waiting for all tasks to finish.
   while let Some(_) = tasks.join_next().await {}
