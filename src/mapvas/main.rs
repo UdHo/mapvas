@@ -1,6 +1,7 @@
 #![feature(async_closure)]
 #![feature(async_fn_in_trait)]
 
+use axum::extract::DefaultBodyLimit;
 use axum::{routing::get, routing::post, Router};
 use mapvas::remote::serve_axum;
 use mapvas::{map::mapvas::MapVas, MapEvent};
@@ -55,6 +56,7 @@ async fn main() {
     .route("/", post(serve_axum))
     .route("/healtcheck", get(healthcheck))
     .with_state(proxy.clone())
+    .layer(DefaultBodyLimit::max(10000000000000))
     .layer(
       TraceLayer::new_for_http()
         .make_span_with(trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
