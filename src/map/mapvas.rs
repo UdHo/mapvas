@@ -1,4 +1,4 @@
-use crate::map::map_event::FillStyle;
+use crate::map::{coordinates::CANVAS_SIZE, map_event::FillStyle};
 
 use super::{
   coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
@@ -18,8 +18,8 @@ use log::{error, trace};
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
-use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::{cmp::max, collections::HashMap};
 use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
 use winit::window::WindowBuilder;
@@ -230,7 +230,7 @@ impl MapVas {
   }
 
   fn handle_key(&mut self, key: &VirtualKeyCode) {
-    const SCROLL_SPEED: f32 = 10.;
+    const SCROLL_SPEED: f32 = 20.;
     const ZOOM_SPEED: f32 = 1.1;
     match key {
       VirtualKeyCode::Left => self.translate(0., 0., SCROLL_SPEED, 0.),
@@ -297,6 +297,7 @@ impl MapVas {
   }
 
   fn redraw(&mut self) {
+    self.fit_to_window();
     let dpi_factor = self.window.scale_factor();
     let size = self.window.inner_size();
 
@@ -400,6 +401,23 @@ impl MapVas {
       .transform_point(from_x, from_y);
 
     self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
+  }
+
+  fn fit_to_window(&mut self) {
+    let window_size = self.window.inner_size();
+    let ratio =
+      max(window_size.width, window_size.height) as f32 / (self.get_zoom_factor() * CANVAS_SIZE);
+    if ratio > 1. {
+      self.zoom_canvas_center(ratio)
+    }
+    let section = self.get_current_canvas_section();
+    self.translate(0., 0., section.0.x.min(0.), section.0.y.min(0.));
+    self.translate(
+      CANVAS_SIZE,
+      CANVAS_SIZE,
+      section.1.x.max(CANVAS_SIZE),
+      section.1.y.max(CANVAS_SIZE),
+    );
   }
 
   fn zoom_canvas(&mut self, factor: f32, center_x: f32, center_y: f32) {

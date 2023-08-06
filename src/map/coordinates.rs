@@ -47,7 +47,7 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> Vec<Tile> {
   tiles
 }
 
-const CANVAS_SIZE: f32 = 1000.;
+pub const CANVAS_SIZE: f32 = 1000.;
 pub const TILE_SIZE: f32 = 250.;
 
 impl From<TileCoordinate> for PixelPosition {
