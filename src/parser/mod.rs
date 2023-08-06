@@ -1,11 +1,4 @@
-
-
-use crate::{
-  MapEvent,
-};
-
-
-
+use crate::MapEvent;
 
 /// An interface for input parsers.
 pub trait Parser {
@@ -23,3 +16,5 @@ mod grep;
 pub use grep::GrepParser;
 mod random;
 pub use random::RandomParser;
+mod json;
+pub use json::JsonParser;

@@ -1,6 +1,6 @@
 use clap::Parser as CliParser;
 use log::error;
-use mapvas::parser::{GrepParser, Parser, RandomParser};
+use mapvas::parser::{GrepParser, JsonParser, Parser, RandomParser};
 use mapvas::MapEvent;
 use single_instance::SingleInstance;
 
@@ -44,6 +44,7 @@ async fn main() {
 
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
+    "json" => Box::new(JsonParser::new()),
     "grep" => Box::new(GrepParser::new(args.invert_coordinates)),
     _ => {
       error!("Unkown parser: {}. Falling back to grep.", args.parser);
