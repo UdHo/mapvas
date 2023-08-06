@@ -14,7 +14,7 @@ use glutin::{
   display::GetGlDisplay,
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
-use log::{trace};
+use log::trace;
 
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
@@ -29,6 +29,11 @@ use winit::{
   window::Window,
 };
 
+enum LayerElement {
+  Polyline(Path),
+  Point(PixelPosition),
+}
+
 /// Keeps data for map and layer drawing.
 pub struct MapVas {
   event_loop: Option<EventLoop<MapEvent>>,
@@ -42,7 +47,7 @@ pub struct MapVas {
   tile_loader: CachedTileLoader,
   event_proxy: EventLoopProxy<MapEvent>,
   loaded_images: HashMap<Tile, ImageId>,
-  layers: HashMap<String, Vec<(Path, Style)>>,
+  layers: HashMap<String, Vec<(LayerElement, Style)>>,
 }
 
 impl MapVas {
@@ -309,18 +314,28 @@ impl MapVas {
       for (path, style) in layer.1 {
         let mut stroke = Paint::color(style.color.to_rgb());
         stroke.set_line_width(line_width);
-        self.canvas.stroke_path(&path, &stroke);
-        match style.fill {
-          FillStyle::Transparent => {
-            let fill_paint = Paint::color(style.color.to_rgba(120));
-            self.canvas.fill_path(&path, &fill_paint)
+        let fill = match style.fill {
+          FillStyle::Transparent => Some(Paint::color(style.color.to_rgba(120))),
+          FillStyle::Solid => Some(Paint::color(style.color.to_rgb())),
+          FillStyle::NoFill => None,
+        };
+
+        match path {
+          LayerElement::Polyline(poly) => {
+            self.canvas.stroke_path(poly, &stroke);
+            fill
+              .as_ref()
+              .map(|style| self.canvas.fill_path(&poly, style));
           }
-          FillStyle::Solid => {
-            let fill_paint = Paint::color(style.color.to_rgb());
-            self.canvas.fill_path(&path, &fill_paint)
+          LayerElement::Point(point) => {
+            let mut circle = Path::new();
+            circle.circle(point.x, point.y, 3. / self.get_zoom_factor());
+            self.canvas.stroke_path(&circle, &stroke);
+            fill
+              .as_ref()
+              .map(|style| self.canvas.fill_path(&circle, style));
           }
-          FillStyle::NoFill => (),
-        }
+        };
       }
     }
     self.canvas.save();
@@ -401,27 +416,32 @@ impl MapVas {
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
   }
 
-  fn coords_to_path(coords: &Vec<Coordinate>, close_path: bool) -> Path {
+  fn coords_to_element(coords: &Vec<Coordinate>, close_path: bool) -> LayerElement {
     let points: Vec<PixelPosition> = coords.iter().map(|c| PixelPosition::from(*c)).collect();
-    let mut path = Path::new();
-    let start = points[0];
-    path.move_to(start.x, start.y);
-    for to in points.iter().skip(1) {
-      path.line_to(to.x, to.y);
+    match points.len() {
+      1 => LayerElement::Point(points[0]),
+      _ => {
+        let mut path = Path::new();
+        let start = points[0];
+        path.move_to(start.x, start.y);
+        for to in points.iter().skip(1) {
+          path.line_to(to.x, to.y);
+        }
+        if close_path {
+          path.line_to(start.x, start.y);
+        }
+        LayerElement::Polyline(path)
+      }
     }
-    if close_path {
-      path.line_to(start.x, start.y);
-    }
-    path
   }
 
   fn handle_layer_event(&mut self, layer: Layer) {
-    let mut paths: Vec<(Path, Style)> = layer
+    let mut paths: Vec<(LayerElement, Style)> = layer
       .shapes
       .iter()
       .map(|shape| {
         (
-          Self::coords_to_path(&shape.coordinates, shape.style.fill != FillStyle::NoFill),
+          Self::coords_to_element(&shape.coordinates, shape.style.fill != FillStyle::NoFill),
           shape.style,
         )
       })

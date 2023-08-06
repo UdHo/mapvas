@@ -27,6 +27,15 @@ impl Parser for GrepParser {
     let coordinates = self.parse_shape(line);
     match coordinates.len() {
       0 => None,
+      1 => {
+        let mut layer = Layer::new("test".to_string());
+        layer.shapes.push(
+          Shape::new(coordinates)
+            .with_color(self.color)
+            .with_fill(FillStyle::Solid),
+        );
+        Some(MapEvent::Layer(layer))
+      }
       _ => {
         let mut layer = Layer::new("test".to_string());
         layer.shapes.push(
