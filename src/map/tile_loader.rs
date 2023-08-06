@@ -1,7 +1,7 @@
 use crate::map::coordinates::Tile;
 use anyhow::Result;
 use async_std::task::block_on;
-use log::{debug, error, info, trace};
+use log::{debug, error, trace};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
@@ -21,7 +21,7 @@ pub enum TileLoaderError {
 pub type TileData = Vec<u8>;
 
 /// The interface the cached and non-cached tile loader.
-pub trait TileGetter {
+pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
   /// A blocking version of tile_data.
@@ -32,40 +32,47 @@ pub trait TileGetter {
 
 #[derive(Debug, Clone)]
 struct TileCache {
-  base_path: PathBuf,
+  base_path: Option<PathBuf>,
 }
 
 impl TileCache {
-  fn path(&self, tile: &Tile) -> PathBuf {
+  fn path(&self, tile: &Tile) -> Option<PathBuf> {
     self
       .base_path
-      .join(format!("{}_{}_{}.png", tile.zoom, tile.x, tile.y))
+      .clone()
+      .map(|b| b.join(format!("{}_{}_{}.png", tile.zoom, tile.x, tile.y)))
   }
 
   fn cache_tile(&self, tile: &Tile, data: &Vec<u8>) {
-    let succ = File::create(self.path(&tile)).map(|mut f| f.write_all(&data));
+    if self.base_path.is_none() {
+      return;
+    }
+    let succ = File::create(self.path(&tile).unwrap()).map(|mut f| f.write_all(&data));
     if succ.is_err() {
       debug!("Error when writing file: {}", succ.unwrap_err());
     }
   }
 }
 
-impl TileGetter for TileCache {
+impl TileLoader for TileCache {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
-    if self.path(&tile).exists() {
-      return Ok(std::fs::read(self.path(tile))?);
+    match self.path(&tile) {
+      Some(p) => match p.exists() {
+        true => Ok(std::fs::read(p)?),
+        false => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
+      },
+      None => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
     }
-    Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
   }
 }
 
 #[derive(Debug, Clone)]
-struct TileLoader {
+struct TileDownloader {
   base_url: String,
   tiles_in_download: Arc<Mutex<HashSet<Tile>>>,
 }
 
-impl TileGetter for TileLoader {
+impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     {
       let mut data = self.tiles_in_download.lock().unwrap();
@@ -94,7 +101,7 @@ impl TileGetter for TileLoader {
 #[derive(Debug, Clone)]
 pub struct CachedTileLoader {
   tile_cache: TileCache,
-  tile_loader: TileLoader,
+  tile_loader: TileDownloader,
 }
 
 impl CachedTileLoader {
@@ -111,21 +118,21 @@ impl CachedTileLoader {
           _ => Ok(data),
         }
       }
-      Err(e) => {
-        debug!("Download of tile {:?} failed with: {:?}.", tile, e);
-        Err(e)
-      }
+      Err(e) => Err(e),
     }
   }
 }
 
 impl Default for CachedTileLoader {
   fn default() -> CachedTileLoader {
-    let base_path = PathBuf::from("/home/udo/.imagecache");
+    let base_path = match std::env::var("TILECACHE") {
+      Ok(path) => Some(PathBuf::from(path)),
+      Err(_) => None,
+    };
     let tile_cache = TileCache { base_path };
 
     let base_url = String::from("https://tile.openstreetmap.org");
-    let tile_loader = TileLoader {
+    let tile_loader = TileDownloader {
       base_url,
       tiles_in_download: Arc::default(),
     };
@@ -136,9 +143,9 @@ impl Default for CachedTileLoader {
   }
 }
 
-impl TileGetter for CachedTileLoader {
+impl TileLoader for CachedTileLoader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
-    trace!("Loading tile {:?}", &tile);
+    trace!("Loading tile from file {:?}", &tile);
     match self.get_from_cache(tile).await {
       Ok(data) => Ok(data),
       Err(_) => self.download(tile).await,

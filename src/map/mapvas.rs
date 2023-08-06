@@ -3,7 +3,7 @@ use crate::map::{coordinates::CANVAS_SIZE, map_event::FillStyle};
 use super::{
   coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
   map_event::{Layer, MapEvent, Style},
-  tile_loader::{CachedTileLoader, TileGetter},
+  tile_loader::{CachedTileLoader, TileLoader},
 };
 use femtovg::{renderer::OpenGl, Canvas, Path};
 use femtovg::{Color, ImageFlags, ImageId, Paint};
