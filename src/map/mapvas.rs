@@ -20,6 +20,8 @@ use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
 use std::num::NonZeroU32;
 use std::{cmp::max, collections::HashMap};
+use tokio::sync::mpsc::{Receiver, Sender};
+use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
 use winit::window::WindowBuilder;
 use winit::{
@@ -37,6 +39,12 @@ enum LayerElement {
   Point(PixelPosition),
 }
 
+struct MapEventHander {
+  event_proxy: EventLoopProxy<MapEvent>,
+  event_receiver: Option<Receiver<MapEvent>>,
+  event_sender: Sender<MapEvent>,
+}
+
 /// Keeps data for map and layer drawing.
 pub struct MapVas {
   event_loop: Option<EventLoop<MapEvent>>,
@@ -47,8 +55,8 @@ pub struct MapVas {
   dragging: bool,
   mousex: f32,
   mousey: f32,
+  event_handler: MapEventHander,
   tile_loader: CachedTileLoader,
-  event_proxy: EventLoopProxy<MapEvent>,
   loaded_images: HashMap<Tile, ImageId>,
   layers: HashMap<String, Vec<(LayerElement, Style)>>,
 }
@@ -135,6 +143,7 @@ impl MapVas {
     };
 
     let event_proxy = event_loop.create_proxy();
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
     Self {
       event_loop: Some(event_loop),
       canvas,
@@ -145,7 +154,11 @@ impl MapVas {
       mousey: 0.0,
       mousex: 0.0,
       tile_loader: CachedTileLoader::default(),
-      event_proxy,
+      event_handler: MapEventHander {
+        event_proxy,
+        event_receiver: Some(rx),
+        event_sender: tx,
+      },
       loaded_images: HashMap::default(),
       layers: HashMap::default(),
     }
@@ -153,6 +166,8 @@ impl MapVas {
 
   /// Starts running the event loop.
   pub async fn run(mut self) {
+    self.spawn_event_handler();
+
     self
       .event_loop
       .take()
@@ -241,9 +256,23 @@ impl MapVas {
       });
   }
 
-  /// Gives a proxy that allows to send events from the outside the event loop.
-  pub fn get_event_proxy(&self) -> EventLoopProxy<MapEvent> {
-    self.event_proxy.clone()
+  /// Allows to send events from the outside the event loop.
+  pub fn get_event_sender(&self) -> Sender<MapEvent> {
+    self.event_handler.event_sender.clone()
+  }
+
+  fn spawn_event_handler(&mut self) {
+    let proxy = self.event_handler.event_proxy.clone();
+    let mut receiver = self
+      .event_handler
+      .event_receiver
+      .take()
+      .expect("Receiver taken?");
+    tokio::spawn(async move {
+      while let Some(event) = receiver.recv().await {
+        let _ = proxy.send_event(event);
+      }
+    });
   }
 
   fn handle_key(&mut self, key: &VirtualKeyCode) {
@@ -367,12 +396,12 @@ impl MapVas {
       Some(id) => Some((tile, id)),
       None => {
         let tile_loader = self.tile_loader.clone();
-        let event_proxy = self.event_proxy.clone();
+        let sender = self.get_event_sender();
         tokio::spawn(async move {
           match tile_loader.tile_data(&tile).await {
-            Ok(data) => event_proxy
-              .send_event(MapEvent::TileDataArrived { tile, data })
-              .unwrap_or_default(),
+            Ok(data) => {
+              let _ = sender.send(MapEvent::TileDataArrived { tile, data }).await;
+            }
             Err(_) => (),
           }
         });
