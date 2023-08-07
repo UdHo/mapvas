@@ -34,7 +34,7 @@ async fn shutdown_signal(sender: Sender<MapEvent>) {
       _ = terminate => {},
   }
 
-  let _ = sender.send(MapEvent::Shutdown);
+  let _ = sender.send(MapEvent::Shutdown).await;
 }
 
 async fn healthcheck() {}
