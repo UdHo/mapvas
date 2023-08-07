@@ -6,11 +6,12 @@ use axum::{routing::get, routing::post, Router};
 use mapvas::remote::serve_axum;
 use mapvas::{map::mapvas::MapVas, MapEvent};
 use std::net::SocketAddr;
+use tokio::sync::mpsc::Sender;
 use tracing_subscriber::EnvFilter;
 
 use tower_http::trace::{self, TraceLayer};
 
-async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
+async fn shutdown_signal(sender: Sender<MapEvent>) {
   let ctrl_c = async {
     tokio::signal::ctrl_c()
       .await
@@ -33,7 +34,7 @@ async fn shutdown_signal(proxy: winit::event_loop::EventLoopProxy<MapEvent>) {
       _ = terminate => {},
   }
 
-  let _ = proxy.send_event(MapEvent::Shutdown);
+  let _ = sender.send(MapEvent::Shutdown);
 }
 
 async fn healthcheck() {}
@@ -51,11 +52,11 @@ async fn main() {
     .init();
 
   let widget: MapVas = MapVas::new();
-  let proxy = widget.get_event_proxy();
+  let sender = widget.get_event_sender();
   let app = Router::new()
     .route("/", post(serve_axum))
     .route("/healtcheck", get(healthcheck))
-    .with_state(proxy.clone())
+    .with_state(sender.clone())
     .layer(DefaultBodyLimit::max(10000000000000))
     .layer(
       TraceLayer::new_for_http()
@@ -67,7 +68,7 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     let _ = axum::Server::bind(&addr)
       .serve(app.into_make_service())
-      .with_graceful_shutdown(shutdown_signal(proxy))
+      .with_graceful_shutdown(shutdown_signal(sender))
       .await;
   })());
 

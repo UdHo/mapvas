@@ -1,12 +1,12 @@
 use axum::{extract::State, Json};
-use winit::event_loop::EventLoopProxy;
+use tokio::sync::mpsc::Sender;
 
 use crate::map::map_event::MapEvent;
 
 pub async fn serve_axum(
-  State(proxy): State<EventLoopProxy<MapEvent>>,
+  State(sender): State<Sender<MapEvent>>,
   Json(event): Json<MapEvent>,
 ) -> String {
-  let _ = proxy.send_event(event);
+  let _ = sender.send(event).await;
   42.to_string()
 }
