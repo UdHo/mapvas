@@ -216,6 +216,7 @@ impl MapVas {
             } => {
               let change = match delta {
                 MouseScrollDelta::LineDelta(_, y) => *y,
+                MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => x.max(*y) as f32,
                 MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => {
                   let max_abs = {
                     if x.abs() > y.abs() {
