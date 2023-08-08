@@ -2,7 +2,7 @@ use std::process::Stdio;
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
-use log::error;
+use log::{debug, error};
 use mapvas::map::map_event::Color;
 use mapvas::parser::{GrepParser, JsonParser, Parser, RandomParser};
 use mapvas::MapEvent;
@@ -25,7 +25,9 @@ async fn spawn_mapvas_if_needed() {
     .stderr(Stdio::null())
     .stdout(Stdio::null())
     .spawn();
-  while let Err(_) = surf::get("http://localhost:8080/healthcheck").await {}
+  while let Err(e) = surf::get("http://localhost:8080/healthcheck").await {
+    debug!("Healthcheck {}", e);
+  }
 }
 
 #[derive(clap::Parser, Debug)]
