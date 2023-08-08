@@ -20,9 +20,12 @@ use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasRawWindowHandle;
 use std::num::NonZeroU32;
 use std::{cmp::max, collections::HashMap};
-use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
 use winit::window::WindowBuilder;
+use winit::{
+  dpi::PhysicalPosition,
+  event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode},
+};
 use winit::{
   event::{Event, WindowEvent},
   event_loop::{ControlFlow, EventLoop, EventLoopProxy},
@@ -193,10 +196,15 @@ impl MapVas {
             }
             WindowEvent::MouseWheel {
               device_id: _,
-              delta: winit::event::MouseScrollDelta::LineDelta(_, y),
+              delta,
               ..
             } => {
-              self.zoom_canvas(1.0 + (y / 10.0), self.mousex, self.mousey);
+              let change = match delta {
+                MouseScrollDelta::LineDelta(_, y) => *y,
+                MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => x.max(*y) as f32,
+              };
+
+              self.zoom_canvas(1.0 + (change / 10.0), self.mousex, self.mousey);
             }
             WindowEvent::KeyboardInput {
               input:
