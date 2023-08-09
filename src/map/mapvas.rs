@@ -21,7 +21,6 @@ use raw_window_handle::HasRawWindowHandle;
 use std::num::NonZeroU32;
 use std::{cmp::max, collections::HashMap};
 use tokio::sync::mpsc::{Receiver, Sender};
-use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
 use winit::window::WindowBuilder;
 use winit::{
@@ -216,7 +215,6 @@ impl MapVas {
             } => {
               let change = match delta {
                 MouseScrollDelta::LineDelta(_, y) => *y,
-                MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => x.max(*y) as f32,
                 MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => {
                   let max_abs = {
                     if x.abs() > y.abs() {
