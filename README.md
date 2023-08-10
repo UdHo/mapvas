@@ -3,7 +3,7 @@
 A **map** can**vas** showing [OSM](https://openstreetmap.org) tiles with drawing functionality.
 The repo contains two binaries, 
 - mapvas: the map window
-- mapcat: an equivalent to [cat](https://en.wikipedia.org/wiki/Cat_(Unix)) to draw polygons.
+- mapcat: an equivalent to [cat](https://en.wikipedia.org/wiki/Cat_(Unix)) to draw polygons on the map.
 
 ## Setup
 
@@ -65,6 +65,3 @@ Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.co
 ```
 curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 ```
-
-
-
