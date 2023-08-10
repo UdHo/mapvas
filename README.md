@@ -10,10 +10,11 @@ The repo contains two binaries,
 Manually:
 - Clone this repository.
 - [Install Rust](https://rustup.rs).
-- `cargo install --path .`
+- `cd mapvas ; cargo install --path .`
 
 Via cargo:
-- Will follow soon.
+- [Install Rust](https://rustup.rs).
+- `cargo install mapvas`
 
 ## Usage
 ### mapvas
