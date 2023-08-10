@@ -1,7 +1,14 @@
 [package]
 name = "mapvas"
+readme = "README.md"
+description = "A map viewer with drawing functionality"
 version = "0.1.0"
+authors = ["Udo Hoffmann <hoffmann.odu@gmail.com>"]
 edition = "2021"
+keywords = ["map", "openstreetmap", "drawing"]
+homepage = "https://github.com/UdHo/mapvas"
+repository = "https://github.com/UdHo/mapvas.git"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.72"
