@@ -12,12 +12,12 @@ use crate::{
 use super::Parser;
 
 #[derive(Debug)]
-pub struct JsonParser {
+pub struct TTJsonParser {
   data: String,
   color: Color,
 }
 
-impl JsonParser {
+impl TTJsonParser {
   pub fn new() -> Self {
     Self {
       data: String::new(),
@@ -97,7 +97,7 @@ enum JsonResponse {
   },
 }
 
-impl Parser for JsonParser {
+impl Parser for TTJsonParser {
   fn parse_line(&mut self, line: &String) -> Option<crate::MapEvent> {
     self.data += line;
     None

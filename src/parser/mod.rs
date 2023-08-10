@@ -16,5 +16,5 @@ mod grep;
 pub use grep::GrepParser;
 mod random;
 pub use random::RandomParser;
-mod json;
-pub use json::JsonParser;
+mod tt_json;
+pub use tt_json::TTJsonParser;

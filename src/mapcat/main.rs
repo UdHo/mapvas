@@ -4,7 +4,7 @@ use std::str::FromStr;
 use clap::Parser as CliParser;
 use log::{debug, error};
 use mapvas::map::map_event::Color;
-use mapvas::parser::{GrepParser, JsonParser, Parser, RandomParser};
+use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
 use mapvas::MapEvent;
 use single_instance::SingleInstance;
 
@@ -33,7 +33,7 @@ async fn spawn_mapvas_if_needed() {
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, random.
+  /// Which parser to use. Values: grep, random, ttjson.
   #[arg(short, long, default_value = "grep")]
   parser: String,
 
@@ -60,7 +60,7 @@ async fn main() {
 
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
-    "json" => Box::new(JsonParser::new().with_color(color)),
+    "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
     "grep" => Box::new(GrepParser::new(args.invert_coordinates).with_color(color)),
     _ => {
       error!("Unkown parser: {}. Falling back to grep.", args.parser);

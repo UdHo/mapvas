@@ -47,5 +47,24 @@ Examples:
 ```
     echo "50.942878, 6.957936 52.521853, 13.413015 52.373520,4.899766 blue transparent" | mapcat 
 ```
+- --invert-coordinates (-i) reverses the order of lat/lon:
+```
+    echo "13.413015, 52.521853" | mapcat -i 
+```
 
 Filling a polyline causes it to be drawn as closed polygon.
+
+#### Random (for performance testing)
+Draws a random polyline of a given length. The following command draws a random walk consisting of 20000 polylines of a random length between 1 and 10.
+```
+    echo "20000" | mapvat -p random
+``` 
+
+#### TTJson
+Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.com/routing-api/documentation/routing/routing-service).
+```
+curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
+```
+
+
+
