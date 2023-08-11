@@ -6,15 +6,19 @@ The repo contains two binaries,
 - mapcat: an equivalent to [cat](https://en.wikipedia.org/wiki/Cat_(Unix)) to draw polygons on the map.
 
 ## Setup
+Make sure you have the nighly Rust toolchain installed.
+- [Install Rust](https://rustup.rs).
+- Install the nightly toolchain
+```
+    rustup toolchain install nightly
+```
 
 Manually:
 - Clone this repository.
-- [Install Rust](https://rustup.rs).
-- `cd mapvas ; cargo install --path .`
+- `cd mapvas ; cargo +nightly install --path .`
 
 Via cargo:
-- [Install Rust](https://rustup.rs).
-- `cargo install mapvas`
+- `cargo +nightly install mapvas`
 
 ## Usage
 ### mapvas
