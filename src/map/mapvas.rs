@@ -223,11 +223,17 @@ impl MapVas {
                       *y as f32
                     }
                   };
-                  max_abs
+                  max_abs / 10.
                 }
               };
-
               self.zoom_canvas(1.0 + (change / 10.0), self.mousex, self.mousey);
+            }
+            WindowEvent::TouchpadMagnify {
+              device_id: _,
+              delta,
+              ..
+            } => {
+              self.zoom_canvas(1.0 + *delta as f32, self.mousex, self.mousey);
             }
             WindowEvent::KeyboardInput {
               input:
