@@ -64,7 +64,7 @@ impl GrepParser {
   }
 
   fn parse_color(&mut self, line: &String) {
-    let color_re = RegexBuilder::new(r"(Blue|Red|Green|Yellow|Black|White|Grey|Brown)")
+    let color_re = RegexBuilder::new(r"\b(Blue|Red|Green|Yellow|Black|White|Grey|Brown)\b")
       .case_insensitive(true)
       .build()
       .unwrap();
