@@ -48,7 +48,7 @@ Examples:
 ```
     echo "50.942878, 6.957936 random garbage words 52.521853, 13.413015 yellow spaces after the coordinate-comma is not important: 52.373520,4.899766" | mapcat 
 ```
-- draws a white transparently filled polygon Cologne-Berlin-Amsterdam note that a fill ("transparent" or "solid"):
+- draws a blue transparently filled polygon Cologne-Berlin-Amsterdam note that a fill ("transparent" or "solid"):
 ```
     echo "50.942878, 6.957936 52.521853, 13.413015 52.373520,4.899766 blue transparent" | mapcat 
 ```
@@ -62,7 +62,7 @@ Filling a polyline causes it to be drawn as closed polygon.
 #### Random (for performance testing)
 Draws a random polyline of a given length. The following command draws a random walk consisting of 20000 polylines of a random length between 1 and 10.
 ```
-    echo "20000" | mapvat -p random
+    echo "20000" | mapcat -p random
 ``` 
 
 #### TTJson
