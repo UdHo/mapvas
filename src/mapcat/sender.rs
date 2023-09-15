@@ -1,7 +1,7 @@
 use std::process::Stdio;
 
-use crate::MapEvent;
 use log::debug;
+use mapvas::MapEvent;
 use single_instance::SingleInstance;
 
 #[derive(Copy, Clone)]
