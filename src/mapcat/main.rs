@@ -1,34 +1,11 @@
-use std::process::Stdio;
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
-use log::{debug, error};
+use log::error;
 use mapvas::map::map_event::Color;
 use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
-use mapvas::MapEvent;
-use single_instance::SingleInstance;
 
-async fn send_event(event: &MapEvent) {
-  let _ = surf::post("http://localhost:8080/")
-    .body_json(&event)
-    .expect("Cannot serialize json")
-    .await;
-}
-
-async fn spawn_mapvas_if_needed() {
-  let check = SingleInstance::new("MapVas").unwrap();
-  if !check.is_single() {
-    return;
-  }
-  drop(check);
-  let _ = std::process::Command::new("mapvas")
-    .stderr(Stdio::null())
-    .stdout(Stdio::null())
-    .spawn();
-  while let Err(e) = surf::get("http://localhost:8080/healthcheck").await {
-    debug!("Healthcheck {}", e);
-  }
-}
+mod sender;
 
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -45,6 +22,9 @@ struct Args {
   /// If you need more just look in the code.
   #[arg(short, long, default_value = "blue")]
   color: String,
+  /// Sets the number of the map window input is drawn on.
+  #[arg(short, long, default_value = "0")]
+  window: u16,
 }
 
 #[tokio::main]
@@ -54,7 +34,7 @@ async fn main() {
 
   env_logger::init();
 
-  spawn_mapvas_if_needed().await;
+  let sender = sender::MapSender::new(args.window).await;
 
   let mut tasks = tokio::task::JoinSet::new();
 
@@ -68,13 +48,14 @@ async fn main() {
     }
   };
   let stdin = async_std::io::stdin();
+
   let mut line = String::new();
   while let Ok(res) = stdin.read_line(&mut line).await {
     if res == 0 {
       match parser.finalize() {
         Some(e) => {
           let _ = tasks.spawn(async move {
-            send_event(&e).await;
+            let _ = &sender.send_event(&e).await;
           });
           ()
         }
@@ -85,7 +66,7 @@ async fn main() {
     match parser.parse_line(&line) {
       Some(e) => {
         let _ = tasks.spawn(async move {
-          send_event(&e).await;
+          let _ = &sender.send_event(&e).await;
         });
         ()
       }
