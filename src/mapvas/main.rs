@@ -9,7 +9,15 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc::Sender;
 use tracing_subscriber::EnvFilter;
 
+use clap::Parser as CliParser;
 use tower_http::trace::{self, TraceLayer};
+
+#[derive(clap::Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+  #[arg(short, long, default_value = "0")]
+  window: u16,
+}
 
 async fn shutdown_signal(sender: Sender<MapEvent>) {
   let ctrl_c = async {
@@ -41,7 +49,9 @@ async fn healthcheck() {}
 
 #[tokio::main]
 async fn main() {
-  let instance = single_instance::SingleInstance::new("MapVas").unwrap();
+  let args = Args::parse();
+
+  let instance = single_instance::SingleInstance::new(&format!("MapVas: {}", args.window)).unwrap();
   if !instance.is_single() {
     return;
   }
@@ -51,7 +61,7 @@ async fn main() {
     .compact()
     .init();
 
-  let widget: MapVas = MapVas::new();
+  let widget: MapVas = MapVas::new(args.window);
   let sender = widget.get_event_sender();
   let app = Router::new()
     .route("/", post(serve_axum))
@@ -65,7 +75,7 @@ async fn main() {
     );
 
   tokio::spawn((async move || {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8080 + args.window));
     let _ = axum::Server::bind(&addr)
       .serve(app.into_make_service())
       .with_graceful_shutdown(shutdown_signal(sender))
