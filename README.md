@@ -70,3 +70,10 @@ Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.co
 ```
 curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 ```
+
+### Offline usage
+To cache tile images for future runs set the environment variable `TILECACHE` to an existing directory.
+```
+    mkdir ~/.tilecache
+    export TILECACHE=~/.tilecache
+```
