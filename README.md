@@ -71,9 +71,19 @@ Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.co
 curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 ```
 
-### Offline usage
+### Advanced usage
+#### Offline usage
 To cache tile images for future runs set the environment variable `TILECACHE` to an existing directory.
 ```
     mkdir ~/.tilecache
     export TILECACHE=~/.tilecache
 ```
+
+#### Several windows
+By default only one instance of the map viewer is opened and a second instance won't start unless you specify a window number.
+```
+    echo "52.1,12.2" | mapcat -w 1 
+```
+The default window has number 0.
+
+
