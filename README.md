@@ -17,7 +17,7 @@ Manually:
 - Clone this repository.
 - `cd mapvas ; cargo +nightly install --path .`
 
-Via cargo:
+Via cargo from [crates.io](https://crates.io/crates/mapvas):
 - `cargo +nightly install mapvas`
 
 ## Usage
