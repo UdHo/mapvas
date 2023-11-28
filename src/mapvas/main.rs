@@ -1,9 +1,9 @@
 #![feature(async_closure)]
-#![feature(async_fn_in_trait)]
 
 use axum::extract::DefaultBodyLimit;
 use axum::{routing::get, routing::post, Router};
 use mapvas::remote::serve_axum;
+use mapvas::DEFAULT_PORT;
 use mapvas::{map::mapvas::MapVas, MapEvent};
 use std::net::SocketAddr;
 use tokio::sync::mpsc::Sender;
@@ -51,10 +51,6 @@ async fn healthcheck() {}
 async fn main() {
   let args = Args::parse();
 
-  let instance = single_instance::SingleInstance::new(&format!("MapVas: {}", args.window)).unwrap();
-  if !instance.is_single() {
-    return;
-  }
   tracing_subscriber::fmt()
     .with_target(false)
     .with_env_filter(EnvFilter::from_default_env())
@@ -75,7 +71,7 @@ async fn main() {
     );
 
   tokio::spawn((async move || {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080 + args.window));
+    let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT + args.window));
     let _ = axum::Server::bind(&addr)
       .serve(app.into_make_service())
       .with_graceful_shutdown(shutdown_signal(sender))

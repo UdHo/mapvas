@@ -22,6 +22,7 @@ pub struct GrepParser {
 
 impl Parser for GrepParser {
   fn parse_line(&mut self, line: &String) -> Option<MapEvent> {
+    if let Some(event) = self.parse_clear(line) {return Some(event);}
     self.parse_color(line);
     self.parse_fill(line);
     let coordinates = self.parse_shape(line);
@@ -62,6 +63,10 @@ impl GrepParser {
     self.color = color;
     self
   }
+
+  fn parse_clear(&mut self, line: &String) -> Option<MapEvent> {
+       RegexBuilder::new("clear").case_insensitive(true).build().unwrap().is_match(line).then_some(MapEvent::Clear)
+    }
 
   fn parse_color(&mut self, line: &String) {
     let color_re = RegexBuilder::new(r"\b(Blue|Red|Green|Yellow|Black|White|Grey|Brown)\b")

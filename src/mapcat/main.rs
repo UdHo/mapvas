@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
@@ -48,7 +50,6 @@ async fn main() {
     }
   };
   let stdin = async_std::io::stdin();
-
   let mut line = String::new();
   while let Ok(res) = stdin.read_line(&mut line).await {
     if res == 0 {

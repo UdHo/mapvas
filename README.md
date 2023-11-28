@@ -56,7 +56,10 @@ Examples:
 ```
     echo "13.413015, 52.521853" | mapcat -i 
 ```
-
+- clears all elements from the map.
+```
+echo "clear" | mapcat 
+```
 Filling a polyline causes it to be drawn as closed polygon.
 
 #### Random (for performance testing)
