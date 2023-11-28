@@ -261,6 +261,10 @@ impl MapVas {
             self.add_tile_image(tile, data)
           }
           Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
+          Event::UserEvent(MapEvent::Clear) => {
+            error!("Clear event received");
+            self.layers.clear();
+          }
           Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
           _ => trace!("Unhandled event: {:?}", event),
         }

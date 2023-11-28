@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+- remove SingleInstance package.
+- add "clear" command to grep parser to remove all elements from map.
+
 ## 0.1.2
 - Support for several map windows.
 

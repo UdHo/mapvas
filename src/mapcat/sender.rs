@@ -1,8 +1,7 @@
 use std::process::Stdio;
 
 use log::debug;
-use mapvas::MapEvent;
-use single_instance::SingleInstance;
+use mapvas::{MapEvent, DEFAULT_PORT};
 
 #[derive(Copy, Clone)]
 pub struct MapSender {
@@ -17,12 +16,17 @@ impl MapSender {
   }
 
   async fn spawn_mapvas_if_needed(&self) {
-    let check = SingleInstance::new(&format!("MapVas: {}", self.window)).unwrap();
-    if !check.is_single() {
+    let window = self.window.to_string();
+    if let Ok(_) = surf::get(format!(
+      "http://localhost:{}/healthcheck",
+      self.window + DEFAULT_PORT
+    ))
+    .send()
+    .await
+    {
       return;
     }
-    drop(check);
-    let window = self.window.to_string();
+
     let _ = std::process::Command::new("mapvas")
       .arg("-w")
       .arg(&window.as_str())
@@ -31,8 +35,9 @@ impl MapSender {
       .spawn();
     while let Err(e) = surf::get(format!(
       "http://localhost:{}/healthcheck",
-      self.window + 8080
+      self.window + DEFAULT_PORT
     ))
+    .send()
     .await
     {
       debug!("Healthcheck {}", e);
@@ -40,7 +45,7 @@ impl MapSender {
   }
 
   pub async fn send_event(&self, event: &MapEvent) {
-    let _ = surf::post(format!("http://localhost:{}/", &self.window + 8080))
+    let _ = surf::post(format!("http://localhost:{}/", &self.window + DEFAULT_PORT))
       .body_json(&event)
       .expect("Cannot serialize json")
       .await;

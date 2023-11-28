@@ -149,9 +149,9 @@ impl Layer {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
 pub enum MapEvent {
   Shutdown,
+  Clear,
   TileDataArrived { tile: Tile, data: Vec<u8> },
   Layer(Layer),
 }
