@@ -63,19 +63,13 @@ pub struct MapVas {
 impl MapVas {
   /// Creates a non-running map widget.
   /// Showing the widget requires the main event loop to be started with [Self::run()].
-  pub fn new(window: u16) -> MapVas {
+  pub fn new() -> MapVas {
     let event_loop = EventLoopBuilder::<MapEvent>::with_user_event().build();
-    let window_name = if window == 0 {
-      format!("")
-    } else {
-      format!(": {}", window)
-    };
-    let title = format!("MapVas{}", window_name);
     let (canvas, window, context, surface) = {
       let window_builder = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(1000, 1000))
         .with_resizable(true)
-        .with_title(title);
+        .with_title("MapVas");
       let template = ConfigTemplateBuilder::new().with_alpha_size(8);
 
       let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));

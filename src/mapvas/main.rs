@@ -1,5 +1,4 @@
 #![feature(async_closure)]
-
 use axum::extract::DefaultBodyLimit;
 use axum::{routing::get, routing::post, Router};
 use mapvas::remote::serve_axum;
@@ -9,15 +8,7 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc::Sender;
 use tracing_subscriber::EnvFilter;
 
-use clap::Parser as CliParser;
 use tower_http::trace::{self, TraceLayer};
-
-#[derive(clap::Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-  #[arg(short, long, default_value = "0")]
-  window: u16,
-}
 
 async fn shutdown_signal(sender: Sender<MapEvent>) {
   let ctrl_c = async {
@@ -49,15 +40,13 @@ async fn healthcheck() {}
 
 #[tokio::main]
 async fn main() {
-  let args = Args::parse();
-
   tracing_subscriber::fmt()
     .with_target(false)
     .with_env_filter(EnvFilter::from_default_env())
     .compact()
     .init();
 
-  let widget: MapVas = MapVas::new(args.window);
+  let widget: MapVas = MapVas::new();
   let sender = widget.get_event_sender();
   let app = Router::new()
     .route("/", post(serve_axum))
@@ -71,7 +60,7 @@ async fn main() {
     );
 
   tokio::spawn((async move || {
-    let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT + args.window));
+    let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
     let _ = axum::Server::bind(&addr)
       .serve(app.into_make_service())
       .with_graceful_shutdown(shutdown_signal(sender))
