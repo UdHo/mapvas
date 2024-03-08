@@ -36,6 +36,7 @@ Start `mapvas` and a map window will appear.
 |--------------|-------------|
 | zoom | Use the mouse wheel or +/- |
 | moving | Left mouse and dragging or arrow keys |
+| paste | pressing v will paste the clipboard into the grep parser |
 
 ### mapcat
 

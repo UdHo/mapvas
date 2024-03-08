@@ -26,29 +26,36 @@ impl Parser for GrepParser {
     if let Some(event) = Self::parse_clear(line) {
       return Some(event);
     }
-    self.parse_color(line);
-    self.parse_fill(line);
-    let coordinates = self.parse_shape(line);
-    match coordinates.len() {
-      0 => None,
-      1 => {
-        let mut layer = Layer::new("test".to_string());
-        layer.shapes.push(
-          Shape::new(coordinates)
-            .with_color(self.color)
-            .with_fill(FillStyle::Solid),
-        );
-        Some(MapEvent::Layer(layer))
+
+    let mut layer = Layer::new("test".to_string());
+
+    for l in line.split('\n') {
+      self.parse_color(l);
+      self.parse_fill(l);
+      let coordinates = self.parse_shape(l);
+      match coordinates.len() {
+        0 => (),
+        1 => {
+          layer.shapes.push(
+            Shape::new(coordinates)
+              .with_color(self.color)
+              .with_fill(FillStyle::Solid),
+          );
+        }
+        _ => {
+          layer.shapes.push(
+            Shape::new(coordinates)
+              .with_color(self.color)
+              .with_fill(self.fill),
+          );
+        }
       }
-      _ => {
-        let mut layer = Layer::new("test".to_string());
-        layer.shapes.push(
-          Shape::new(coordinates)
-            .with_color(self.color)
-            .with_fill(self.fill),
-        );
-        Some(MapEvent::Layer(layer))
-      }
+    }
+
+    if layer.shapes.is_empty() {
+      None
+    } else {
+      Some(MapEvent::Layer(layer))
     }
   }
 }
@@ -79,10 +86,11 @@ impl GrepParser {
   }
 
   fn parse_color(&mut self, line: &str) {
-    let color_re = RegexBuilder::new(r"\b(Blue|Red|Green|Yellow|Black|White|Grey|Brown)\b")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
+    let color_re =
+      RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
     for (_, [color]) in color_re.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)

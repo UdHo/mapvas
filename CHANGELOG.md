@@ -2,6 +2,8 @@
 
 ## 0.1.x
 
+- fix dark color parsing
+- v for grep parsing from clipboard.
 - add -(f)ocus to mapcat to show all drawn elements.
 - added -(r)eset to mapcat.
 
