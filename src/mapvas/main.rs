@@ -67,5 +67,5 @@ async fn main() {
       .await;
   })());
 
-  widget.run().await;
+  widget.run();
 }

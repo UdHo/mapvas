@@ -1,7 +1,9 @@
 use crate::map::{coordinates::CANVAS_SIZE, map_event::FillStyle};
 
 use super::{
-  coordinates::{tiles_in_box, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE},
+  coordinates::{
+    tiles_in_box, BoundingBox, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE,
+  },
   map_event::{Layer, MapEvent, Style},
   tile_loader::{CachedTileLoader, TileLoader},
 };
@@ -34,10 +36,11 @@ use winit::{
 };
 
 enum LayerElement {
-  Polyline(Path),
+  Polyline(Path, BoundingBox),
   Point(PixelPosition),
 }
 
+#[allow(clippy::struct_field_names)]
 struct MapEventHander {
   event_proxy: EventLoopProxy<MapEvent>,
   event_receiver: Option<Receiver<MapEvent>>,
@@ -60,9 +63,20 @@ pub struct MapVas {
   layers: HashMap<String, Vec<(LayerElement, Style)>>,
 }
 
+impl Default for MapVas {
+  fn default() -> Self {
+    MapVas::new()
+  }
+}
+
 impl MapVas {
   /// Creates a non-running map widget.
-  /// Showing the widget requires the main event loop to be started with [Self::run()].
+  /// Showing the widget requires the main event loop to be started with ``Self::run()``.
+  ///
+  /// # Panics
+  /// if something goes terribly wrong.
+  #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+  #[must_use]
   pub fn new() -> MapVas {
     let event_loop = EventLoopBuilder::<MapEvent>::with_user_event().build();
     let (canvas, window, context, surface) = {
@@ -132,7 +146,7 @@ impl MapVas {
         .unwrap();
 
       let renderer =
-        unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s).cast()) }
           .expect("Cannot create renderer");
 
       let mut canvas = Canvas::new(renderer).expect("Cannot create canvas");
@@ -164,9 +178,12 @@ impl MapVas {
   }
 
   /// Starts running the event loop.
-  pub async fn run(mut self) {
+  ///
+  /// # Panics
+  /// If it cannot start up.
+  #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+  pub fn run(mut self) {
     self.spawn_event_handler();
-
     self
       .event_loop
       .take()
@@ -175,7 +192,6 @@ impl MapVas {
         *control_flow = ControlFlow::Wait;
 
         match event {
-          Event::LoopDestroyed => *control_flow = ControlFlow::Exit,
           Event::WindowEvent { ref event, .. } => match event {
             WindowEvent::Resized(physical_size) => {
               self.surface.resize(
@@ -188,10 +204,13 @@ impl MapVas {
               button: MouseButton::Left,
               state,
               ..
-            } => match state {
-              ElementState::Pressed => self.dragging = true,
-              ElementState::Released => self.dragging = false,
-            },
+            } => {
+              self.print_coordinate();
+              match state {
+                ElementState::Pressed => self.dragging = true,
+                ElementState::Released => self.dragging = false,
+              }
+            }
             WindowEvent::CursorMoved {
               device_id: _,
               position,
@@ -243,7 +262,7 @@ impl MapVas {
                   ..
                 },
               ..
-            } => self.handle_key(key),
+            } => self.handle_key(*key),
 
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
             _ => trace!("Unhandled window event: {:?}", event),
@@ -252,14 +271,17 @@ impl MapVas {
           Event::RedrawRequested(_) => self.redraw(),
           Event::MainEventsCleared => self.window.request_redraw(),
           Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {
-            self.add_tile_image(tile, data)
+            self.add_tile_image(tile, &data);
           }
           Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
           Event::UserEvent(MapEvent::Clear) => {
             error!("Clear event received");
             self.layers.clear();
           }
-          Event::UserEvent(MapEvent::Shutdown) => *control_flow = ControlFlow::Exit,
+          Event::LoopDestroyed | Event::UserEvent(MapEvent::Shutdown) => {
+            *control_flow = ControlFlow::Exit;
+          }
+          Event::UserEvent(MapEvent::Focus) => self.handle_focus_event(),
           _ => trace!("Unhandled event: {:?}", event),
         }
       });
@@ -284,7 +306,7 @@ impl MapVas {
     });
   }
 
-  fn handle_key(&mut self, key: &VirtualKeyCode) {
+  fn handle_key(&mut self, key: VirtualKeyCode) {
     const SCROLL_SPEED: f32 = 20.;
     const ZOOM_SPEED: f32 = 1.1;
     match key {
@@ -293,13 +315,13 @@ impl MapVas {
       VirtualKeyCode::Up => self.translate(0., 0., 0., SCROLL_SPEED),
       VirtualKeyCode::Down => self.translate(0., SCROLL_SPEED, 0., 0.),
       // Plus and equals to zoom in to avoid holding shift.
-      VirtualKeyCode::Equals => self.zoom_canvas_center(ZOOM_SPEED),
-      VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
+      VirtualKeyCode::Equals | VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
       _ => (),
     };
   }
 
+  #[allow(clippy::cast_precision_loss)]
   fn get_current_canvas_section(&self) -> (PixelPosition, PixelPosition, f32) {
     let mut trans = self.canvas.transform();
     let zoom = trans[0];
@@ -315,6 +337,23 @@ impl MapVas {
     )
   }
 
+  #[allow(unused)]
+  fn print_coordinate(&self) {
+    let (nw, _, zoom) = self.get_current_canvas_section();
+    eprintln!(
+      "{:?}",
+      PixelPosition {
+        x: nw.x + self.mousex / zoom,
+        y: nw.y + self.mousey / zoom
+      },
+    );
+  }
+
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+  )]
   fn get_tiles_to_draw(&mut self) -> Vec<Tile> {
     let (nw, se, zoom) = self.get_current_canvas_section();
 
@@ -351,6 +390,7 @@ impl MapVas {
     }
   }
 
+  #[allow(clippy::cast_possible_truncation)]
   fn redraw(&mut self) {
     self.fit_to_window();
     let dpi_factor = self.window.scale_factor();
@@ -377,19 +417,23 @@ impl MapVas {
         };
 
         match path {
-          LayerElement::Polyline(poly) => {
+          LayerElement::Polyline(poly, _) => {
             self.canvas.stroke_path(poly, &stroke);
-            fill
-              .as_ref()
-              .map(|style| self.canvas.fill_path(&poly, style));
+            if let Some(style) = fill.as_ref() {
+              self.canvas.fill_path(poly, style);
+            };
           }
           LayerElement::Point(point) => {
             let mut circle = Path::new();
-            circle.circle(point.x, point.y, 3. / self.get_zoom_factor());
+            circle.circle(
+              point.x,
+              point.y,
+              (3. / self.get_zoom_factor()).max(0.000_05),
+            );
             self.canvas.stroke_path(&circle, &stroke);
-            fill
-              .as_ref()
-              .map(|style| self.canvas.fill_path(&circle, style));
+            if let Some(style) = fill.as_ref() {
+              self.canvas.fill_path(&circle, style);
+            };
           }
         };
       }
@@ -401,38 +445,34 @@ impl MapVas {
 
   fn find_image_or_download(&self, tile: Tile) -> Option<(Tile, &ImageId)> {
     let image_id = self.loaded_images.get(&tile);
-    match image_id {
-      Some(id) => Some((tile, id)),
-      None => {
-        let tile_loader = self.tile_loader.clone();
-        let sender = self.get_event_sender();
-        tokio::spawn(async move {
-          match tile_loader.tile_data(&tile).await {
-            Ok(data) => {
-              let _ = sender.send(MapEvent::TileDataArrived { tile, data }).await;
-            }
-            Err(_) => (),
-          }
-        });
-        // Load parent tile instead
-        let mut parent = tile.parent();
-        while let Some(current_tile) = parent {
-          let id = self.loaded_images.get(&current_tile);
-          match id {
-            Some(i) => return Some((current_tile, i)),
-            _ => parent = current_tile.parent(),
-          }
+    if let Some(id) = image_id {
+      Some((tile, id))
+    } else {
+      let tile_loader = self.tile_loader.clone();
+      let sender = self.get_event_sender();
+      tokio::spawn(async move {
+        if let Ok(data) = tile_loader.tile_data(&tile).await {
+          let _ = sender.send(MapEvent::TileDataArrived { tile, data }).await;
         }
-        None
+      });
+      // Load parent tile instead
+      let mut parent = tile.parent();
+      while let Some(current_tile) = parent {
+        let id = self.loaded_images.get(&current_tile);
+        match id {
+          Some(i) => return Some((current_tile, i)),
+          _ => parent = current_tile.parent(),
+        }
       }
+      None
     }
   }
 
-  fn add_tile_image(&mut self, tile: Tile, data: Vec<u8>) {
-    let image_id = self.canvas.load_image_mem(&data, ImageFlags::empty());
+  fn add_tile_image(&mut self, tile: Tile, data: &[u8]) {
+    let image_id = self.canvas.load_image_mem(data, ImageFlags::empty());
     match image_id {
       Ok(id) => {
-        let _ = self.loaded_images.insert(tile, id);
+        self.loaded_images.insert(tile, id);
       }
       Err(e) => {
         error!(
@@ -457,12 +497,25 @@ impl MapVas {
     self.canvas.translate(p1.0 - p0.0, p1.1 - p0.1);
   }
 
+  #[allow(clippy::cast_precision_loss)]
+  fn set_center(&mut self, center: PixelPosition) {
+    let new = self.canvas.transform().transform_point(center.x, center.y);
+    let window_size = self.window.inner_size();
+    self.translate(
+      new.0,
+      new.1,
+      window_size.width as f32 / 2.,
+      window_size.height as f32 / 2.,
+    );
+  }
+
+  #[allow(clippy::cast_precision_loss)]
   fn fit_to_window(&mut self) {
     let window_size = self.window.inner_size();
     let ratio =
       max(window_size.width, window_size.height) as f32 / (self.get_zoom_factor() * CANVAS_SIZE);
     if ratio > 1. {
-      self.zoom_canvas_center(ratio)
+      self.zoom_canvas_center(ratio);
     }
     let section = self.get_current_canvas_section();
     self.translate(0., 0., section.0.x.min(0.), section.0.y.min(0.));
@@ -476,7 +529,7 @@ impl MapVas {
 
   fn zoom_canvas(&mut self, factor: f32, center_x: f32, center_y: f32) {
     let current_factor = self.get_zoom_factor();
-    let corrected_factor = factor.clamp(1. / current_factor, 2.0f32.powi(15) / current_factor);
+    let corrected_factor = factor.clamp(1. / current_factor, 2.0f32.powi(19) / current_factor);
     let pt = self
       .canvas
       .transform()
@@ -492,28 +545,56 @@ impl MapVas {
     self.get_current_canvas_section().2
   }
 
+  #[allow(clippy::cast_precision_loss)]
   fn zoom_canvas_center(&mut self, factor: f32) {
     let size = self.window.inner_size();
     self.zoom_canvas(factor, size.width as f32 / 2., size.height as f32 / 2.);
   }
 
-  fn coords_to_element(coords: &Vec<Coordinate>, close_path: bool) -> LayerElement {
-    let points: Vec<PixelPosition> = coords.iter().map(|c| PixelPosition::from(*c)).collect();
-    match points.len() {
-      1 => LayerElement::Point(points[0]),
-      _ => {
-        let mut path = Path::new();
-        let start = points[0];
-        path.move_to(start.x, start.y);
-        for to in points.iter().skip(1) {
-          path.line_to(to.x, to.y);
-        }
-        if close_path {
-          path.line_to(start.x, start.y);
-        }
-        LayerElement::Polyline(path)
+  fn coords_to_element(coords: &[Coordinate], close_path: bool) -> LayerElement {
+    let points: Vec<PixelPosition> = coords.iter().copied().map(From::from).collect();
+    if points.len() == 1 {
+      LayerElement::Point(points[0])
+    } else {
+      let mut path = Path::new();
+      let start = points[0];
+      path.move_to(start.x, start.y);
+      for to in points.iter().skip(1) {
+        path.line_to(to.x, to.y);
       }
+      if close_path {
+        path.line_to(start.x, start.y);
+      }
+      LayerElement::Polyline(path, BoundingBox::from_iterator(points))
     }
+  }
+
+  #[allow(clippy::cast_precision_loss)]
+  fn handle_focus_event(&mut self) {
+    let bb = self.bounding_box().unwrap_or(BoundingBox::new());
+    if !bb.is_valid() {
+      return;
+    }
+
+    let window_size = self.window.inner_size();
+    let requested_zoom_x = (window_size.width - 20) as f32 / (bb.width() + 0.00001);
+    let requested_zoom_y = (window_size.height - 20) as f32 / (bb.height() + 0.00001);
+    self.zoom_canvas_center(requested_zoom_x.min(requested_zoom_y) / self.get_zoom_factor());
+    self.fit_to_window();
+    self.set_center(bb.center());
+  }
+
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    let mut bb = BoundingBox::get_invalid();
+    self
+      .layers
+      .iter()
+      .flat_map(|(_, elements)| elements.iter())
+      .for_each(|e| match &e.0 {
+        LayerElement::Point(p) => bb.add_coordinate(*p),
+        LayerElement::Polyline(_, b) => bb.extend(b),
+      });
+    bb.is_valid().then_some(bb)
   }
 
   fn handle_layer_event(&mut self, layer: Layer) {

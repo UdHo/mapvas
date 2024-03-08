@@ -158,6 +158,72 @@ impl From<TileCoordinate> for Coordinate {
     }
   }
 }
+pub struct BoundingBox {
+  max_x: f32,
+  min_x: f32,
+  max_y: f32,
+  min_y: f32,
+}
+
+impl BoundingBox {
+  pub fn new() -> Self {
+    Self::get_invalid()
+  }
+
+  pub fn get_invalid() -> Self {
+    Self {
+      max_x: f32::MIN,
+      min_x: f32::MAX,
+      max_y: f32::MIN,
+      min_y: f32::MAX,
+    }
+  }
+
+  pub fn center(&self) -> PixelPosition {
+    PixelPosition {
+      x: (self.max_x + self.min_x) / 2.,
+      y: (self.max_y + self.min_y) / 2.,
+    }
+  }
+
+  pub fn from_iterator<I: IntoIterator<Item = PixelPosition>>(positions: I) -> Self {
+    let mut bb = Self::get_invalid();
+    positions.into_iter().for_each(|pos| bb.add_coordinate(pos));
+    bb
+  }
+
+  pub fn is_valid(&self) -> bool {
+    self.min_y <= self.max_y && self.min_x <= self.max_x
+  }
+
+  pub fn add_coordinate(&mut self, pp: PixelPosition) {
+    self.min_y = self.min_y.min(pp.y);
+    self.min_x = self.min_x.min(pp.x);
+    self.max_y = self.max_y.max(pp.y);
+    self.max_x = self.max_x.max(pp.x);
+  }
+
+  pub fn extend(&mut self, bb: &Self) {
+    if bb.is_valid() {
+      self.add_coordinate(PixelPosition {
+        x: bb.min_x,
+        y: bb.min_y,
+      });
+      self.add_coordinate(PixelPosition {
+        x: bb.max_x,
+        y: bb.max_y,
+      });
+    }
+  }
+
+  pub fn width(&self) -> f32 {
+    self.max_x - self.min_x
+  }
+
+  pub fn height(&self) -> f32 {
+    self.max_y - self.min_y
+  }
+}
 
 #[cfg(test)]
 mod tests {
@@ -166,13 +232,13 @@ mod tests {
   #[test]
   fn coordinate_tile_conversions() {
     let coord = Coordinate {
-      lat: 52.521977,
-      lon: 13.413305,
+      lat: 52.521_977,
+      lon: 13.413_305,
     };
 
     let tc13 = TileCoordinate::from_coordinate(coord, 13);
-    assert!(Coordinate::from(tc13).lat - coord.lat < 0.0000001);
-    assert!(Coordinate::from(tc13).lon - coord.lon < 0.0000001);
+    assert!(Coordinate::from(tc13).lat - coord.lat < 0.000_000_1);
+    assert!(Coordinate::from(tc13).lon - coord.lon < 0.000_000_1);
 
     let t13: Tile = tc13.into();
     assert_eq!(
@@ -185,8 +251,8 @@ mod tests {
     );
 
     let tc17 = TileCoordinate::from_coordinate(coord, 17);
-    assert!(Coordinate::from(tc17).lat - coord.lat < 0.0000001);
-    assert!(Coordinate::from(tc17).lon - coord.lon < 0.0000001);
+    assert!(Coordinate::from(tc17).lat - coord.lat < 0.000_000_1);
+    assert!(Coordinate::from(tc17).lon - coord.lon < 0.000_000_1);
     let t17: Tile = tc17.into();
     assert_eq!(
       t17,

@@ -6,6 +6,7 @@ use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::Color;
 use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
+use mapvas::MapEvent;
 
 mod sender;
 
@@ -24,9 +25,14 @@ struct Args {
   /// If you need more just look in the code.
   #[arg(short, long, default_value = "blue")]
   color: String,
-  /// Sets the number of the map window input is drawn on.
-  #[arg(short, long, default_value = "0")]
-  window: u16,
+
+  /// Clears the map before drawing new stuff.
+  #[arg(short, long)]
+  reset: bool,
+
+  /// Zooms to the bounding box of drawn stuff.
+  #[arg(short, long)]
+  focus: bool,
 }
 
 #[tokio::main]
@@ -36,7 +42,10 @@ async fn main() {
 
   env_logger::init();
 
-  let sender = sender::MapSender::new(args.window).await;
+  let sender = sender::MapSender::new().await;
+  if args.reset {
+    sender.send_event(&MapEvent::Clear).await;
+  }
 
   let mut tasks = tokio::task::JoinSet::new();
 
@@ -53,28 +62,28 @@ async fn main() {
   let mut line = String::new();
   while let Ok(res) = stdin.read_line(&mut line).await {
     if res == 0 {
-      match parser.finalize() {
-        Some(e) => {
-          let _ = tasks.spawn(async move {
-            let _ = &sender.send_event(&e).await;
-          });
-          ()
-        }
-        None => (),
-      }
-      break;
-    }
-    match parser.parse_line(&line) {
-      Some(e) => {
+      if let Some(e) = parser.finalize() {
         let _ = tasks.spawn(async move {
           let _ = &sender.send_event(&e).await;
         });
-        ()
       }
-      None => (),
+      break;
+    }
+    if let Some(e) = parser.parse_line(&line) {
+      let _ = tasks.spawn(async move {
+        let _ = &sender.send_event(&e).await;
+      });
     }
     line.clear();
   }
+
   // Waiting for all tasks to finish.
-  while let Some(_) = tasks.join_next().await {}
+  while (tasks.join_next().await).is_some() {}
+
+  if args.focus {
+    sender.send_event(&MapEvent::Focus).await;
+  }
+
+  // Waiting for all tasks to finish.
+  while (tasks.join_next().await).is_some() {}
 }

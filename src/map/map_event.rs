@@ -149,9 +149,13 @@ impl Layer {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Focus {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MapEvent {
   Shutdown,
   Clear,
   TileDataArrived { tile: Tile, data: Vec<u8> },
   Layer(Layer),
+  Focus,
 }
