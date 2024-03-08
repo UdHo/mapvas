@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.x
+## 0.1.4
 
 - fix dark color parsing
 - v for grep parsing from clipboard.
