@@ -61,8 +61,8 @@ async fn main() {
 
   tokio::spawn(async {
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
-    let _ = axum::Server::bind(&addr)
-      .serve(app.into_make_service())
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let _ = axum::serve(listener, app)
       .with_graceful_shutdown(shutdown_signal(sender))
       .await;
   });

@@ -11,15 +11,15 @@ repository = "https://github.com/UdHo/mapvas.git"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.80"
 async-std = "1.12.0"
-axum = "0.6.20"
+axum = "0.7.4"
 femtovg = "0.7.1"
 futures = "0.3.28"
 glutin = "0.30.10"
 glutin-winit = "0.3.0"
 image = "0.24.7"
-itertools = "0.11.0"
+itertools = "0.12.1"
 log = "0.4.20"
 raw-window-handle = "0.5.2"
 rayon = "1.8.0"
@@ -29,11 +29,11 @@ surf = "2.3.2"
 thiserror = "1.0.49"
 tokio = {version = "1.32.0", features =["full"]}
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"]}
-tower-http = { version = "0.4.4", features = ["trace"] }
+tower-http = { version = "0.5.2", features = ["trace"] }
 winit = "0.28.7"
 tracing = "0.1.37"
 serde_json = "1.0.107"
-env_logger = "0.10.0"
+env_logger = "0.11.3"
 regex = "1.9.5"
 rand = "0.8.5"
 clap = {version ="4.4.5", features=["derive"]}
