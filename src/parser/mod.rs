@@ -4,7 +4,7 @@ use crate::MapEvent;
 pub trait Parser {
   /// Handles the next line of the input. Returns optionally a map event that can be send.
   /// * `line` - The next line to parse.
-  fn parse_line(&mut self, line: &String) -> Option<MapEvent>;
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent>;
   /// Is called when the complete input has been parsed.
   /// For parses that parse a complete document, e.g. a json parser it returns the result.
   fn finalize(&self) -> Option<MapEvent> {

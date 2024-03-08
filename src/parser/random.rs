@@ -10,11 +10,20 @@ use crate::{
 
 use super::Parser;
 
+#[allow(clippy::module_name_repetitions)]
 pub struct RandomParser {
   rng: ThreadRng,
   coordinate: Coordinate,
 }
+
+impl Default for RandomParser {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl RandomParser {
+  #[must_use]
   pub fn new() -> Self {
     let mut rng = rand::thread_rng();
     let coordinate = Self::rand_coordinate(&mut rng);
@@ -38,11 +47,8 @@ impl RandomParser {
   }
 }
 impl Parser for RandomParser {
-  fn parse_line(&mut self, line: &String) -> Option<MapEvent> {
-    let steps = match line.trim().parse::<u32>() {
-      Ok(s) => s,
-      Err(_) => 1,
-    };
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    let steps = line.trim().parse::<u32>().unwrap_or(1);
     let mut layer = Layer::new("test".to_string());
 
     for _ in 0..=steps {

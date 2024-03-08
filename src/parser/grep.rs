@@ -13,6 +13,7 @@ use crate::{
 
 use super::Parser;
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Default, Copy, Clone, Debug)]
 pub struct GrepParser {
   invert_coordinates: bool,
@@ -21,8 +22,10 @@ pub struct GrepParser {
 }
 
 impl Parser for GrepParser {
-  fn parse_line(&mut self, line: &String) -> Option<MapEvent> {
-    if let Some(event) = self.parse_clear(line) {return Some(event);}
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    if let Some(event) = Self::parse_clear(line) {
+      return Some(event);
+    }
     self.parse_color(line);
     self.parse_fill(line);
     let coordinates = self.parse_shape(line);
@@ -51,6 +54,7 @@ impl Parser for GrepParser {
 }
 
 impl GrepParser {
+  #[must_use]
   pub fn new(invert_coordinates: bool) -> Self {
     Self {
       invert_coordinates,
@@ -59,50 +63,55 @@ impl GrepParser {
     }
   }
 
+  #[must_use]
   pub fn with_color(mut self, color: Color) -> Self {
     self.color = color;
     self
   }
 
-  fn parse_clear(&mut self, line: &String) -> Option<MapEvent> {
-       RegexBuilder::new("clear").case_insensitive(true).build().unwrap().is_match(line).then_some(MapEvent::Clear)
-    }
+  fn parse_clear(line: &str) -> Option<MapEvent> {
+    RegexBuilder::new("clear")
+      .case_insensitive(true)
+      .build()
+      .unwrap()
+      .is_match(line)
+      .then_some(MapEvent::Clear)
+  }
 
-  fn parse_color(&mut self, line: &String) {
+  fn parse_color(&mut self, line: &str) {
     let color_re = RegexBuilder::new(r"\b(Blue|Red|Green|Yellow|Black|White|Grey|Brown)\b")
       .case_insensitive(true)
       .build()
       .unwrap();
-    for (_, [color]) in color_re.captures_iter(&line).map(|c| c.extract()) {
+    for (_, [color]) in color_re.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
         .map_err(|_| error!("Failed parsing {}", color));
     }
   }
 
-  fn parse_fill(&mut self, line: &String) {
+  fn parse_fill(&mut self, line: &str) {
     let fill_re = RegexBuilder::new(r"(solid|transparent|nofill)")
       .case_insensitive(true)
       .build()
       .unwrap();
-    for (_, [fill]) in fill_re.captures_iter(&line).map(|c| c.extract()) {
+    for (_, [fill]) in fill_re.captures_iter(line).map(|c| c.extract()) {
       let _ = FillStyle::from_str(fill)
         .map(|parsed_fill| self.fill = parsed_fill)
         .map_err(|_| error!("Failed parsing {}", fill));
     }
   }
 
-  fn parse_shape(&self, line: &String) -> Vec<Coordinate> {
+  fn parse_shape(&self, line: &str) -> Vec<Coordinate> {
     let coord_re = Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
 
     let mut coordinates = vec![];
-    for (_, [lat, lon]) in coord_re.captures_iter(&line).map(|c| c.extract()) {
-      match self.parse_coordinate(lat, lon) {
-        Some(coord) => coordinates.push(coord),
-        None => (),
+    for (_, [lat, lon]) in coord_re.captures_iter(line).map(|c| c.extract()) {
+      if let Some(coord) = self.parse_coordinate(lat, lon) {
+        coordinates.push(coord)
       }
     }
-    return coordinates;
+    coordinates
   }
 
   fn parse_coordinate(&self, x: &str, y: &str) -> Option<Coordinate> {

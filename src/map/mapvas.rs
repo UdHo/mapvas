@@ -1,5 +1,3 @@
-use crate::map::{coordinates::CANVAS_SIZE, map_event::FillStyle};
-
 use super::{
   coordinates::{
     tiles_in_box, BoundingBox, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE,
@@ -7,6 +5,12 @@ use super::{
   map_event::{Layer, MapEvent, Style},
   tile_loader::{CachedTileLoader, TileLoader},
 };
+use crate::{
+  map::{coordinates::CANVAS_SIZE, map_event::FillStyle},
+  parser::{GrepParser, Parser},
+};
+use arboard::Clipboard;
+use async_std::task::block_on;
 use femtovg::{renderer::OpenGl, Canvas, Path};
 use femtovg::{Color, ImageFlags, ImageId, Paint};
 use glutin::prelude::*;
@@ -317,8 +321,20 @@ impl MapVas {
       // Plus and equals to zoom in to avoid holding shift.
       VirtualKeyCode::Equals | VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
+      VirtualKeyCode::V => self.paste(),
       _ => (),
     };
+  }
+
+  fn paste(&self) {
+    let sender = self.get_event_sender();
+    rayon::spawn(move || {
+      if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
+        if let Some(map_event) = GrepParser::default().parse_line(&text) {
+          let _ = block_on(sender.send(map_event));
+        }
+      }
+    });
   }
 
   #[allow(clippy::cast_precision_loss)]
@@ -571,14 +587,16 @@ impl MapVas {
 
   #[allow(clippy::cast_precision_loss)]
   fn handle_focus_event(&mut self) {
-    let bb = self.bounding_box().unwrap_or(BoundingBox::new());
+    let bb = self.bounding_box().unwrap_or_default();
     if !bb.is_valid() {
       return;
     }
 
     let window_size = self.window.inner_size();
-    let requested_zoom_x = (window_size.width - 20) as f32 / (bb.width() + 0.00001);
-    let requested_zoom_y = (window_size.height - 20) as f32 / (bb.height() + 0.00001);
+    let empty_space_width = 30;
+    let requested_zoom_x = (window_size.width - empty_space_width) as f32 / (bb.width() + 0.00001);
+    let requested_zoom_y =
+      (window_size.height - empty_space_width) as f32 / (bb.height() + 0.00001);
     self.zoom_canvas_center(requested_zoom_x.min(requested_zoom_y) / self.get_zoom_factor());
     self.fit_to_window();
     self.set_center(bb.center());

@@ -59,13 +59,13 @@ async fn main() {
         .on_response(trace::DefaultOnResponse::new().level(tracing::Level::INFO)),
     );
 
-  tokio::spawn((async move || {
+  tokio::spawn(async {
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
     let _ = axum::Server::bind(&addr)
       .serve(app.into_make_service())
       .with_graceful_shutdown(shutdown_signal(sender))
       .await;
-  })());
+  });
 
   widget.run();
 }

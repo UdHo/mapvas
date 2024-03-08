@@ -17,7 +17,14 @@ pub struct TTJsonParser {
   color: Color,
 }
 
+impl Default for TTJsonParser {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl TTJsonParser {
+  #[must_use]
   pub fn new() -> Self {
     Self {
       data: String::new(),
@@ -25,12 +32,13 @@ impl TTJsonParser {
     }
   }
 
+  #[must_use]
   pub fn with_color(mut self, color: Color) -> Self {
     self.color = color;
     self
   }
 
-  fn convert_routes(&self, routes: &Vec<Route>) -> Option<crate::MapEvent> {
+  fn convert_routes(&self, routes: &[Route]) -> crate::MapEvent {
     let colors = Color::all();
     let color_offset = colors.iter().position(|&c| c == self.color).unwrap_or(0);
     let mut shapes: Vec<Shape> = vec![];
@@ -45,27 +53,23 @@ impl TTJsonParser {
 
     let mut layer = Layer::new("Routes".to_string());
     layer.shapes = shapes;
-    Some(MapEvent::Layer(layer))
+    MapEvent::Layer(layer)
   }
 
-  fn convert_range(
-    &self,
-    center: Option<Coordinate>,
-    boundary: Vec<Coordinate>,
-  ) -> Option<MapEvent> {
+  fn convert_range(&self, center: Option<Coordinate>, boundary: Vec<Coordinate>) -> MapEvent {
     let mut shapes = vec![Shape::new(boundary)
       .with_color(self.color)
       .with_fill(FillStyle::Transparent)];
-    center.map(|c| {
+    if let Some(c) = center {
       shapes.push(
         Shape::new(vec![c])
           .with_color(self.color)
           .with_fill(FillStyle::Solid),
-      )
-    });
+      );
+    }
     let mut layer = Layer::new("Range".to_string());
     layer.shapes = shapes;
-    Some(MapEvent::Layer(layer))
+    MapEvent::Layer(layer)
   }
 }
 
@@ -98,7 +102,7 @@ enum JsonResponse {
 }
 
 impl Parser for TTJsonParser {
-  fn parse_line(&mut self, line: &String) -> Option<crate::MapEvent> {
+  fn parse_line(&mut self, line: &str) -> Option<crate::MapEvent> {
     self.data += line;
     None
   }
@@ -109,8 +113,10 @@ impl Parser for TTJsonParser {
         error!("{:?}", e);
         None
       }
-      Ok(JsonResponse::Routes { routes }) => self.convert_routes(&routes),
-      Ok(JsonResponse::Range { polygon }) => self.convert_range(polygon.center, polygon.boundary),
+      Ok(JsonResponse::Routes { routes }) => Some(self.convert_routes(&routes)),
+      Ok(JsonResponse::Range { polygon }) => {
+        Some(self.convert_range(polygon.center, polygon.boundary))
+      }
     }
   }
 }

@@ -44,11 +44,11 @@ impl TileCache {
       .map(|b| b.join(format!("{}_{}_{}.png", tile.zoom, tile.x, tile.y)))
   }
 
-  fn cache_tile(&self, tile: &Tile, data: &Vec<u8>) {
+  fn cache_tile(&self, tile: &Tile, data: &[u8]) {
     if self.base_path.is_none() {
       return;
     }
-    let succ = File::create(self.path(&tile).unwrap()).map(|mut f| f.write_all(&data));
+    let succ = File::create(self.path(tile).unwrap()).map(|mut f| f.write_all(data));
     if succ.is_err() {
       debug!("Error when writing file: {}", succ.unwrap_err());
     }
@@ -57,7 +57,7 @@ impl TileCache {
 
 impl TileLoader for TileCache {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
-    match self.path(&tile) {
+    match self.path(tile) {
       Some(p) => match p.exists() {
         true => Ok(std::fs::read(p)?),
         false => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
@@ -107,13 +107,13 @@ pub struct CachedTileLoader {
 
 impl CachedTileLoader {
   async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
-    self.tile_cache.tile_data(&tile).await
+    self.tile_cache.tile_data(tile).await
   }
 
   async fn download(&self, tile: &Tile) -> Result<TileData> {
     match self.tile_loader.tile_data(tile).await {
       Ok(data) => {
-        self.tile_cache.cache_tile(&tile, &data);
+        self.tile_cache.cache_tile(tile, &data);
         match data.len() {
           0..=100 => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
           _ => Ok(data),

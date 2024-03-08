@@ -14,9 +14,10 @@ impl MapSender {
   }
 
   async fn spawn_mapvas_if_needed(&self) {
-    if let Ok(_) = surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
+    if surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
       .send()
       .await
+      .is_ok()
     {
       return;
     }
