@@ -52,8 +52,6 @@ async fn main() {
     sender.send_event(MapEvent::Clear);
   }
 
-  //let mut tasks = tokio::task::JoinSet::new();
-
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
     "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
