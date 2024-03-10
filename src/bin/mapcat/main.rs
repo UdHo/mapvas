@@ -4,9 +4,8 @@ use std::str::FromStr;
 
 use clap::Parser as CliParser;
 use log::error;
-use mapvas::map::map_event::Color;
+use mapvas::map::map_event::{Color, MapEvent};
 use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
-use mapvas::MapEvent;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 

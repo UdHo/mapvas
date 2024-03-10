@@ -3,12 +3,9 @@ use std::str::FromStr;
 use log::{debug, error};
 use regex::{Regex, RegexBuilder};
 
-use crate::{
-  map::{
-    coordinates::Coordinate,
-    map_event::{Color, FillStyle, Layer, Shape},
-  },
-  MapEvent,
+use crate::map::{
+  coordinates::Coordinate,
+  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
 use super::Parser;

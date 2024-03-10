@@ -1,11 +1,8 @@
 use rand::{rngs::ThreadRng, Rng};
 
-use crate::{
-  map::{
-    coordinates::Coordinate,
-    map_event::{Color, FillStyle, Layer, Shape},
-  },
-  MapEvent,
+use crate::map::{
+  coordinates::Coordinate,
+  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
 use super::Parser;

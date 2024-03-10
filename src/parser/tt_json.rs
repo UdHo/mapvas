@@ -1,12 +1,9 @@
 use log::error;
 use serde::Deserialize;
 
-use crate::{
-  map::{
-    coordinates::Coordinate,
-    map_event::{Color, FillStyle, Layer, Shape},
-  },
-  MapEvent,
+use crate::map::{
+  coordinates::Coordinate,
+  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
 use super::Parser;
@@ -38,7 +35,7 @@ impl TTJsonParser {
     self
   }
 
-  fn convert_routes(&self, routes: &[Route]) -> crate::MapEvent {
+  fn convert_routes(&self, routes: &[Route]) -> MapEvent {
     let colors = Color::all();
     let color_offset = colors.iter().position(|&c| c == self.color).unwrap_or(0);
     let mut shapes: Vec<Shape> = vec![];
@@ -102,11 +99,11 @@ enum JsonResponse {
 }
 
 impl Parser for TTJsonParser {
-  fn parse_line(&mut self, line: &str) -> Option<crate::MapEvent> {
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
     self.data += line;
     None
   }
-  fn finalize(&self) -> Option<crate::MapEvent> {
+  fn finalize(&self) -> Option<MapEvent> {
     let routes: Result<JsonResponse, _> = serde_json::from_str(&self.data);
     match routes {
       Err(e) => {

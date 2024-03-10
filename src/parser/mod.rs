@@ -1,4 +1,4 @@
-use crate::MapEvent;
+use crate::map::map_event::MapEvent;
 
 /// An interface for input parsers.
 pub trait Parser {

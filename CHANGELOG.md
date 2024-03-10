@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.x
+## 0.1.5
 
 - f in mapvas zooms to bounding box of drawn elements
 - mapcat speedup

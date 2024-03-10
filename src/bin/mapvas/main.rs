@@ -1,6 +1,9 @@
 #![feature(async_closure)]
 
-use mapvas::{map::mapvas::MapVas, remote::serve_axum, MapEvent, DEFAULT_PORT};
+use mapvas::{
+  map::{map_event::MapEvent, mapvas::MapVas},
+  remote::{serve_axum, DEFAULT_PORT},
+};
 
 use std::net::SocketAddr;
 
