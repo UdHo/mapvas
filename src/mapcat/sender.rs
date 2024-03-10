@@ -36,10 +36,8 @@ impl SenderInner {
        Some(event) = self.receiver.recv() => {match event { Some(event) => {self.receive(event);},
                                             None => {self.send_queue().await; break;
                                             },
-       }}
-
-           ,
-           _ = interval.tick() => self.send_queue().await,
+       }},
+        _ = interval.tick() => self.send_queue().await,
       }
     }
   }

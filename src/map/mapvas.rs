@@ -1,14 +1,18 @@
 use super::{
+  coordinates::CANVAS_SIZE,
   coordinates::{
     tiles_in_box, BoundingBox, Coordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE,
   },
+  map_event::FillStyle,
   map_event::{Layer, MapEvent, Style},
   tile_loader::{CachedTileLoader, TileLoader},
 };
-use crate::{
-  map::{coordinates::CANVAS_SIZE, map_event::FillStyle},
-  parser::{GrepParser, Parser},
-};
+
+use crate::parser::{GrepParser, Parser};
+
+use std::num::NonZeroU32;
+use std::{cmp::max, collections::HashMap};
+
 use arboard::Clipboard;
 use async_std::task::block_on;
 use femtovg::{renderer::OpenGl, Canvas, Path};
@@ -20,23 +24,17 @@ use glutin::{
   display::GetGlDisplay,
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
-use log::{error, trace};
-
 use glutin_winit::DisplayBuilder;
+use log::{error, trace};
 use raw_window_handle::HasRawWindowHandle;
-use std::num::NonZeroU32;
-use std::{cmp::max, collections::HashMap};
 use tokio::sync::mpsc::{Receiver, Sender};
-use winit::event_loop::EventLoopBuilder;
-use winit::window::WindowBuilder;
 use winit::{
   dpi::PhysicalPosition,
-  event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode},
-};
-use winit::{
-  event::{Event, WindowEvent},
-  event_loop::{ControlFlow, EventLoop, EventLoopProxy},
-  window::Window,
+  event::{
+    ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
+  },
+  event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy},
+  window::{Window, WindowBuilder},
 };
 
 enum LayerElement {
@@ -428,6 +426,7 @@ impl MapVas {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
   )]
+
   fn get_tiles_to_draw(&mut self) -> Vec<Tile> {
     let (nw, se, zoom) = self.get_current_canvas_section();
 

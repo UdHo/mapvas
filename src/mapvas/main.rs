@@ -1,14 +1,14 @@
 #![feature(async_closure)]
+
+use mapvas::{map::mapvas::MapVas, remote::serve_axum, MapEvent, DEFAULT_PORT};
+
+use std::net::SocketAddr;
+
 use axum::extract::DefaultBodyLimit;
 use axum::{routing::get, routing::post, Router};
-use mapvas::remote::serve_axum;
-use mapvas::DEFAULT_PORT;
-use mapvas::{map::mapvas::MapVas, MapEvent};
-use std::net::SocketAddr;
 use tokio::sync::mpsc::Sender;
-use tracing_subscriber::EnvFilter;
-
 use tower_http::trace::{self, TraceLayer};
+use tracing_subscriber::EnvFilter;
 
 async fn shutdown_signal(sender: Sender<MapEvent>) {
   let ctrl_c = async {
