@@ -1733,15 +1733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1914,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "mapvas"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1927,7 +1918,6 @@ dependencies = [
  "glutin",
  "glutin-winit",
  "image",
- "itertools",
  "log",
  "rand 0.8.5",
  "raw-window-handle",

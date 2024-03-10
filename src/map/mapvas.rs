@@ -427,7 +427,7 @@ impl MapVas {
     clippy::cast_sign_loss
   )]
 
-  fn get_tiles_to_draw(&mut self) -> Vec<Tile> {
+  fn get_tiles_to_draw(&mut self) -> impl Iterator<Item = Tile> {
     let (nw, se, zoom) = self.get_current_canvas_section();
 
     let size = self.window.inner_size();
@@ -440,10 +440,8 @@ impl MapVas {
   }
 
   fn draw_map(&mut self) {
-    let tiles = &self.get_tiles_to_draw();
-    trace!("Drawing {} tiles: {:?}", tiles.len(), tiles);
-    for tile in tiles {
-      let found_tile_image = self.map_provider.find_image_or_download(*tile);
+    for tile in self.get_tiles_to_draw() {
+      let found_tile_image = self.map_provider.find_image_or_download(tile);
       if found_tile_image.is_none() {
         continue;
       }
@@ -595,16 +593,17 @@ impl MapVas {
   }
 
   fn coords_to_element(coords: &[Coordinate], close_path: bool) -> LayerElement {
-    let points: Vec<PixelPosition> = coords.iter().copied().map(From::from).collect();
-    if points.len() == 1 {
-      LayerElement::Point(points[0])
+    let points = coords.iter().skip(1).copied().map(From::from);
+    if coords.len() == 1 {
+      LayerElement::Point(points.clone().nth(0).unwrap())
     } else {
       let mut path = Path::new();
-      let start = points[0];
+
+      let start = points.clone().nth(0).unwrap();
       path.move_to(start.x, start.y);
-      for to in points.iter().skip(1) {
+      points.clone().for_each(|to| {
         path.line_to(to.x, to.y);
-      }
+      });
       if close_path {
         path.line_to(start.x, start.y);
       }

@@ -27,24 +27,19 @@ pub struct PixelPosition {
   pub y: f32,
 }
 
-pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> Vec<Tile> {
+pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
   assert_eq!(nw.zoom, se.zoom);
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
-  let mut tiles = Vec::<Tile>::with_capacity(
-    ((se_tile.x - nw_tile.x + 1) * (se_tile.y - nw_tile.y + 1)) as usize,
-  );
-  for (x, y) in itertools::iproduct!(nw_tile.x..=se_tile.x, nw_tile.y..=se_tile.y) {
-    let tile = Tile {
-      x,
-      y,
-      zoom: nw_tile.zoom,
-    };
-    if tile.exists() {
-      tiles.push(tile);
-    };
-  }
-  tiles
+  (nw_tile.x..=se_tile.x)
+    .flat_map(move |x| {
+      (nw_tile.y..=se_tile.y).map(move |y| Tile {
+        x,
+        y,
+        zoom: nw_tile.zoom,
+      })
+    })
+    .filter(|t| t.exists())
 }
 
 pub const CANVAS_SIZE: f32 = 1000.;
@@ -308,7 +303,7 @@ mod tests {
       zoom: 5,
     };
 
-    let tiles = tiles_in_box(nw, se);
+    let tiles: Vec<_> = tiles_in_box(nw, se).collect();
     assert_eq!(tiles.len(), 200);
   }
 }
