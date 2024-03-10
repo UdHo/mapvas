@@ -51,6 +51,8 @@ async fn main() {
   if args.reset {
     sender.send_event(MapEvent::Clear);
   }
+  sender.finalize().await;
+  let sender = sender::MapSender::new().await;
 
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
@@ -91,9 +93,11 @@ async fn main() {
   }
 
   // Waiting for all tasks to finish.
-  //while (tasks.join_next().await).is_some() {}
+  sender.finalize().await;
 
   if args.focus {
+    let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Focus);
+    sender.finalize().await;
   }
 }

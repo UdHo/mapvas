@@ -8,32 +8,37 @@ use std::collections::{HashMap, LinkedList};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-#[derive(Clone)]
 pub struct MapSender {
-  sender: UnboundedSender<MapEvent>,
+  sender: UnboundedSender<Option<MapEvent>>,
+  inner_join_handle: tokio::task::JoinHandle<()>,
 }
 
 struct SenderInner {
-  receiver: UnboundedReceiver<MapEvent>,
+  receiver: UnboundedReceiver<Option<MapEvent>>,
   queue: LinkedList<MapEvent>,
 }
 
 impl SenderInner {
-  pub fn start(receiver: UnboundedReceiver<MapEvent>) {
+  pub fn start(receiver: UnboundedReceiver<Option<MapEvent>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn({
       Self {
         receiver,
         queue: LinkedList::new(),
       }
       .run()
-    });
+    })
   }
 
   async fn run(mut self) {
     let mut interval = tokio::time::interval(Duration::from_millis(100));
     loop {
       tokio::select! {
-       Some(event) = self.receiver.recv() => self.receive(event),
+       Some(event) = self.receiver.recv() => {match event { Some(event) => {self.receive(event);},
+                                            None => {self.send_queue().await; break;
+                                            },
+       }}
+
+           ,
            _ = interval.tick() => self.send_queue().await,
       }
     }
@@ -70,6 +75,7 @@ impl SenderInner {
       Self::send_event(&MapEvent::Layer(Layer { id, shapes })).await;
     }
   }
+
   async fn send_event(event: &MapEvent) {
     let _ = surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
       .body_json(&event)
@@ -81,11 +87,12 @@ impl SenderInner {
 impl MapSender {
   pub async fn new() -> MapSender {
     let (rx, tx) = unbounded_channel();
-    let sender = Self { sender: rx };
 
+    let sender = Self {
+      sender: rx,
+      inner_join_handle: SenderInner::start(tx),
+    };
     sender.spawn_mapvas_if_needed().await;
-
-    SenderInner::start(tx);
 
     sender
   }
@@ -112,6 +119,11 @@ impl MapSender {
   }
 
   pub fn send_event(&self, event: MapEvent) {
-    let _ = self.sender.send(event);
+    let _ = self.sender.send(Some(event));
+  }
+
+  pub async fn finalize(self) {
+    let _ = self.sender.send(None);
+    let _ = self.inner_join_handle.await;
   }
 }

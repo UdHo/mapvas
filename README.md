@@ -35,6 +35,7 @@ Start `mapvas` and a map window will appear.
 |Functionality | Description |
 |--------------|-------------|
 | zoom | Use the mouse wheel or +/- |
+| focus to drawn elements | f centers the drawn elements |
 | moving | Left mouse and dragging or arrow keys |
 | paste | pressing v will paste the clipboard into the grep parser |
 

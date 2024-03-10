@@ -2,6 +2,7 @@
 
 ## 0.1.x
 
+- f in mapvas zooms to bounding box of drawn elements
 - mapcat speedup
 - use mapcat <FILE> usage
 

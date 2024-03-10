@@ -51,6 +51,70 @@ struct MapEventHander {
   event_sender: Sender<MapEvent>,
 }
 
+struct MapProvider {
+  loaded_images: HashMap<Tile, ImageId>,
+  layers: HashMap<String, Vec<(LayerElement, Style)>>,
+  tile_loader: CachedTileLoader,
+  event_sender: Sender<MapEvent>,
+}
+
+impl MapProvider {
+  fn new(tile_loader: CachedTileLoader, event_sender: Sender<MapEvent>) -> Self {
+    Self {
+      tile_loader,
+      event_sender,
+      loaded_images: Default::default(),
+      layers: Default::default(),
+    }
+  }
+
+  fn layers_bounding_box(&self) -> Option<BoundingBox> {
+    let mut bb = BoundingBox::get_invalid();
+    self
+      .layers
+      .iter()
+      .flat_map(|(_, elements)| elements.iter())
+      .for_each(|e| match &e.0 {
+        LayerElement::Point(p) => bb.add_coordinate(*p),
+        LayerElement::Polyline(_, b) => bb.extend(b),
+      });
+    bb.is_valid().then_some(bb)
+  }
+
+  fn find_image_or_download(&self, tile: Tile) -> Option<(Tile, &ImageId)> {
+    let image_id = self.loaded_images.get(&tile);
+    if let Some(id) = image_id {
+      Some((tile, id))
+    } else {
+      let tile_loader = self.tile_loader.clone();
+      let sender = self.event_sender.clone();
+      tokio::spawn(async move {
+        if let Ok(data) = tile_loader.tile_data(&tile).await {
+          let _ = sender.send(MapEvent::TileDataArrived { tile, data }).await;
+        }
+      });
+      // Load parent tile instead
+      let mut parent = tile.parent();
+      while let Some(current_tile) = parent {
+        let id = self.loaded_images.get(&current_tile);
+        match id {
+          Some(i) => return Some((current_tile, i)),
+          _ => parent = current_tile.parent(),
+        }
+      }
+      None
+    }
+  }
+
+  fn add_tile_image(&mut self, tile: Tile, image_id: ImageId) {
+    self.loaded_images.insert(tile, image_id);
+  }
+
+  fn clear_layers(&mut self) {
+    self.layers.clear();
+  }
+}
+
 /// Keeps data for map and layer drawing.
 pub struct MapVas {
   event_loop: Option<EventLoop<MapEvent>>,
@@ -62,9 +126,7 @@ pub struct MapVas {
   mousex: f32,
   mousey: f32,
   event_handler: MapEventHander,
-  tile_loader: CachedTileLoader,
-  loaded_images: HashMap<Tile, ImageId>,
-  layers: HashMap<String, Vec<(LayerElement, Style)>>,
+  map_provider: MapProvider,
 }
 
 impl Default for MapVas {
@@ -170,14 +232,12 @@ impl MapVas {
       dragging: false,
       mousey: 0.0,
       mousex: 0.0,
-      tile_loader: CachedTileLoader::default(),
       event_handler: MapEventHander {
         event_proxy,
         event_receiver: Some(rx),
-        event_sender: tx,
+        event_sender: tx.clone(),
       },
-      loaded_images: HashMap::default(),
-      layers: HashMap::default(),
+      map_provider: MapProvider::new(CachedTileLoader::default(), tx),
     }
   }
 
@@ -208,13 +268,10 @@ impl MapVas {
               button: MouseButton::Left,
               state,
               ..
-            } => {
-              self.print_coordinate();
-              match state {
-                ElementState::Pressed => self.dragging = true,
-                ElementState::Released => self.dragging = false,
-              }
-            }
+            } => match state {
+              ElementState::Pressed => self.dragging = true,
+              ElementState::Released => self.dragging = false,
+            },
             WindowEvent::CursorMoved {
               device_id: _,
               position,
@@ -280,7 +337,7 @@ impl MapVas {
           Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
           Event::UserEvent(MapEvent::Clear) => {
             error!("Clear event received");
-            self.layers.clear();
+            self.map_provider.clear_layers();
           }
           Event::LoopDestroyed | Event::UserEvent(MapEvent::Shutdown) => {
             *control_flow = ControlFlow::Exit;
@@ -322,6 +379,7 @@ impl MapVas {
       VirtualKeyCode::Equals | VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
       VirtualKeyCode::V => self.paste(),
+      VirtualKeyCode::F => self.handle_focus_event(),
       _ => (),
     };
   }
@@ -386,7 +444,7 @@ impl MapVas {
     let tiles = &self.get_tiles_to_draw();
     trace!("Drawing {} tiles: {:?}", tiles.len(), tiles);
     for tile in tiles {
-      let found_tile_image = self.find_image_or_download(*tile);
+      let found_tile_image = self.map_provider.find_image_or_download(*tile);
       if found_tile_image.is_none() {
         continue;
       }
@@ -419,10 +477,17 @@ impl MapVas {
       .canvas
       .clear_rect(0, 0, size.width, size.height, Color::rgbf(0.3, 0.3, 0.32));
 
+    eprintln!("redraw {:?}", std::time::Instant::now());
     self.draw_map();
+    self.draw_layers();
+    self.canvas.save();
+    self.canvas.flush();
+    self.surface.swap_buffers(&self.context).unwrap();
+  }
 
+  fn draw_layers(&mut self) {
     let line_width = 3. / self.get_zoom_factor();
-    for layer in &self.layers {
+    for layer in &self.map_provider.layers {
       for (path, style) in layer.1 {
         let mut stroke = Paint::color(style.color.to_rgb());
         stroke.set_line_width(line_width);
@@ -454,49 +519,13 @@ impl MapVas {
         };
       }
     }
-    self.canvas.save();
-    self.canvas.flush();
-    self.surface.swap_buffers(&self.context).unwrap();
-  }
-
-  fn find_image_or_download(&self, tile: Tile) -> Option<(Tile, &ImageId)> {
-    let image_id = self.loaded_images.get(&tile);
-    if let Some(id) = image_id {
-      Some((tile, id))
-    } else {
-      let tile_loader = self.tile_loader.clone();
-      let sender = self.get_event_sender();
-      tokio::spawn(async move {
-        if let Ok(data) = tile_loader.tile_data(&tile).await {
-          let _ = sender.send(MapEvent::TileDataArrived { tile, data }).await;
-        }
-      });
-      // Load parent tile instead
-      let mut parent = tile.parent();
-      while let Some(current_tile) = parent {
-        let id = self.loaded_images.get(&current_tile);
-        match id {
-          Some(i) => return Some((current_tile, i)),
-          _ => parent = current_tile.parent(),
-        }
-      }
-      None
-    }
   }
 
   fn add_tile_image(&mut self, tile: Tile, data: &[u8]) {
     let image_id = self.canvas.load_image_mem(data, ImageFlags::empty());
-    match image_id {
-      Ok(id) => {
-        self.loaded_images.insert(tile, id);
-      }
-      Err(e) => {
-        error!(
-          "Error {:?} loading image for {:?} with {:?}.",
-          e, tile, data
-        );
-      }
-    };
+    if let Ok(id) = image_id {
+      self.map_provider.add_tile_image(tile, id);
+    }
   }
 
   fn translate(&mut self, to_x: f32, to_y: f32, from_x: f32, from_y: f32) {
@@ -587,7 +616,7 @@ impl MapVas {
 
   #[allow(clippy::cast_precision_loss)]
   fn handle_focus_event(&mut self) {
-    let bb = self.bounding_box().unwrap_or_default();
+    let bb = self.map_provider.layers_bounding_box().unwrap_or_default();
     if !bb.is_valid() {
       return;
     }
@@ -600,19 +629,6 @@ impl MapVas {
     self.zoom_canvas_center(requested_zoom_x.min(requested_zoom_y) / self.get_zoom_factor());
     self.fit_to_window();
     self.set_center(bb.center());
-  }
-
-  fn bounding_box(&self) -> Option<BoundingBox> {
-    let mut bb = BoundingBox::get_invalid();
-    self
-      .layers
-      .iter()
-      .flat_map(|(_, elements)| elements.iter())
-      .for_each(|e| match &e.0 {
-        LayerElement::Point(p) => bb.add_coordinate(*p),
-        LayerElement::Polyline(_, b) => bb.extend(b),
-      });
-    bb.is_valid().then_some(bb)
   }
 
   fn handle_layer_event(&mut self, layer: Layer) {
@@ -628,6 +644,7 @@ impl MapVas {
       .collect();
 
     self
+      .map_provider
       .layers
       .entry(layer.id)
       .and_modify(|l| l.append(&mut paths))
