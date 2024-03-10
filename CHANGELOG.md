@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- reverting image lib update due to problems on mac.
+
 ## 0.1.5
 
 - f in mapvas zooms to bounding box of drawn elements

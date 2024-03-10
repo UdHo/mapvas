@@ -476,7 +476,6 @@ impl MapVas {
       .canvas
       .clear_rect(0, 0, size.width, size.height, Color::rgbf(0.3, 0.3, 0.32));
 
-    eprintln!("redraw {:?}", std::time::Instant::now());
     self.draw_map();
     self.draw_layers();
     self.canvas.save();
