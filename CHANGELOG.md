@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.x
+
+- mapcat speedup
+- use mapcat <FILE> usage
+
 ## 0.1.4
 
 - fix dark color parsing
