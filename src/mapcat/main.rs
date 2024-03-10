@@ -7,6 +7,8 @@ use log::error;
 use mapvas::map::map_event::Color;
 use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
 use mapvas::MapEvent;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 mod sender;
 
@@ -33,6 +35,9 @@ struct Args {
   /// Zooms to the bounding box of drawn stuff.
   #[arg(short, long)]
   focus: bool,
+
+  /// A file to parse. stdin is used if this is not provided.
+  file: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -44,10 +49,10 @@ async fn main() {
 
   let sender = sender::MapSender::new().await;
   if args.reset {
-    sender.send_event(&MapEvent::Clear).await;
+    sender.send_event(MapEvent::Clear);
   }
 
-  let mut tasks = tokio::task::JoinSet::new();
+  //let mut tasks = tokio::task::JoinSet::new();
 
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
@@ -58,32 +63,39 @@ async fn main() {
       Box::new(GrepParser::new(args.invert_coordinates))
     }
   };
-  let stdin = async_std::io::stdin();
-  let mut line = String::new();
-  while let Ok(res) = stdin.read_line(&mut line).await {
-    if res == 0 {
-      if let Some(e) = parser.finalize() {
-        let _ = tasks.spawn(async move {
-          let _ = &sender.send_event(&e).await;
-        });
-      }
-      break;
+
+  let mut reader: Box<dyn BufRead> = if let Some(file) = args.file {
+    let f = File::open(file);
+    if let Ok(file) = f {
+      Box::new(BufReader::new(file))
+    } else {
+      error!("File not found.");
+      return;
     }
-    if let Some(e) = parser.parse_line(&line) {
-      let _ = tasks.spawn(async move {
-        let _ = &sender.send_event(&e).await;
-      });
+  } else {
+    Box::new(std::io::stdin().lock())
+  };
+
+  let mut line = String::new();
+  while let Ok(res) = reader.read_line(&mut line) {
+    let parsed = if res == 0 {
+      parser.finalize()
+    } else {
+      parser.parse_line(&line)
+    };
+    if let Some(e) = parsed {
+      sender.send_event(e);
     }
     line.clear();
+    if res == 0 {
+      break;
+    }
   }
 
   // Waiting for all tasks to finish.
-  while (tasks.join_next().await).is_some() {}
+  //while (tasks.join_next().await).is_some() {}
 
   if args.focus {
-    sender.send_event(&MapEvent::Focus).await;
+    sender.send_event(MapEvent::Focus);
   }
-
-  // Waiting for all tasks to finish.
-  while (tasks.join_next().await).is_some() {}
 }
