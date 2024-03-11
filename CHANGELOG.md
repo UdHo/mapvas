@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.7
+## 0.1.7 - 0.1.9
 
-- fixing sender with more data.
+- fixing sender
 
 ## 0.1.6
 

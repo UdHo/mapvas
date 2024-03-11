@@ -593,13 +593,17 @@ impl MapVas {
   }
 
   fn coords_to_element(coords: &[Coordinate], close_path: bool) -> LayerElement {
-    let points = coords.iter().skip(1).copied().map(From::from);
+    let points = coords
+      .iter()
+      .skip(1)
+      .copied()
+      .map(Into::<PixelPosition>::into);
     if coords.len() == 1 {
-      LayerElement::Point(points.clone().nth(0).unwrap())
+      LayerElement::Point(coords[0].into())
     } else {
       let mut path = Path::new();
 
-      let start = points.clone().nth(0).unwrap();
+      let start: PixelPosition = coords[0].into();
       path.move_to(start.x, start.y);
       points.clone().for_each(|to| {
         path.line_to(to.x, to.y);

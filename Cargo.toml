@@ -2,7 +2,7 @@
 name = "mapvas"
 readme = "README.md"
 description = "A map viewer with drawing functionality"
-version = "0.1.8"
+version = "0.1.9"
 authors = ["Udo Hoffmann <hoffmann.odu@gmail.com>"]
 edition = "2021"
 keywords = ["map", "openstreetmap", "drawing"]
