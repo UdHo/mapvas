@@ -76,7 +76,6 @@ impl SenderInner {
 
     let send_mut_condv = self.send_mutex.clone();
     rayon::spawn(move || {
-      eprintln!("spawned");
       block_on(Self::compact_and_send(queue));
       let lock_stuff = send_mut_condv;
       let mut count = lock_stuff.0.lock().expect("can aquire lock");
@@ -87,7 +86,6 @@ impl SenderInner {
   }
 
   async fn compact_and_send(queue: LinkedList<MapEvent>) {
-    eprintln!("send {}", queue.len());
     let mut layers: HashMap<String, Vec<Shape>> = HashMap::new();
 
     for event in queue {
@@ -103,18 +101,15 @@ impl SenderInner {
     }
 
     for (id, shapes) in layers {
-      eprintln!("layer {} {}", id, shapes.len());
       Self::send_event(&MapEvent::Layer(Layer { id, shapes })).await;
     }
   }
 
   async fn send_event(event: &MapEvent) {
-    let _ = dbg!(
-      surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
-        .body_json(&event)
-        .expect("cannot serialize json")
-        .await
-    );
+    let _ = surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
+      .body_json(&event)
+      .expect("cannot serialize json")
+      .await;
   }
 }
 
