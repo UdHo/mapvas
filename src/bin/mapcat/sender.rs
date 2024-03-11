@@ -5,6 +5,7 @@ use std::process::Stdio;
 
 use async_std::task::block_on;
 use std::collections::{HashMap, LinkedList};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -20,6 +21,7 @@ pub struct MapSender {
 struct SenderInner {
   receiver: UnboundedReceiver<Option<MapEvent>>,
   queue: LinkedList<MapEvent>,
+  send_mutex: Arc<(std::sync::Mutex<usize>, Condvar)>,
 }
 
 impl SenderInner {
@@ -28,6 +30,7 @@ impl SenderInner {
       Self {
         receiver,
         queue: LinkedList::new(),
+        send_mutex: Arc::new((Mutex::new(0), Condvar::new())),
       }
       .run()
     })
@@ -41,12 +44,19 @@ impl SenderInner {
           match event {
             Some(event) => {self.receive(event);},
             None => {
-              self.send_queue().await;
-              break;
-            },
-          }
+                 self.add_task();
+                 self.send_queue().await;
+                 drop(self.send_mutex.1.wait_while(
+                   self.send_mutex.0.lock().unwrap(), |count| { *count != 0 })
+                 );
+                 return;
+              }
+            }
         },
-        _ = interval.tick() => self.send_queue().await,
+        _ = interval.tick() => {
+            self.add_task();
+            self.send_queue().await
+          },
       }
     }
   }
@@ -55,15 +65,29 @@ impl SenderInner {
     self.queue.push_back(event);
   }
 
+  fn add_task(&self) {
+    let mut send_count = self.send_mutex.0.lock().expect("can aquire lock");
+    *send_count += 1;
+  }
+
   async fn send_queue(&mut self) {
     let mut queue = LinkedList::new();
     std::mem::swap(&mut queue, &mut self.queue);
-    rayon::spawn(|| {
+
+    let send_mut_condv = self.send_mutex.clone();
+    rayon::spawn(move || {
+      eprintln!("spawned");
       block_on(Self::compact_and_send(queue));
+      let lock_stuff = send_mut_condv;
+      let mut count = lock_stuff.0.lock().expect("can aquire lock");
+      *count -= 1;
+      drop(count);
+      lock_stuff.1.notify_one();
     });
   }
 
   async fn compact_and_send(queue: LinkedList<MapEvent>) {
+    eprintln!("send {}", queue.len());
     let mut layers: HashMap<String, Vec<Shape>> = HashMap::new();
 
     for event in queue {
@@ -79,15 +103,18 @@ impl SenderInner {
     }
 
     for (id, shapes) in layers {
+      eprintln!("layer {} {}", id, shapes.len());
       Self::send_event(&MapEvent::Layer(Layer { id, shapes })).await;
     }
   }
 
   async fn send_event(event: &MapEvent) {
-    let _ = surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
-      .body_json(&event)
-      .expect("cannot serialize json")
-      .await;
+    let _ = dbg!(
+      surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
+        .body_json(&event)
+        .expect("cannot serialize json")
+        .await
+    );
   }
 }
 
