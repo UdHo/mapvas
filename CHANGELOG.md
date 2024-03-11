@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- fixing sender with more data.
+
 ## 0.1.6
 
 - reverting image lib update due to problems on mac.
