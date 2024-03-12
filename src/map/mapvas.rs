@@ -306,6 +306,7 @@ impl MapVas {
               };
               self.zoom_canvas(1.0 + (change / 10.0), self.mousex, self.mousey);
             }
+
             WindowEvent::TouchpadMagnify {
               device_id: _,
               delta,
@@ -324,9 +325,17 @@ impl MapVas {
             } => self.handle_key(*key),
 
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+            WindowEvent::ScaleFactorChanged {
+              scale_factor: _,
+              new_inner_size,
+            } => self.surface.resize(
+              &self.context,
+              new_inner_size.width.try_into().unwrap(),
+              new_inner_size.height.try_into().unwrap(),
+            ),
+
             _ => trace!("Unhandled window event: {:?}", event),
           },
-
           Event::RedrawRequested(_) => self.redraw(),
           Event::MainEventsCleared => self.window.request_redraw(),
           Event::UserEvent(MapEvent::TileDataArrived { tile, data }) => {

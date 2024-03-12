@@ -4,7 +4,7 @@ use mapvas::remote::DEFAULT_PORT;
 use std::process::Stdio;
 
 use async_std::task::block_on;
-use std::collections::{HashMap, LinkedList};
+use std::collections::{BTreeMap, LinkedList};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -44,7 +44,6 @@ impl SenderInner {
           match event {
             Some(event) => {self.receive(event);},
             None => {
-                 self.add_task();
                  self.send_queue().await;
                  drop(self.send_mutex.1.wait_while(
                    self.send_mutex.0.lock().unwrap(), |count| { *count != 0 })
@@ -54,7 +53,6 @@ impl SenderInner {
             }
         },
         _ = interval.tick() => {
-            self.add_task();
             self.send_queue().await
           },
       }
@@ -71,6 +69,7 @@ impl SenderInner {
   }
 
   async fn send_queue(&mut self) {
+    self.add_task();
     let mut queue = LinkedList::new();
     std::mem::swap(&mut queue, &mut self.queue);
 
@@ -86,7 +85,7 @@ impl SenderInner {
   }
 
   async fn compact_and_send(queue: LinkedList<MapEvent>) {
-    let mut layers: HashMap<String, Vec<Shape>> = HashMap::new();
+    let mut layers: BTreeMap<String, Vec<Shape>> = BTreeMap::new();
 
     for event in queue {
       match event {

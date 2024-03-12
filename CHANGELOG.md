@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.x
+
+- canvas rescales when moving to different screens.
+
 ## 0.1.7 - 0.1.9
 
 - fixing sender
