@@ -2,6 +2,7 @@
 
 ## 0.1.x
 
+- allow different map tile provider.
 - canvas rescales when moving to different screens.
 
 ## 0.1.7 - 0.1.9

@@ -128,3 +128,13 @@ To cache tile images for future runs set the environment variable `TILECACHE` to
     mkdir ~/.tilecache
     export TILECACHE=~/.tilecache
 ```
+#### Different map tile url
+
+To use tiles from a different provider than [openstreetmap] you can set a templated url. The url must contain `{zoom}`, `{x}`, and `{y}`. The tile provider should return tiles in the [pseudo/spherical-mercator projection](https://epsg.io/3857) in a size of 512x512 pixel. Examples:
+
+```
+    export MAPVAS_TILE_URL='https://tile.openstreetmap.org/{zoom}/{x}/{y}.png'
+    export MAPVAS_TILE_URL='https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=***'
+    export MAPVAS_TILE_URL='https://maps.hereapi.com/v3/background/mc/{zoom}/{x}/{y}/png8?size=512&apiKey=***'
+```
+

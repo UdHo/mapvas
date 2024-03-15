@@ -4,6 +4,7 @@ use async_std::task::block_on;
 use log::{debug, error, trace};
 use std::collections::HashSet;
 use std::fs::File;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -69,8 +70,28 @@ impl TileLoader for TileCache {
 
 #[derive(Debug, Clone)]
 struct TileDownloader {
-  base_url: String,
+  url_template: String,
   tiles_in_download: Arc<Mutex<HashSet<Tile>>>,
+}
+
+impl TileDownloader {
+  pub fn from_env() -> Self {
+    let url_template = std::env::var("MAPVAS_TILE_URL").unwrap_or(String::from(
+      "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+    ));
+    Self {
+      url_template,
+      tiles_in_download: Default::default(),
+    }
+  }
+
+  fn get_path_for_tile(&self, tile: &Tile) -> String {
+    self
+      .url_template
+      .replace("{x}", &tile.x.to_string())
+      .replace("{y}", &tile.y.to_string())
+      .replace("{zoom}", &tile.zoom.to_string())
+  }
 }
 
 impl TileLoader for TileDownloader {
@@ -84,7 +105,7 @@ impl TileLoader for TileDownloader {
       data.insert(*tile);
     }
 
-    let url = format!("{}/{}/{}/{}.png", self.base_url, tile.zoom, tile.x, tile.y);
+    let url = self.get_path_for_tile(tile);
     debug!("Downloading {}.", url);
     let result = surf::get(&url)
       .recv_bytes()
@@ -130,13 +151,25 @@ impl Default for CachedTileLoader {
       Ok(path) => Some(PathBuf::from(path)),
       Err(_) => None,
     };
-    let tile_cache = TileCache { base_path };
 
-    let base_url = String::from("https://tile.openstreetmap.org");
-    let tile_loader = TileDownloader {
-      base_url,
-      tiles_in_download: Arc::default(),
+    let tile_loader = TileDownloader::from_env();
+    let cache_path = base_path.map(|mut p| {
+      let mut hasher = DefaultHasher::new();
+      tile_loader.url_template.hash(&mut hasher);
+      p.push(hasher.finish().to_string());
+      p
+    });
+
+    if let Some(ref cache_path) = cache_path {
+      if !cache_path.exists() {
+        let _ = std::fs::create_dir_all(cache_path);
+      }
+    }
+
+    let tile_cache = TileCache {
+      base_path: cache_path,
     };
+
     CachedTileLoader {
       tile_cache,
       tile_loader,
