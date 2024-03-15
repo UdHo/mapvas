@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.x
+## 0.1.10
 
 - allow different map tile provider.
 - canvas rescales when moving to different screens.
