@@ -11,20 +11,15 @@ The repo contains two binaries,
 Make sure you have the nighly Rust toolchain installed.
 
 - [Install Rust](https://rustup.rs).
-- Install the nightly toolchain
-
-```
-    rustup toolchain install nightly
-```
 
 Manually:
 
 - Clone this repository.
-- `cd mapvas ; cargo +nightly install --path .`
+- `cd mapvas ; cargo install --path .`
 
 Via cargo from [crates.io](https://crates.io/crates/mapvas):
 
-- `cargo +nightly install mapvas`
+- `cargo install mapvas`
 
 ## Usage
 

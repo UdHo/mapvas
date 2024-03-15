@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.11
+
+- use rust stable
+
 ## 0.1.10
 
 - allow different map tile provider.

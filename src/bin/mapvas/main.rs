@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use mapvas::{
   map::{map_event::MapEvent, mapvas::MapVas},
   remote::{serve_axum, DEFAULT_PORT},
