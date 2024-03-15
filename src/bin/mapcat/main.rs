@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
