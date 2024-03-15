@@ -25,7 +25,7 @@ use glutin::{
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
 use glutin_winit::DisplayBuilder;
-use log::{error, trace};
+use log::trace;
 use raw_window_handle::HasRawWindowHandle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use winit::{
@@ -343,7 +343,6 @@ impl MapVas {
           }
           Event::UserEvent(MapEvent::Layer(layer)) => self.handle_layer_event(layer),
           Event::UserEvent(MapEvent::Clear) => {
-            error!("Clear event received");
             self.map_provider.clear_layers();
           }
           Event::LoopDestroyed | Event::UserEvent(MapEvent::Shutdown) => {
