@@ -4,7 +4,8 @@ on:
   push:
     branches: [ "master" ]
   pull_request:
-    branches: [ "master" ]
+    branches:
+      - '**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,11 +18,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup Rust
-      run: rustup component add rustfmt clippy
+      run: rustup update nightly && rustup component add rustfmt clippy
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
     - name: tests
-      run: cargo test --verbose
+      run: cargo test
     - name: clippy
       run: cargo clippy --no-deps
     - name: fmt
