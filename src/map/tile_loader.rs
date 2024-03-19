@@ -2,6 +2,7 @@ use crate::map::coordinates::Tile;
 use anyhow::Result;
 use async_std::task::block_on;
 use log::{debug, error, trace};
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -154,8 +155,10 @@ impl Default for CachedTileLoader {
 
     let tile_loader = TileDownloader::from_env();
     let cache_path = base_path.map(|mut p| {
+      let key_re = Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("re did not compile");
+      let res = key_re.replace(&tile_loader.url_template, "*");
       let mut hasher = DefaultHasher::new();
-      tile_loader.url_template.hash(&mut hasher);
+      res.hash(&mut hasher);
       p.push(hasher.finish().to_string());
       p
     });
