@@ -1,5 +1,10 @@
 # Changelog
 
+
+## 0.1.13
+
+- give point labels a small preference.
+
 ## 0.1.12
 
 - adding label patterns and right clicks to show labels. c copies shown labels.
