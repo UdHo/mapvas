@@ -66,6 +66,31 @@ impl PixelPosition {
       y: self.y.clamp(0.0, CANVAS_SIZE),
     }
   }
+
+  pub fn sq_dist(&self, p: &Self) -> f32 {
+    let dx = p.x - self.x;
+    let dy = p.y - self.y;
+    dx * dx + dy * dy
+  }
+
+  pub fn sq_distance_line_segment(&self, l1: &PixelPosition, l2: &PixelPosition) -> f32 {
+    let dbx = l2.x - l1.x;
+    let dby = l2.y - l1.y;
+    let dpx = self.x - l1.x;
+    let dpy = self.y - l1.y;
+    let dot = dbx * dpx + dby * dpy;
+    let len_sq = dbx * dbx + dby * dby;
+
+    if len_sq < 0.000_000_1 {
+      return self.sq_dist(l1);
+    }
+    let param = (dot / len_sq).clamp(0., 1.);
+    PixelPosition {
+      x: l1.x + param * dbx,
+      y: l1.y + param * dby,
+    }
+    .sq_dist(self)
+  }
 }
 
 impl From<PixelPosition> for Coordinate {
@@ -153,6 +178,8 @@ impl From<TileCoordinate> for Coordinate {
     }
   }
 }
+
+#[derive(Debug)]
 pub struct BoundingBox {
   max_x: f32,
   min_x: f32,
