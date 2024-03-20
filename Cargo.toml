@@ -2,7 +2,7 @@
 name = "mapvas"
 readme = "README.md"
 description = "A map viewer with drawing functionality"
-version = "0.1.11"
+version = "0.1.12"
 authors = ["Udo Hoffmann <hoffmann.odu@gmail.com>"]
 edition = "2021"
 keywords = ["map", "openstreetmap", "drawing"]
@@ -19,6 +19,7 @@ futures = "0.3.28"
 glutin = "0.30.10"
 glutin-winit = "0.3.0"
 image = "0.24.7"
+itertools = "0.12.1"
 log = "0.4.20"
 raw-window-handle = "0.5.2"
 rayon = "1.8.0"
@@ -37,4 +38,5 @@ regex = "1.9.5"
 rand = "0.8.5"
 clap = {version ="4.4.5", features=["derive"]}
 arboard = "3.3.2"
+ttf-noto-sans = "0.1.2"
 

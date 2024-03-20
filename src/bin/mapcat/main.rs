@@ -33,6 +33,10 @@ struct Args {
   #[arg(short, long)]
   focus: bool,
 
+  /// Defines a regex with one capture group labels.
+  #[arg(short, long)]
+  label_pattern: Option<String>,
+
   /// A file to parse. stdin is used if this is not provided.
   file: Option<std::path::PathBuf>,
 }
@@ -54,7 +58,11 @@ async fn main() {
   let mut parser: Box<dyn Parser> = match args.parser.as_str() {
     "random" => Box::new(RandomParser::new()),
     "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
-    "grep" => Box::new(GrepParser::new(args.invert_coordinates).with_color(color)),
+    "grep" => Box::new(
+      GrepParser::new(args.invert_coordinates)
+        .with_color(color)
+        .with_label_pattern(&args.label_pattern),
+    ),
     _ => {
       error!("Unkown parser: {}. Falling back to grep.", args.parser);
       Box::new(GrepParser::new(args.invert_coordinates))

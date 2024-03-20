@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.12
+
+- adding label patterns and right clicks to show labels. c copies shown labels.
+
 ## 0.1.11
 
 - use rust stable

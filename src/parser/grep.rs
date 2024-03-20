@@ -20,6 +20,7 @@ pub struct GrepParser {
   fill_re: Regex,
   coord_re: Regex,
   clear_re: Regex,
+  label_re: Option<Regex>,
 }
 
 impl Parser for GrepParser {
@@ -33,6 +34,7 @@ impl Parser for GrepParser {
     for l in line.split('\n') {
       self.parse_color(l);
       self.parse_fill(l);
+      let label = self.parse_label(l);
       let coordinates = self.parse_shape(l);
       match coordinates.len() {
         0 => (),
@@ -40,14 +42,16 @@ impl Parser for GrepParser {
           layer.shapes.push(
             Shape::new(coordinates)
               .with_color(self.color)
-              .with_fill(FillStyle::Solid),
+              .with_fill(FillStyle::Solid)
+              .with_label(label),
           );
         }
         _ => {
           layer.shapes.push(
             Shape::new(coordinates)
               .with_color(self.color)
-              .with_fill(self.fill),
+              .with_fill(self.fill)
+              .with_label(label),
           );
         }
       }
@@ -87,12 +91,21 @@ impl GrepParser {
       fill_re,
       coord_re,
       clear_re,
+      label_re: None,
     }
   }
 
   #[must_use]
   pub fn with_color(mut self, color: Color) -> Self {
     self.color = color;
+    self
+  }
+
+  #[must_use]
+  pub fn with_label_pattern(mut self, label_pattern: &Option<String>) -> Self {
+    if let Some(label_pattern) = label_pattern {
+      self.label_re = Some(Regex::new(label_pattern).expect("Cannot build label regex."));
+    }
     self
   }
 
@@ -124,6 +137,23 @@ impl GrepParser {
       }
     }
     coordinates
+  }
+
+  fn parse_label(&self, line: &str) -> Option<String> {
+    if let Some(re) = &self.label_re {
+      let res: Vec<_> = re
+        .captures_iter(line)
+        .map(|c| c.extract::<1>().1[0])
+        .collect();
+
+      if res.is_empty() {
+        None
+      } else {
+        Some(res.join(" | "))
+      }
+    } else {
+      None
+    }
   }
 
   fn parse_coordinate(&self, x: &str, y: &str) -> Option<Coordinate> {

@@ -37,9 +37,43 @@ use winit::{
   window::{Window, WindowBuilder},
 };
 
+#[derive(Debug)]
 enum LayerElement {
-  Polyline(Path, BoundingBox),
-  Point(PixelPosition),
+  Polyline(Path, BoundingBox, Vec<PixelPosition>, Option<String>),
+  Point(PixelPosition, Option<String>),
+}
+
+impl LayerElement {
+  pub fn with_text(self, text: Option<String>) -> Self {
+    match self {
+      Self::Point(p, _) => Self::Point(p, text),
+      Self::Polyline(a, b, c, _) => Self::Polyline(a, b, c, text),
+    }
+  }
+
+  pub fn sq_distance_to_point(&self, p: PixelPosition) -> f32 {
+    match self {
+      Self::Polyline(_, _, coords, _) => coords
+        .windows(2)
+        .map(|points| p.sq_distance_line_segment(&points[0], &points[1]))
+        .fold(f32::MAX, |min, d| min.min(d)),
+      Self::Point(PixelPosition { x, y }, _) => (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y),
+    }
+  }
+
+  pub fn get_text(&self) -> Option<String> {
+    match self {
+      Self::Polyline(_, _, _, t) => t.clone(),
+      Self::Point(_, t) => t.clone(),
+    }
+  }
+
+  pub fn has_text(&self) -> bool {
+    match self {
+      Self::Polyline(_, _, _, t) => t.is_some(),
+      Self::Point(_, t) => t.is_some(),
+    }
+  }
 }
 
 #[allow(clippy::struct_field_names)]
@@ -73,8 +107,8 @@ impl MapProvider {
       .iter()
       .flat_map(|(_, elements)| elements.iter())
       .for_each(|e| match &e.0 {
-        LayerElement::Point(p) => bb.add_coordinate(*p),
-        LayerElement::Polyline(_, b) => bb.extend(b),
+        LayerElement::Point(p, _) => bb.add_coordinate(*p),
+        LayerElement::Polyline(_, b, _, _) => bb.extend(b),
       });
     bb.is_valid().then_some(bb)
   }
@@ -125,6 +159,7 @@ pub struct MapVas {
   mousey: f32,
   event_handler: MapEventHander,
   map_provider: MapProvider,
+  closest_text: String,
 }
 
 impl Default for MapVas {
@@ -236,6 +271,7 @@ impl MapVas {
         event_sender: tx.clone(),
       },
       map_provider: MapProvider::new(CachedTileLoader::default(), tx),
+      closest_text: Default::default(),
     }
   }
 
@@ -245,6 +281,8 @@ impl MapVas {
   /// If it cannot start up.
   #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
   pub fn run(mut self) {
+    let _ = self.canvas.add_font_mem(ttf_noto_sans::REGULAR);
+
     self.spawn_event_handler();
     self
       .event_loop
@@ -270,6 +308,11 @@ impl MapVas {
               ElementState::Pressed => self.dragging = true,
               ElementState::Released => self.dragging = false,
             },
+            WindowEvent::MouseInput {
+              button: MouseButton::Right,
+              ..
+            } => self.update_closest(),
+
             WindowEvent::CursorMoved {
               device_id: _,
               position,
@@ -359,6 +402,24 @@ impl MapVas {
     self.event_handler.event_sender.clone()
   }
 
+  fn draw_text(&mut self) {
+    if self.closest_text.is_empty() {
+      return;
+    }
+    let w = self.window.inner_size().width as f32;
+    let h = 25.;
+    let mut path = Path::new();
+    path.rect(0., 0., w, h);
+    self
+      .canvas
+      .fill_path(&path, &Paint::color(Color::rgba(128, 128, 128, 128)));
+    let mut text_paint = Paint::color(Color::rgba(240, 240, 240, 255));
+    text_paint.set_font_size(14.);
+    let _ = self
+      .canvas
+      .fill_text(10., 15., &self.closest_text, &text_paint);
+  }
+
   fn spawn_event_handler(&mut self) {
     let proxy = self.event_handler.event_proxy.clone();
     let mut receiver = self
@@ -385,6 +446,7 @@ impl MapVas {
       VirtualKeyCode::Equals | VirtualKeyCode::Plus => self.zoom_canvas_center(ZOOM_SPEED),
       VirtualKeyCode::Minus => self.zoom_canvas_center(1. / ZOOM_SPEED),
       VirtualKeyCode::V => self.paste(),
+      VirtualKeyCode::C => self.copy(),
       VirtualKeyCode::F => self.handle_focus_event(),
       _ => (),
     };
@@ -399,6 +461,14 @@ impl MapVas {
         }
       }
     });
+  }
+
+  fn copy(&self) {
+    if self.closest_text.is_empty() {
+      return;
+    }
+    let mut clipboard = Clipboard::new().unwrap();
+    clipboard.set_text(&self.closest_text).unwrap();
   }
 
   #[allow(clippy::cast_precision_loss)]
@@ -484,7 +554,12 @@ impl MapVas {
 
     self.draw_map();
     self.draw_layers();
+
     self.canvas.save();
+    self.canvas.reset();
+    self.draw_text();
+    self.canvas.restore();
+
     self.canvas.flush();
     self.surface.swap_buffers(&self.context).unwrap();
   }
@@ -502,13 +577,13 @@ impl MapVas {
         };
 
         match path {
-          LayerElement::Polyline(poly, _) => {
+          LayerElement::Polyline(poly, _, _, _) => {
             self.canvas.stroke_path(poly, &stroke);
             if let Some(style) = fill.as_ref() {
               self.canvas.fill_path(poly, style);
             };
           }
-          LayerElement::Point(point) => {
+          LayerElement::Point(point, _) => {
             let mut circle = Path::new();
             circle.circle(
               point.x,
@@ -607,7 +682,7 @@ impl MapVas {
       .copied()
       .map(Into::<PixelPosition>::into);
     if coords.len() == 1 {
-      LayerElement::Point(coords[0].into())
+      LayerElement::Point(coords[0].into(), None)
     } else {
       let mut path = Path::new();
 
@@ -619,7 +694,12 @@ impl MapVas {
       if close_path {
         path.line_to(start.x, start.y);
       }
-      LayerElement::Polyline(path, BoundingBox::from_iterator(points))
+      LayerElement::Polyline(
+        path,
+        BoundingBox::from_iterator(coords.iter().copied().map(Into::into)),
+        coords.iter().copied().map(Into::into).collect(),
+        None,
+      )
     }
   }
 
@@ -646,7 +726,8 @@ impl MapVas {
       .iter()
       .map(|shape| {
         (
-          Self::coords_to_element(&shape.coordinates, shape.style.fill != FillStyle::NoFill),
+          Self::coords_to_element(&shape.coordinates, shape.style.fill != FillStyle::NoFill)
+            .with_text(shape.label.clone()),
           shape.style,
         )
       })
@@ -658,5 +739,32 @@ impl MapVas {
       .entry(layer.id)
       .and_modify(|l| l.append(&mut paths))
       .or_insert(paths);
+  }
+
+  #[allow(clippy::unnecessary_unwrap)]
+  fn update_closest(&mut self) {
+    let mut trans = self.canvas.transform();
+    trans.inverse();
+    let pos = trans.transform_point(self.mousex, self.mousey);
+    let mouse = PixelPosition { x: pos.0, y: pos.1 };
+
+    let (closest, dist) = self
+      .map_provider
+      .layers
+      .iter()
+      .flat_map(|l| l.1.iter().map(|e| &e.0))
+      .fold((None, f32::MAX), |(el, dist), next| {
+        let next_dist = next.sq_distance_to_point(mouse);
+        if next_dist < dist && next.has_text() {
+          (Some(next), next_dist)
+        } else {
+          (el, dist)
+        }
+      });
+    self.closest_text = if closest.is_some() && dist < 0.25 {
+      closest.unwrap().get_text().unwrap_or("".into())
+    } else {
+      "".into()
+    };
   }
 }

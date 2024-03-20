@@ -109,19 +109,20 @@ impl FromStr for FillStyle {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
   pub coordinates: Vec<Coordinate>,
   pub style: Style,
   pub visible: bool,
+  pub label: Option<String>,
 }
 
 impl Shape {
   pub fn new(coordinates: Vec<Coordinate>) -> Self {
     Shape {
       coordinates,
-      style: Style::default(),
       visible: true,
+      ..Default::default()
     }
   }
 
@@ -132,6 +133,11 @@ impl Shape {
 
   pub fn with_fill(mut self, fill: FillStyle) -> Self {
     self.style.fill = fill;
+    self
+  }
+
+  pub fn with_label(mut self, label: Option<String>) -> Self {
+    self.label = label;
     self
   }
 }

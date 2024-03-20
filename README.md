@@ -33,6 +33,7 @@ Start `mapvas` and a map window will appear.
 | focus to drawn elements | f centers the drawn elements |
 | moving | Left mouse and dragging or arrow keys |
 | paste | pressing v will paste the clipboard into the grep parser |
+| information about element | right click near an element with label will show the label | 
 
 ### mapcat
 
@@ -89,10 +90,17 @@ Filling a polyline causes it to be drawn as closed polygon.
 echo "clear" | mapcat
 ```
 
-The minus -r parameter clears the map before drawing new elements.
+The -r parameter clears the map before drawing new elements.
 
 ```
 echo "52.5,12.5" | mapcat -r
+```
+
+- -l defines a label pattern. A near label is shown when right click on the map happens. The label is copied (when shown) via the c key.
+The label requires exactly one capture group to be in the pattern.
+
+```
+echo "52.4,12.4" | mapcat -l "(.*)"
 ```
 
 - --focus (-f) zooms and pans to show all elements on the map.
