@@ -57,7 +57,9 @@ impl LayerElement {
         .windows(2)
         .map(|points| p.sq_distance_line_segment(&points[0], &points[1]))
         .fold(f32::MAX, |min, d| min.min(d)),
-      Self::Point(PixelPosition { x, y }, _) => (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y),
+      Self::Point(PixelPosition { x, y }, _) => {
+        (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) - 0.0001
+      }
     }
   }
 
