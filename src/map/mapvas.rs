@@ -51,14 +51,14 @@ impl LayerElement {
     }
   }
 
-  pub fn sq_distance_to_point(&self, p: PixelPosition) -> f32 {
+  pub fn sq_distance_to_point(&self, p: PixelPosition, point_preference: f32) -> f32 {
     match self {
       Self::Polyline(_, _, coords, _) => coords
         .windows(2)
         .map(|points| p.sq_distance_line_segment(&points[0], &points[1]))
         .fold(f32::MAX, |min, d| min.min(d)),
       Self::Point(PixelPosition { x, y }, _) => {
-        (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) - 0.0001
+        (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) - point_preference
       }
     }
   }
@@ -743,12 +743,15 @@ impl MapVas {
       .or_insert(paths);
   }
 
-  #[allow(clippy::unnecessary_unwrap)]
   fn update_closest(&mut self) {
     let mut trans = self.canvas.transform();
     trans.inverse();
     let pos = trans.transform_point(self.mousex, self.mousey);
     let mouse = PixelPosition { x: pos.0, y: pos.1 };
+
+    let (a, b, _) = self.get_current_canvas_section();
+    let dist_treshold = (b.x - a.x) / 80.;
+    let point_preference_weight = dist_treshold / 4.;
 
     let (closest, dist) = self
       .map_provider
@@ -756,17 +759,18 @@ impl MapVas {
       .iter()
       .flat_map(|l| l.1.iter().map(|e| &e.0))
       .fold((None, f32::MAX), |(el, dist), next| {
-        let next_dist = next.sq_distance_to_point(mouse);
+        let next_dist = next.sq_distance_to_point(mouse, point_preference_weight);
         if next_dist < dist && next.has_text() {
           (Some(next), next_dist)
         } else {
           (el, dist)
         }
       });
-    self.closest_text = if closest.is_some() && dist < 0.25 {
-      closest.unwrap().get_text().unwrap_or("".into())
-    } else {
-      "".into()
-    };
+    self.closest_text =
+      if let (Some(closest), true) = (closest, dist < dist_treshold * dist_treshold) {
+        closest.get_text().unwrap_or("".into())
+      } else {
+        "".into()
+      };
   }
 }
