@@ -162,6 +162,7 @@ pub struct MapVas {
   event_handler: MapEventHander,
   map_provider: MapProvider,
   closest_text: String,
+  scale_factor: f32,
 }
 
 impl Default for MapVas {
@@ -258,6 +259,7 @@ impl MapVas {
 
     let event_proxy = event_loop.create_proxy();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
+    let scale_factor = window.scale_factor() as f32;
     Self {
       event_loop: Some(event_loop),
       canvas,
@@ -274,6 +276,7 @@ impl MapVas {
       },
       map_provider: MapProvider::new(CachedTileLoader::default(), tx),
       closest_text: Default::default(),
+      scale_factor,
     }
   }
 
@@ -296,24 +299,42 @@ impl MapVas {
         match event {
           Event::WindowEvent { ref event, .. } => match event {
             WindowEvent::Resized(physical_size) => {
+              let section = self.get_current_canvas_section();
+              let bb = BoundingBox::new()
+                .added_coordinate(section.0)
+                .added_coordinate(section.1);
               self.surface.resize(
                 &self.context,
                 physical_size.width.try_into().unwrap(),
                 physical_size.height.try_into().unwrap(),
               );
+              self.focus_bounding_box(&bb);
             }
             WindowEvent::MouseInput {
               button: MouseButton::Left,
               state,
               ..
-            } => match state {
-              ElementState::Pressed => self.dragging = true,
-              ElementState::Released => self.dragging = false,
-            },
+            } => {
+              self.print_coordinate();
+              match state {
+                ElementState::Pressed => self.dragging = true,
+                ElementState::Released => self.dragging = false,
+              }
+            }
             WindowEvent::MouseInput {
               button: MouseButton::Right,
+              state,
               ..
-            } => self.update_closest(),
+            } => {
+              if matches!(state, ElementState::Pressed) {
+                self.update_closest();
+                eprintln!("mouse {} {}", self.mousex, self.mousey);
+                let (a, b, _) = self.get_current_canvas_section();
+                eprintln!("current_section {:?} {:?}", a, b);
+                self.print_coordinate();
+                self.set_center(self.print_coordinate());
+              }
+            }
 
             WindowEvent::CursorMoved {
               device_id: _,
@@ -371,13 +392,16 @@ impl MapVas {
 
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
             WindowEvent::ScaleFactorChanged {
-              scale_factor: _,
+              scale_factor,
               new_inner_size,
-            } => self.surface.resize(
-              &self.context,
-              new_inner_size.width.try_into().unwrap(),
-              new_inner_size.height.try_into().unwrap(),
-            ),
+            } => {
+              self.scale_factor = *scale_factor as f32;
+              self.surface.resize(
+                &self.context,
+                new_inner_size.width.try_into().unwrap(),
+                new_inner_size.height.try_into().unwrap(),
+              );
+            }
 
             _ => trace!("Unhandled window event: {:?}", event),
           },
@@ -404,17 +428,21 @@ impl MapVas {
     self.event_handler.event_sender.clone()
   }
 
+  fn draw_box(&mut self, x_s: f32, y_s: f32, x_e: f32, y_e: f32) {
+    let mut path = Path::new();
+    path.rect(x_s, y_s, x_e, y_e);
+    self
+      .canvas
+      .fill_path(&path, &Paint::color(Color::rgba(80, 80, 80, 200)));
+  }
+
   fn draw_text(&mut self) {
     if self.closest_text.is_empty() {
       return;
     }
     let w = self.window.inner_size().width as f32;
     let h = 25.;
-    let mut path = Path::new();
-    path.rect(0., 0., w, h);
-    self
-      .canvas
-      .fill_path(&path, &Paint::color(Color::rgba(128, 128, 128, 128)));
+    self.draw_box(0., 0., w, h);
     let mut text_paint = Paint::color(Color::rgba(240, 240, 240, 255));
     text_paint.set_font_size(14.);
     let _ = self
@@ -490,15 +518,14 @@ impl MapVas {
   }
 
   #[allow(unused)]
-  fn print_coordinate(&self) {
+  fn print_coordinate(&self) -> PixelPosition {
     let (nw, _, zoom) = self.get_current_canvas_section();
-    eprintln!(
-      "{:?}",
-      PixelPosition {
-        x: nw.x + self.mousex / zoom,
-        y: nw.y + self.mousey / zoom
-      },
-    );
+    let pp = PixelPosition {
+      x: nw.x + self.mousex / zoom,
+      y: nw.y + self.mousey / zoom,
+    };
+    eprintln!("Coordinate: {:?} {:?}", pp, Coordinate::from(pp));
+    pp
   }
 
   #[allow(
@@ -517,6 +544,11 @@ impl MapVas {
     let nw_tile = TileCoordinate::from_pixel_position(nw.clamp(), zoom_level as u8);
     let se_tile = TileCoordinate::from_pixel_position(se.clamp(), zoom_level as u8);
     tiles_in_box(nw_tile, se_tile)
+  }
+
+  fn position_to_pixel_position(&self, x: f32, y: f32) -> PixelPosition {
+    let pp = self.canvas.transform().inversed().transform_point(x, y);
+    PixelPosition { x: pp.0, y: pp.1 }
   }
 
   fn draw_map(&mut self) {
@@ -625,14 +657,14 @@ impl MapVas {
 
   #[allow(clippy::cast_precision_loss)]
   fn set_center(&mut self, center: PixelPosition) {
+    let (a, b, _) = self.get_current_canvas_section();
+    let old = BoundingBox::new()
+      .added_coordinate(a)
+      .added_coordinate(b)
+      .center();
+    eprintln!("old center {old:?}, new {center:?}");
     let new = self.canvas.transform().transform_point(center.x, center.y);
-    let window_size = self.window.inner_size();
-    self.translate(
-      new.0,
-      new.1,
-      window_size.width as f32 / 2.,
-      window_size.height as f32 / 2.,
-    );
+    self.translate(new.0, new.1, old.x, old.y);
   }
 
   #[allow(clippy::cast_precision_loss)]
@@ -705,9 +737,13 @@ impl MapVas {
     }
   }
 
-  #[allow(clippy::cast_precision_loss)]
   fn handle_focus_event(&mut self) {
     let bb = self.map_provider.layers_bounding_box().unwrap_or_default();
+    self.focus_bounding_box(&bb);
+  }
+
+  #[allow(clippy::cast_precision_loss)]
+  fn focus_bounding_box(&mut self, bb: &BoundingBox) {
     if !bb.is_valid() {
       return;
     }
@@ -718,8 +754,8 @@ impl MapVas {
     let requested_zoom_y =
       (window_size.height - empty_space_width) as f32 / (bb.height() + 0.00001);
     self.zoom_canvas_center(requested_zoom_x.min(requested_zoom_y) / self.get_zoom_factor());
-    self.fit_to_window();
     self.set_center(bb.center());
+    self.fit_to_window();
   }
 
   fn handle_layer_event(&mut self, layer: Layer) {

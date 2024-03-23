@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// A standard WGS-84 coordinates.
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct Coordinate {
   #[serde(alias = "latitude")]
@@ -14,6 +15,7 @@ impl Coordinate {
   }
 }
 
+/// The pixel on a sperical mercator tile with
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct TileCoordinate {
   pub x: f32,
@@ -229,6 +231,11 @@ impl BoundingBox {
     self.min_x = self.min_x.min(pp.x);
     self.max_y = self.max_y.max(pp.y);
     self.max_x = self.max_x.max(pp.x);
+  }
+
+  pub fn added_coordinate(mut self, pp: PixelPosition) -> Self {
+    self.add_coordinate(pp);
+    self
   }
 
   pub fn extend(&mut self, bb: &Self) {
