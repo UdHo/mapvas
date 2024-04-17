@@ -87,7 +87,7 @@ impl TileDownloader {
     Self {
       url_template,
       tiles_in_download: Default::default(),
-      client: surf::Client::new().with(GovernorMiddleware::per_second(20).unwrap()),
+      client: surf::Client::new().with(GovernorMiddleware::per_second(50).unwrap()),
     }
   }
 
