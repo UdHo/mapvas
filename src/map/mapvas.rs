@@ -10,8 +10,8 @@ use super::{
 
 use crate::parser::{GrepParser, Parser};
 
-use std::num::NonZeroU32;
 use std::{cmp::max, collections::HashMap};
+use std::{num::NonZeroU32, sync::Arc};
 
 use arboard::Clipboard;
 use async_std::task::block_on;
@@ -25,7 +25,7 @@ use glutin::{
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
 use glutin_winit::DisplayBuilder;
-use log::trace;
+use log::{info, trace};
 use raw_window_handle::HasRawWindowHandle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use winit::{
@@ -88,14 +88,14 @@ struct MapEventHander {
 struct MapProvider {
   loaded_images: HashMap<Tile, ImageId>,
   layers: HashMap<String, Vec<(LayerElement, Style)>>,
-  tile_loader: CachedTileLoader,
+  tile_loader: Arc<CachedTileLoader>,
   event_sender: Sender<MapEvent>,
 }
 
 impl MapProvider {
   fn new(tile_loader: CachedTileLoader, event_sender: Sender<MapEvent>) -> Self {
     Self {
-      tile_loader,
+      tile_loader: Arc::new(tile_loader),
       event_sender,
       loaded_images: Default::default(),
       layers: Default::default(),
@@ -606,6 +606,8 @@ impl MapVas {
     let image_id = self.canvas.load_image_mem(data, ImageFlags::empty());
     if let Ok(id) = image_id {
       self.map_provider.add_tile_image(tile, id);
+    } else {
+      info!("Tile {tile:?} image decoding problem");
     }
   }
 

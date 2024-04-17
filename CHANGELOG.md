@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.x
+
+- improve tile download failures. Introduce download rate limit
 
 ## 0.1.13
 
