@@ -9,6 +9,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use surf::http::Method;
+use surf::{Request, Url};
+use surf_governor::GovernorMiddleware;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -69,10 +72,11 @@ impl TileLoader for TileCache {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct TileDownloader {
   url_template: String,
   tiles_in_download: Arc<Mutex<HashSet<Tile>>>,
+  client: surf::Client,
 }
 
 impl TileDownloader {
@@ -83,6 +87,7 @@ impl TileDownloader {
     Self {
       url_template,
       tiles_in_download: Default::default(),
+      client: surf::Client::new().with(GovernorMiddleware::per_second(20).unwrap()),
     }
   }
 
@@ -98,30 +103,44 @@ impl TileDownloader {
 impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     {
-      let mut data = self.tiles_in_download.lock().unwrap();
-      let is_in_progress = data.get(tile);
+      let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
+      let is_in_progress = tiles_in_download.get(tile);
       if is_in_progress.is_some() {
         return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
       }
-      data.insert(*tile);
+      tiles_in_download.insert(*tile);
     }
 
     let url = self.get_path_for_tile(tile);
     debug!("Downloading {}.", url);
-    let result = surf::get(&url)
-      .recv_bytes()
+    let request = Request::new(Method::Get, Url::parse(&url).unwrap());
+    let result = self
+      .client
+      .send(request)
       .await
       .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile });
+    let result = if let Ok(mut result) = result {
+      if result.status() == 200 {
+        result
+          .body_bytes()
+          .await
+          .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile })
+      } else {
+        Err(TileLoaderError::TileNotAvailableError { tile: *tile })
+      }
+    } else {
+      debug!("{result:?}");
+      Err(TileLoaderError::TileNotAvailableError { tile: *tile })
+    };
 
-    {
-      let mut data = self.tiles_in_download.lock().unwrap();
-      data.remove(tile);
-    }
+    let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
+    tiles_in_download.remove(tile);
+
     Ok(result?)
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CachedTileLoader {
   tile_cache: TileCache,
   tile_loader: TileDownloader,
