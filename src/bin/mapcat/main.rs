@@ -3,7 +3,7 @@ use std::str::FromStr;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
+use mapvas::parser::{GeoJsonParser, GrepParser, Parser, RandomParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -63,6 +63,7 @@ async fn main() {
         .with_color(color)
         .with_label_pattern(&args.label_pattern),
     ),
+    "geojson" => Box::new(GeoJsonParser::new()),
     _ => {
       error!("Unkown parser: {}. Falling back to grep.", args.parser);
       Box::new(GrepParser::new(args.invert_coordinates))
