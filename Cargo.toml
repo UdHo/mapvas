@@ -41,3 +41,5 @@ arboard = "3.3.2"
 ttf-noto-sans = "0.1.2"
 surf-governor = "0.2.0"
 
+[dev-dependencies]
+rstest = "0.21.0"
