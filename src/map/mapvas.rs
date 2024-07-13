@@ -450,6 +450,7 @@ impl MapVas {
       VirtualKeyCode::V => self.paste(),
       VirtualKeyCode::C => self.copy(),
       VirtualKeyCode::F => self.handle_focus_event(),
+      VirtualKeyCode::L => self.update_closest(),
       _ => (),
     };
   }
@@ -775,4 +776,10 @@ impl MapVas {
         "".into()
       };
   }
+}
+
+#[cfg(test)]
+mod test {
+  #[test]
+  fn image_loading_test() {}
 }

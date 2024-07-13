@@ -33,7 +33,7 @@ Start `mapvas` and a map window will appear.
 | focus to drawn elements | f centers the drawn elements |
 | moving | Left mouse and dragging or arrow keys |
 | paste | pressing v will paste the clipboard into the grep parser |
-| information about element | right click near an element with label will show the label | 
+| information about element | right click near an element with label will show the label. L will use the current mouse position for poor mac users. |
 
 ### mapcat
 
@@ -97,7 +97,7 @@ echo "52.5,12.5" | mapcat -r
 ```
 
 - -l defines a label pattern. A near label is shown when right click on the map happens. The label is copied (when shown) via the c key.
-The label requires exactly one capture group to be in the pattern.
+  The label requires exactly one capture group to be in the pattern.
 
 ```
 echo "52.4,12.4" | mapcat -l "(.*)"
@@ -131,6 +131,7 @@ To cache tile images for future runs set the environment variable `TILECACHE` to
     mkdir ~/.tilecache
     export TILECACHE=~/.tilecache
 ```
+
 #### Different map tile url
 
 To use tiles from a different provider than [openstreetmap] you can set a templated url. The url must contain `{zoom}`, `{x}`, and `{y}`. The tile provider should return tiles in the [pseudo/spherical-mercator projection](https://epsg.io/3857) in a size of 512x512 pixel. Examples:
@@ -140,4 +141,3 @@ To use tiles from a different provider than [openstreetmap] you can set a templa
     export MAPVAS_TILE_URL='https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=***'
     export MAPVAS_TILE_URL='https://maps.hereapi.com/v3/background/mc/{zoom}/{x}/{y}/png8?size=512&apiKey=***'
 ```
-
