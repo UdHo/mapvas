@@ -102,10 +102,8 @@ impl GrepParser {
   }
 
   #[must_use]
-  pub fn with_label_pattern(mut self, label_pattern: &Option<String>) -> Self {
-    if let Some(label_pattern) = label_pattern {
-      self.label_re = Some(Regex::new(label_pattern).expect("Cannot build label regex."));
-    }
+  pub fn with_label_pattern(mut self, label_pattern: &str) -> Self {
+    self.label_re = Some(Regex::new(label_pattern).expect("Cannot build label regex."));
     self
   }
 

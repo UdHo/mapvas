@@ -96,8 +96,8 @@ The -r parameter clears the map before drawing new elements.
 echo "52.5,12.5" | mapcat -r
 ```
 
-- -l defines a label pattern. A near label is shown when right click on the map happens. The label is copied (when shown) via the c key.
-  The label requires exactly one capture group to be in the pattern.
+- --label-pattern (-l) defines a label pattern. A near label is shown when right click on the map happens. The label is copied (when shown) via the c key.
+  The label requires exactly one capture group to be in the pattern. Default is `"(.*)"` which captures everything.
 
 ```
 echo "52.4,12.4" | mapcat -l "(.*)"

@@ -34,8 +34,8 @@ struct Args {
   focus: bool,
 
   /// Defines a regex with one capture group labels.
-  #[arg(short, long)]
-  label_pattern: Option<String>,
+  #[arg(short, long, default_value = "(.*)")]
+  label_pattern: String,
 
   /// A file to parse. stdin is used if this is not provided.
   file: Option<std::path::PathBuf>,
