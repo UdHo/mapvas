@@ -15,11 +15,11 @@ Make sure you have the nighly Rust toolchain installed.
 Manually:
 
 - Clone this repository.
-- `cd mapvas ; cargo install --path .`
+- `cd mapvas ; cargo install --path . --locked`
 
 Via cargo from [crates.io](https://crates.io/crates/mapvas):
 
-- `cargo install mapvas`
+- `cargo install mapvas --locked`
 
 ## Usage
 
