@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.xx
+## 0.1.14
 
 - use L key to show the label of the closest.
 - improve tile download failures. Introduce download rate limit
