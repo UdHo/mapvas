@@ -1,4 +1,6 @@
+use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
 
 use clap::Parser as CliParser;
 use log::error;
@@ -6,6 +8,7 @@ use mapvas::map::map_event::{Color, MapEvent};
 use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use tokio::time::sleep;
 
 mod sender;
 
@@ -36,6 +39,11 @@ struct Args {
   /// Defines a regex with one capture group labels.
   #[arg(short, long, default_value = "(.*)")]
   label_pattern: String,
+
+  /// Sets the default color for most parsers. Values: red, blue, green, yellow, black,...
+  /// If you need more just look in the code.
+  #[arg(short, long, default_value = "")]
+  screenshot: String,
 
   /// A file to parse. stdin is used if this is not provided.
   file: Option<std::path::PathBuf>,
@@ -103,6 +111,15 @@ async fn main() {
   if args.focus {
     let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Focus);
+    sender.finalize().await;
+  }
+
+  if !args.screenshot.is_empty() {
+    sleep(Duration::from_millis(300)).await;
+    let sender = sender::MapSender::new().await;
+    sender.send_event(MapEvent::Screenshot(
+      std::path::absolute(Path::new(&args.screenshot)).unwrap(),
+    ));
     sender.finalize().await;
   }
 }

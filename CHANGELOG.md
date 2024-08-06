@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.15
+
+- The S key and a --screenshot on mapcat takes screenshots.
+
 ## 0.1.14
 
 - use L key to show the label of the closest.
