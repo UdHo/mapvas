@@ -118,7 +118,7 @@ async fn main() {
     sleep(Duration::from_millis(300)).await;
     let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Screenshot(
-      std::path::absolute(Path::new(&args.screenshot)).unwrap(),
+      std::path::absolute(Path::new(&args.screenshot.trim())).unwrap(),
     ));
     sender.finalize().await;
   }
