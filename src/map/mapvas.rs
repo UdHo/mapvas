@@ -10,11 +10,12 @@ use super::{
 
 use crate::parser::{GrepParser, Parser};
 
-use std::{cmp::max, collections::HashMap};
+use std::{cmp::max, collections::HashMap, path::PathBuf};
 use std::{num::NonZeroU32, sync::Arc};
 
 use arboard::Clipboard;
 use async_std::task::block_on;
+use chrono::{DateTime, Local};
 use femtovg::{renderer::OpenGl, Canvas, Path};
 use femtovg::{Color, ImageFlags, ImageId, Paint};
 use glutin::prelude::*;
@@ -36,6 +37,11 @@ use winit::{
   event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy},
   window::{Window, WindowBuilder},
 };
+
+fn current_time_string() -> String {
+  let current: DateTime<Local> = Local::now();
+  format!("{current}")
+}
 
 #[derive(Debug)]
 enum LayerElement {
@@ -162,6 +168,7 @@ pub struct MapVas {
   event_handler: MapEventHander,
   map_provider: MapProvider,
   closest_text: String,
+  screenshot: Option<PathBuf>,
 }
 
 impl Default for MapVas {
@@ -184,6 +191,7 @@ impl MapVas {
       let window_builder = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(1000, 1000))
         .with_resizable(true)
+        .with_maximized(true)
         .with_title("MapVas");
       let template = ConfigTemplateBuilder::new().with_alpha_size(8);
 
@@ -274,6 +282,7 @@ impl MapVas {
       },
       map_provider: MapProvider::new(CachedTileLoader::default(), tx),
       closest_text: Default::default(),
+      screenshot: None,
     }
   }
 
@@ -394,6 +403,7 @@ impl MapVas {
             *control_flow = ControlFlow::Exit;
           }
           Event::UserEvent(MapEvent::Focus) => self.handle_focus_event(),
+          Event::UserEvent(MapEvent::Screenshot(pb)) => self.screenshot = Some(pb),
           _ => trace!("Unhandled event: {:?}", event),
         }
       });
@@ -451,6 +461,9 @@ impl MapVas {
       VirtualKeyCode::C => self.copy(),
       VirtualKeyCode::F => self.handle_focus_event(),
       VirtualKeyCode::L => self.update_closest(),
+      VirtualKeyCode::S => {
+        self.make_screenshot(format!("mapvas_{}.png", current_time_string()).into())
+      }
       _ => (),
     };
   }
@@ -565,6 +578,10 @@ impl MapVas {
 
     self.canvas.flush();
     self.surface.swap_buffers(&self.context).unwrap();
+    if let Some(screenshot_pb) = &self.screenshot {
+      self.make_screenshot(screenshot_pb.into());
+      self.screenshot = None;
+    }
   }
 
   fn draw_layers(&mut self) {
@@ -775,6 +792,18 @@ impl MapVas {
       } else {
         "".into()
       };
+  }
+
+  fn make_screenshot(&mut self, pb: std::path::PathBuf) {
+    if let Ok(mut img) = self.canvas.screenshot() {
+      let (buf, w, h) = img.as_contiguous_buf();
+      let img_buf: Vec<_> = buf
+        .iter()
+        .flat_map(|p| [p.r, p.g, p.b].into_iter())
+        .collect();
+
+      let _ = image::save_buffer(pb, &img_buf, w as u32, h as u32, image::ColorType::Rgb8);
+    }
   }
 }
 

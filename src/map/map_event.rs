@@ -1,6 +1,6 @@
 use super::coordinates::{Coordinate, Tile};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 static ALL_COLORS: [Color; 11] = [
   Color::Blue,
@@ -164,4 +164,5 @@ pub enum MapEvent {
   TileDataArrived { tile: Tile, data: Vec<u8> },
   Layer(Layer),
   Focus,
+  Screenshot(PathBuf),
 }

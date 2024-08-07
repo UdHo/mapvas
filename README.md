@@ -34,6 +34,7 @@ Start `mapvas` and a map window will appear.
 | moving | Left mouse and dragging or arrow keys |
 | paste | pressing v will paste the clipboard into the grep parser |
 | information about element | right click near an element with label will show the label. L will use the current mouse position for poor mac users. |
+| screenshot | the S key takes a screenshot of the currently displayed area |
 
 ### mapcat
 
@@ -104,6 +105,8 @@ echo "52.4,12.4" | mapcat -l "(.*)"
 ```
 
 - --focus (-f) zooms and pans to show all elements on the map.
+
+- `--screenshot <file.png>` takes a screenshot of the map. If the mapvas is not already running it should probably be combined with `-f`.
 
 #### Random (for performance testing)
 
