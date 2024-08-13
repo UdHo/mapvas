@@ -42,3 +42,5 @@ ttf-noto-sans = "0.1.2"
 surf-governor = "0.2.0"
 chrono = "0.4.38"
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
