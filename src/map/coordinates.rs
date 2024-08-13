@@ -9,6 +9,7 @@ pub struct Coordinate {
 }
 
 impl Coordinate {
+  #[must_use]
   pub fn is_valid(&self) -> bool {
     -90.0 < self.lat && self.lat < 90.0 && -180.0 < self.lon && self.lon < 180.0
   }
@@ -28,7 +29,6 @@ pub struct PixelPosition {
 }
 
 pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
-  assert_eq!(nw.zoom, se.zoom);
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
   (nw_tile.x..=se_tile.x)
@@ -39,7 +39,7 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Ite
         zoom: nw_tile.zoom,
       })
     })
-    .filter(|t| t.exists())
+    .filter(Tile::exists)
 }
 
 pub const CANVAS_SIZE: f32 = 1000.;
@@ -48,8 +48,8 @@ pub const TILE_SIZE: f32 = 250.;
 impl From<TileCoordinate> for PixelPosition {
   fn from(tile_coord: TileCoordinate) -> Self {
     PixelPosition {
-      x: tile_coord.x * TILE_SIZE / 2f32.powi(tile_coord.zoom as i32 - 2),
-      y: tile_coord.y * TILE_SIZE / 2f32.powi(tile_coord.zoom as i32 - 2),
+      x: tile_coord.x * TILE_SIZE / 2f32.powi(i32::from(tile_coord.zoom) - 2),
+      y: tile_coord.y * TILE_SIZE / 2f32.powi(i32::from(tile_coord.zoom) - 2),
     }
   }
 }
@@ -60,6 +60,7 @@ impl From<Coordinate> for PixelPosition {
 }
 
 impl PixelPosition {
+  #[must_use]
   pub fn clamp(&self) -> Self {
     PixelPosition {
       x: self.x.clamp(0.0, CANVAS_SIZE),
@@ -67,12 +68,14 @@ impl PixelPosition {
     }
   }
 
+  #[must_use]
   pub fn sq_dist(&self, p: &Self) -> f32 {
     let dx = p.x - self.x;
     let dy = p.y - self.y;
     dx * dx + dy * dy
   }
 
+  #[must_use]
   pub fn sq_distance_line_segment(&self, l1: &PixelPosition, l2: &PixelPosition) -> f32 {
     let dbx = l2.x - l1.x;
     let dby = l2.y - l1.y;
@@ -107,11 +110,13 @@ pub struct Tile {
 }
 
 impl Tile {
+  #[must_use]
   pub fn exists(&self) -> bool {
     let max_tile = 2u32.pow(self.zoom.into()) - 1;
     self.x <= max_tile && self.y <= max_tile
   }
 
+  #[must_use]
   pub fn parent(&self) -> Option<Self> {
     match self.zoom {
       0 => None,
@@ -123,6 +128,12 @@ impl Tile {
     }
   }
 
+  #[must_use]
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+  )]
   pub fn position(&self) -> (PixelPosition, PixelPosition) {
     (
       PixelPosition::from(TileCoordinate {
@@ -140,6 +151,11 @@ impl Tile {
 }
 
 impl From<TileCoordinate> for Tile {
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+  )]
   fn from(tile_coord: TileCoordinate) -> Self {
     Self {
       x: tile_coord.x.floor() as u32,
@@ -150,6 +166,7 @@ impl From<TileCoordinate> for Tile {
 }
 
 impl TileCoordinate {
+  #[must_use]
   pub fn from_coordinate(coord: Coordinate, zoom: u8) -> Self {
     let x = (coord.lon + 180.) / 360. * 2f32.powi(zoom.into());
     let y = (1. - ((coord.lat * PI / 180.).tan() + 1. / (coord.lat * PI / 180.).cos()).ln() / PI)
@@ -157,10 +174,11 @@ impl TileCoordinate {
     Self { x, y, zoom }
   }
 
+  #[must_use]
   pub fn from_pixel_position(pixel_pos: PixelPosition, zoom: u8) -> Self {
     TileCoordinate {
-      x: pixel_pos.x / TILE_SIZE * 2f32.powi(zoom as i32 - 2),
-      y: pixel_pos.y / TILE_SIZE * 2f32.powi(zoom as i32 - 2),
+      x: pixel_pos.x / TILE_SIZE * 2f32.powi(i32::from(zoom) - 2),
+      y: pixel_pos.y / TILE_SIZE * 2f32.powi(i32::from(zoom) - 2),
       zoom,
     }
   }
@@ -194,10 +212,12 @@ impl Default for BoundingBox {
 }
 
 impl BoundingBox {
+  #[must_use]
   pub fn new() -> Self {
     Self::get_invalid()
   }
 
+  #[must_use]
   pub fn get_invalid() -> Self {
     Self {
       max_x: f32::MIN,
@@ -207,6 +227,7 @@ impl BoundingBox {
     }
   }
 
+  #[must_use]
   pub fn center(&self) -> PixelPosition {
     PixelPosition {
       x: (self.max_x + self.min_x) / 2.,
@@ -220,6 +241,7 @@ impl BoundingBox {
     bb
   }
 
+  #[must_use]
   pub fn is_valid(&self) -> bool {
     self.min_y <= self.max_y && self.min_x <= self.max_x
   }
@@ -244,10 +266,12 @@ impl BoundingBox {
     }
   }
 
+  #[must_use]
   pub fn width(&self) -> f32 {
     self.max_x - self.min_x
   }
 
+  #[must_use]
   pub fn height(&self) -> f32 {
     self.max_y - self.min_y
   }

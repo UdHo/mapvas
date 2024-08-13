@@ -29,7 +29,7 @@ pub type TileData = Vec<u8>;
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
-  /// A blocking version of tile_data.
+  /// A blocking version of `tile_data`.
   #[allow(unused)]
   fn tile_data_blocking(&self, tile: &Tile) -> Result<TileData> {
     block_on(self.tile_data(tile))
@@ -63,10 +63,14 @@ impl TileCache {
 impl TileLoader for TileCache {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     match self.path(tile) {
-      Some(p) => match p.exists() {
-        true => Ok(std::fs::read(p)?),
-        false => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
-      },
+      Some(p) => {
+        if p.exists() {
+          Ok(std::fs::read(p)?)
+        } else {
+          Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
+        }
+      }
+
       None => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
     }
   }
@@ -86,7 +90,7 @@ impl TileDownloader {
     ));
     Self {
       url_template,
-      tiles_in_download: Default::default(),
+      tiles_in_download: Arc::default(),
       client: surf::Client::new().with(GovernorMiddleware::per_second(50).unwrap()),
     }
   }

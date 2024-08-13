@@ -34,7 +34,7 @@ pub enum Color {
 }
 
 impl Color {
-  pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
+  #[must_use] pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
     match self {
       Color::Blue => femtovg::Color::rgba(0, 0, 255, alpha),
       Color::DarkBlue => femtovg::Color::rgba(0, 0, 150, alpha),
@@ -51,11 +51,11 @@ impl Color {
     }
   }
 
-  pub fn to_rgb(self) -> femtovg::Color {
+  #[must_use] pub fn to_rgb(self) -> femtovg::Color {
     self.to_rgba(255)
   }
 
-  pub fn all() -> &'static [Color] {
+  #[must_use] pub fn all() -> &'static [Color] {
     &ALL_COLORS
   }
 }
@@ -118,7 +118,7 @@ pub struct Shape {
 }
 
 impl Shape {
-  pub fn new(coordinates: Vec<Coordinate>) -> Self {
+  #[must_use] pub fn new(coordinates: Vec<Coordinate>) -> Self {
     Shape {
       coordinates,
       visible: true,
@@ -126,17 +126,17 @@ impl Shape {
     }
   }
 
-  pub fn with_color(mut self, color: Color) -> Self {
+  #[must_use] pub fn with_color(mut self, color: Color) -> Self {
     self.style.color = color;
     self
   }
 
-  pub fn with_fill(mut self, fill: FillStyle) -> Self {
+  #[must_use] pub fn with_fill(mut self, fill: FillStyle) -> Self {
     self.style.fill = fill;
     self
   }
 
-  pub fn with_label(mut self, label: Option<String>) -> Self {
+  #[must_use] pub fn with_label(mut self, label: Option<String>) -> Self {
     self.label = label;
     self
   }
@@ -149,7 +149,7 @@ pub struct Layer {
 }
 
 impl Layer {
-  pub fn new(id: String) -> Self {
+  #[must_use] pub fn new(id: String) -> Self {
     Layer { id, shapes: vec![] }
   }
 }

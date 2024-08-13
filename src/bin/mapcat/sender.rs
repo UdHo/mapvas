@@ -4,7 +4,7 @@ use mapvas::remote::DEFAULT_PORT;
 use std::process::Stdio;
 
 use async_std::task::block_on;
-use std::collections::{BTreeMap, LinkedList};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -20,7 +20,7 @@ pub struct MapSender {
 
 struct SenderInner {
   receiver: UnboundedReceiver<Option<MapEvent>>,
-  queue: LinkedList<MapEvent>,
+  queue: VecDeque<MapEvent>,
   send_mutex: Arc<(std::sync::Mutex<usize>, Condvar)>,
 }
 
@@ -29,7 +29,7 @@ impl SenderInner {
     tokio::spawn({
       Self {
         receiver,
-        queue: LinkedList::new(),
+        queue: VecDeque::new(),
         send_mutex: Arc::new((Mutex::new(0), Condvar::new())),
       }
       .run()
@@ -41,19 +41,16 @@ impl SenderInner {
     loop {
       tokio::select! {
         Some(event) = self.receiver.recv() => {
-          match event {
-            Some(event) => {self.receive(event);},
-            None => {
-                 self.send_queue().await;
+           if let Some(event) = event {self.receive(event);} else {
+                 self.send_queue();
                  drop(self.send_mutex.1.wait_while(
                    self.send_mutex.0.lock().unwrap(), |count| { *count != 0 })
                  );
                  return;
               }
             }
-        },
         _ = interval.tick() => {
-            self.send_queue().await
+            self.send_queue();
           },
       }
     }
@@ -68,9 +65,9 @@ impl SenderInner {
     *send_count += 1;
   }
 
-  async fn send_queue(&mut self) {
+  fn send_queue(&mut self) {
     self.add_task();
-    let mut queue = LinkedList::new();
+    let mut queue = VecDeque::new();
     std::mem::swap(&mut queue, &mut self.queue);
 
     let send_mut_condv = self.send_mutex.clone();
@@ -84,7 +81,7 @@ impl SenderInner {
     });
   }
 
-  async fn compact_and_send(queue: LinkedList<MapEvent>) {
+  async fn compact_and_send(queue: VecDeque<MapEvent>) {
     let mut layers: BTreeMap<String, Vec<Shape>> = BTreeMap::new();
 
     for event in queue {
