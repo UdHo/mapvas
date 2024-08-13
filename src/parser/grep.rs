@@ -115,7 +115,7 @@ impl GrepParser {
     for (_, [color]) in self.color_re.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
-        .map_err(|_| error!("Failed parsing {}", color));
+        .map_err(|()| error!("Failed parsing {}", color));
     }
   }
 
@@ -123,7 +123,7 @@ impl GrepParser {
     for (_, [fill]) in self.fill_re.captures_iter(line).map(|c| c.extract()) {
       let _ = FillStyle::from_str(fill)
         .map(|parsed_fill| self.fill = parsed_fill)
-        .map_err(|_| error!("Failed parsing {}", fill));
+        .map_err(|()| error!("Failed parsing {}", fill));
     }
   }
 
@@ -131,7 +131,7 @@ impl GrepParser {
     let mut coordinates = vec![];
     for (_, [lat, lon]) in self.coord_re.captures_iter(line).map(|c| c.extract()) {
       if let Some(coord) = self.parse_coordinate(lat, lon) {
-        coordinates.push(coord)
+        coordinates.push(coord);
       }
     }
     coordinates

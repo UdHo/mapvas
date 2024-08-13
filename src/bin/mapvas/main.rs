@@ -30,8 +30,8 @@ async fn shutdown_signal(sender: Sender<MapEvent>) {
   let terminate = std::future::pending::<()>();
 
   tokio::select! {
-      _ = ctrl_c => {},
-      _ = terminate => {},
+      () = ctrl_c => {},
+      () = terminate => {},
   }
 
   let _ = sender.send(MapEvent::Shutdown).await;
@@ -53,7 +53,7 @@ async fn main() {
     .route("/", post(serve_axum))
     .route("/healtcheck", get(healthcheck))
     .with_state(sender.clone())
-    .layer(DefaultBodyLimit::max(10000000000000))
+    .layer(DefaultBodyLimit::max(10_000_000_000_000))
     .layer(
       TraceLayer::new_for_http()
         .make_span_with(trace::DefaultMakeSpan::new().level(tracing::Level::INFO))

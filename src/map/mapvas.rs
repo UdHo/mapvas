@@ -62,7 +62,7 @@ impl LayerElement {
       Self::Polyline(_, _, coords, _) => coords
         .windows(2)
         .map(|points| p.sq_distance_line_segment(&points[0], &points[1]))
-        .fold(f32::MAX, |min, d| min.min(d)),
+        .fold(f32::MAX, f32::min),
       Self::Point(PixelPosition { x, y }, _) => {
         (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) - point_preference
       }
@@ -410,7 +410,7 @@ impl MapVas {
   }
 
   /// Allows to send events from the outside the event loop.
-  pub fn get_event_sender(&self) -> Sender<MapEvent> {
+  #[must_use] pub fn get_event_sender(&self) -> Sender<MapEvent> {
     self.event_handler.event_sender.clone()
   }
 
@@ -462,7 +462,7 @@ impl MapVas {
       VirtualKeyCode::F => self.handle_focus_event(),
       VirtualKeyCode::L => self.update_closest(),
       VirtualKeyCode::S => {
-        self.make_screenshot(format!("mapvas_{}.png", current_time_string()).into())
+        self.make_screenshot(format!("mapvas_{}.png", current_time_string()).into());
       }
       _ => (),
     };
@@ -788,9 +788,9 @@ impl MapVas {
       });
     self.closest_text =
       if let (Some(closest), true) = (closest, dist < dist_treshold * dist_treshold) {
-        closest.get_text().unwrap_or("".into())
+        closest.get_text().unwrap_or(String::new())
       } else {
-        "".into()
+        String::new()
       };
   }
 

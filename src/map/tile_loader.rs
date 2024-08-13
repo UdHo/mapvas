@@ -29,7 +29,7 @@ pub type TileData = Vec<u8>;
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
-  /// A blocking version of tile_data.
+  /// A blocking version of `tile_data`.
   #[allow(unused)]
   fn tile_data_blocking(&self, tile: &Tile) -> Result<TileData> {
     block_on(self.tile_data(tile))

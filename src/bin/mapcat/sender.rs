@@ -53,7 +53,7 @@ impl SenderInner {
             }
         },
         _ = interval.tick() => {
-            self.send_queue().await
+            self.send_queue().await;
           },
       }
     }
