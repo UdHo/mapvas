@@ -67,6 +67,8 @@ impl Parser for GrepParser {
 
 impl GrepParser {
   #[must_use]
+  /// # Panics
+  /// If there is a typo in some regex.
   pub fn new(invert_coordinates: bool) -> Self {
     let color_re =
       RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
@@ -101,6 +103,8 @@ impl GrepParser {
     self
   }
 
+  /// # Panics
+  /// If the given regex is invalid.
   #[must_use]
   pub fn with_label_pattern(mut self, label_pattern: &str) -> Self {
     self.label_re = Some(Regex::new(label_pattern).expect("Cannot build label regex."));
@@ -173,9 +177,6 @@ impl GrepParser {
     if self.invert_coordinates {
       std::mem::swap(&mut coordinates.lat, &mut coordinates.lon);
     }
-    match coordinates.is_valid() {
-      true => Some(coordinates),
-      false => None,
-    }
+    coordinates.is_valid().then_some(coordinates)
   }
 }

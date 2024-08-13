@@ -9,7 +9,8 @@ pub struct Coordinate {
 }
 
 impl Coordinate {
-  #[must_use] pub fn is_valid(&self) -> bool {
+  #[must_use]
+  pub fn is_valid(&self) -> bool {
     -90.0 < self.lat && self.lat < 90.0 && -180.0 < self.lon && self.lon < 180.0
   }
 }
@@ -28,7 +29,6 @@ pub struct PixelPosition {
 }
 
 pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
-  assert_eq!(nw.zoom, se.zoom);
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
   (nw_tile.x..=se_tile.x)
@@ -60,20 +60,23 @@ impl From<Coordinate> for PixelPosition {
 }
 
 impl PixelPosition {
-  #[must_use] pub fn clamp(&self) -> Self {
+  #[must_use]
+  pub fn clamp(&self) -> Self {
     PixelPosition {
       x: self.x.clamp(0.0, CANVAS_SIZE),
       y: self.y.clamp(0.0, CANVAS_SIZE),
     }
   }
 
-  #[must_use] pub fn sq_dist(&self, p: &Self) -> f32 {
+  #[must_use]
+  pub fn sq_dist(&self, p: &Self) -> f32 {
     let dx = p.x - self.x;
     let dy = p.y - self.y;
     dx * dx + dy * dy
   }
 
-  #[must_use] pub fn sq_distance_line_segment(&self, l1: &PixelPosition, l2: &PixelPosition) -> f32 {
+  #[must_use]
+  pub fn sq_distance_line_segment(&self, l1: &PixelPosition, l2: &PixelPosition) -> f32 {
     let dbx = l2.x - l1.x;
     let dby = l2.y - l1.y;
     let dpx = self.x - l1.x;
@@ -107,12 +110,14 @@ pub struct Tile {
 }
 
 impl Tile {
-  #[must_use] pub fn exists(&self) -> bool {
+  #[must_use]
+  pub fn exists(&self) -> bool {
     let max_tile = 2u32.pow(self.zoom.into()) - 1;
     self.x <= max_tile && self.y <= max_tile
   }
 
-  #[must_use] pub fn parent(&self) -> Option<Self> {
+  #[must_use]
+  pub fn parent(&self) -> Option<Self> {
     match self.zoom {
       0 => None,
       _ => Some(Self {
@@ -123,7 +128,13 @@ impl Tile {
     }
   }
 
-  #[must_use] pub fn position(&self) -> (PixelPosition, PixelPosition) {
+  #[must_use]
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+  )]
+  pub fn position(&self) -> (PixelPosition, PixelPosition) {
     (
       PixelPosition::from(TileCoordinate {
         x: self.x as f32,
@@ -140,6 +151,11 @@ impl Tile {
 }
 
 impl From<TileCoordinate> for Tile {
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+  )]
   fn from(tile_coord: TileCoordinate) -> Self {
     Self {
       x: tile_coord.x.floor() as u32,
@@ -150,14 +166,16 @@ impl From<TileCoordinate> for Tile {
 }
 
 impl TileCoordinate {
-  #[must_use] pub fn from_coordinate(coord: Coordinate, zoom: u8) -> Self {
+  #[must_use]
+  pub fn from_coordinate(coord: Coordinate, zoom: u8) -> Self {
     let x = (coord.lon + 180.) / 360. * 2f32.powi(zoom.into());
     let y = (1. - ((coord.lat * PI / 180.).tan() + 1. / (coord.lat * PI / 180.).cos()).ln() / PI)
       * 2f32.powi((zoom - 1).into());
     Self { x, y, zoom }
   }
 
-  #[must_use] pub fn from_pixel_position(pixel_pos: PixelPosition, zoom: u8) -> Self {
+  #[must_use]
+  pub fn from_pixel_position(pixel_pos: PixelPosition, zoom: u8) -> Self {
     TileCoordinate {
       x: pixel_pos.x / TILE_SIZE * 2f32.powi(i32::from(zoom) - 2),
       y: pixel_pos.y / TILE_SIZE * 2f32.powi(i32::from(zoom) - 2),
@@ -194,11 +212,13 @@ impl Default for BoundingBox {
 }
 
 impl BoundingBox {
-  #[must_use] pub fn new() -> Self {
+  #[must_use]
+  pub fn new() -> Self {
     Self::get_invalid()
   }
 
-  #[must_use] pub fn get_invalid() -> Self {
+  #[must_use]
+  pub fn get_invalid() -> Self {
     Self {
       max_x: f32::MIN,
       min_x: f32::MAX,
@@ -207,7 +227,8 @@ impl BoundingBox {
     }
   }
 
-  #[must_use] pub fn center(&self) -> PixelPosition {
+  #[must_use]
+  pub fn center(&self) -> PixelPosition {
     PixelPosition {
       x: (self.max_x + self.min_x) / 2.,
       y: (self.max_y + self.min_y) / 2.,
@@ -220,7 +241,8 @@ impl BoundingBox {
     bb
   }
 
-  #[must_use] pub fn is_valid(&self) -> bool {
+  #[must_use]
+  pub fn is_valid(&self) -> bool {
     self.min_y <= self.max_y && self.min_x <= self.max_x
   }
 
@@ -244,11 +266,13 @@ impl BoundingBox {
     }
   }
 
-  #[must_use] pub fn width(&self) -> f32 {
+  #[must_use]
+  pub fn width(&self) -> f32 {
     self.max_x - self.min_x
   }
 
-  #[must_use] pub fn height(&self) -> f32 {
+  #[must_use]
+  pub fn height(&self) -> f32 {
     self.max_y - self.min_y
   }
 }

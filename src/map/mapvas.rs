@@ -71,15 +71,13 @@ impl LayerElement {
 
   pub fn get_text(&self) -> Option<String> {
     match self {
-      Self::Polyline(_, _, _, t) => t.clone(),
-      Self::Point(_, t) => t.clone(),
+      Self::Polyline(_, _, _, t) | Self::Point(_, t) => t.clone(),
     }
   }
 
   pub fn has_text(&self) -> bool {
     match self {
-      Self::Polyline(_, _, _, t) => t.is_some(),
-      Self::Point(_, t) => t.is_some(),
+      Self::Polyline(_, _, _, t) | Self::Point(_, t) => t.is_some(),
     }
   }
 }
@@ -103,8 +101,8 @@ impl MapProvider {
     Self {
       tile_loader: Arc::new(tile_loader),
       event_sender,
-      loaded_images: Default::default(),
-      layers: Default::default(),
+      loaded_images: HashMap::default(),
+      layers: HashMap::default(),
     }
   }
 
@@ -281,7 +279,7 @@ impl MapVas {
         event_sender: tx.clone(),
       },
       map_provider: MapProvider::new(CachedTileLoader::default(), tx),
-      closest_text: Default::default(),
+      closest_text: String::default(),
       screenshot: None,
     }
   }
@@ -290,7 +288,11 @@ impl MapVas {
   ///
   /// # Panics
   /// If it cannot start up.
-  #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+  #[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::too_many_lines
+  )]
   pub fn run(mut self) {
     let _ = self.canvas.add_font_mem(ttf_noto_sans::REGULAR);
 
@@ -410,7 +412,8 @@ impl MapVas {
   }
 
   /// Allows to send events from the outside the event loop.
-  #[must_use] pub fn get_event_sender(&self) -> Sender<MapEvent> {
+  #[must_use]
+  pub fn get_event_sender(&self) -> Sender<MapEvent> {
     self.event_handler.event_sender.clone()
   }
 
@@ -418,6 +421,7 @@ impl MapVas {
     if self.closest_text.is_empty() {
       return;
     }
+    #[allow(clippy::cast_precision_loss)]
     let w = self.window.inner_size().width as f32;
     let h = 25.;
     let mut path = Path::new();
@@ -794,6 +798,7 @@ impl MapVas {
       };
   }
 
+  #[allow(clippy::cast_possible_truncation)]
   fn make_screenshot(&mut self, pb: std::path::PathBuf) {
     if let Ok(mut img) = self.canvas.screenshot() {
       let (buf, w, h) = img.as_contiguous_buf();
