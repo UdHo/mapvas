@@ -3,6 +3,7 @@ name: Publish
 on: 
   push:
     tags: -'*'
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -10,12 +11,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        - os: ubuntu-latest
-          artifact_name: map[cvast]+
-          asset_name: mapvas-linux
-        - os: macos-latest
-          artifact_name: map[cvast]+
-          asset_name: mapvas-macos
+        include:
+          - os: ubuntu-latest
+            artifact_name: map[cvast]+
+            asset_name: mapvas-linux
+          - os: macos-latest
+            artifact_name: map[cvast]+
+            asset_name: mapvas-macos
     steps:
       - uses: actions/checkout@v3
       - name: Build
