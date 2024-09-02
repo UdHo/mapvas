@@ -40,8 +40,7 @@ struct Args {
   #[arg(short, long, default_value = "(.*)")]
   label_pattern: String,
 
-  /// Sets the default color for most parsers. Values: red, blue, green, yellow, black,...
-  /// If you need more just look in the code.
+  /// Path to take a screenshot.
   #[arg(short, long, default_value = "")]
   screenshot: String,
 

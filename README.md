@@ -21,6 +21,9 @@ Via cargo from [crates.io](https://crates.io/crates/mapvas):
 
 - `cargo install mapvas --locked`
 
+Via brew on MacOs:
+- `brew tap udho/mapvas && brew install mapvas`
+
 ## Usage
 
 ### mapvas
