@@ -15,12 +15,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            asset_name: mapvas-linux.zip
           - os: macos-latest
             asset_name: mapvas-macos.zip
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build
         run: |
           cargo build --release --locked
@@ -32,3 +30,19 @@ jobs:
           file: mapvas.zip
           asset_name: ${{ matrix.asset_name }}
           tag: ${{ github.ref }}
+
+      - name: Update homebrew
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+        run: |
+          git config --unset-all http.https://github.com/.extraheader
+          git clone https://udho:$GITHUB_TOKEN@github.com/udho/homebrew-mapvas
+          export MAPVAS_VERSION=$(git tag -l | tail -n1)
+          export MAPVAS_SHA=$(shasum -a 256 mapvas.zip | awk '{print $1}')
+          cd homebrew-mapvas
+          sed "s/VERSION/$MAPVAS_VERSION/g" formula.template | sed "s/SHA/$MAPVAS_SHA/g" > Formula/mapvas.rb
+          git config user.name "UpdateBot"
+          git config user.email "hoffmann.odu@gmail.com"
+          git add -A
+          git commit -m "$MAPVAS_VERSION"
+          git push https://udho:$GITHUB_TOKEN@github.com/udho/homebrew-mapvas
