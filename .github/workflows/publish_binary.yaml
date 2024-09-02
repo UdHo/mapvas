@@ -24,7 +24,7 @@ jobs:
       - name: Build
         run: |
           cargo build --release --locked
-          zip mapvas.zip target/release/mapvas target/release/mapcat
+          zip -j mapvas.zip target/release/mapvas target/release/mapcat
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2
         with:
