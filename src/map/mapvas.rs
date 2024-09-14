@@ -363,7 +363,6 @@ impl MapVas {
               self.zoom_canvas(1.0 + (change / 10.0), self.mousex, self.mousey);
             }
             WindowEvent::DroppedFile(pathbuf) => {
-              eprintln!("{pathbuf:?}");
               self.drop_file(pathbuf.clone());
             }
             WindowEvent::TouchpadMagnify {
@@ -480,7 +479,6 @@ impl MapVas {
     let sender = self.get_event_sender();
     rayon::spawn(move || {
       if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
-        eprintln!("{text}");
         if let Some(map_event) = GrepParser::new(false).parse_line(&text) {
           let _ = block_on(sender.send(map_event));
         }
