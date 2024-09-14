@@ -8,7 +8,7 @@ use super::{
   tile_loader::{CachedTileLoader, TileLoader},
 };
 
-use crate::parser::{GrepParser, Parser};
+use crate::parser::{AutoFileParser, GrepParser, Parser};
 
 use std::{cmp::max, collections::HashMap, path::PathBuf};
 use std::{num::NonZeroU32, sync::Arc};
@@ -26,7 +26,7 @@ use glutin::{
   surface::{SurfaceAttributesBuilder, WindowSurface},
 };
 use glutin_winit::DisplayBuilder;
-use log::{info, trace};
+use log::{debug, info, trace};
 use raw_window_handle::HasRawWindowHandle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use winit::{
@@ -364,6 +364,7 @@ impl MapVas {
             }
             WindowEvent::DroppedFile(pathbuf) => {
               eprintln!("{pathbuf:?}");
+              self.drop_file(pathbuf.clone());
             }
             WindowEvent::TouchpadMagnify {
               device_id: _,
@@ -467,10 +468,11 @@ impl MapVas {
       VirtualKeyCode::C => self.copy(),
       VirtualKeyCode::F => self.handle_focus_event(),
       VirtualKeyCode::L => self.update_closest(),
+      VirtualKeyCode::Delete => self.map_provider.clear_layers(),
       VirtualKeyCode::S => {
         self.make_screenshot(format!("mapvas_{}.png", current_time_string()).into());
       }
-      _ => (),
+      _ => debug!("{key:?} pressed"),
     };
   }
 
@@ -483,6 +485,16 @@ impl MapVas {
           let _ = block_on(sender.send(map_event));
         }
       }
+    });
+  }
+
+  fn drop_file(&self, path: PathBuf) {
+    let sender = self.get_event_sender();
+    rayon::spawn(move || {
+      let mut parser = AutoFileParser::new(path.clone());
+      parser
+        .parse()
+        .for_each(|e| block_on(sender.send(e)).expect("Can send to self."));
     });
   }
 
