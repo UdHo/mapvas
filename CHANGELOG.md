@@ -1,4 +1,7 @@
 # Changelog
+## 0.1.x
+
+- mapcat can read several files.
 
 ## 0.1.15
 

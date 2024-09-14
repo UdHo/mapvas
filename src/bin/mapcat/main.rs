@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{GrepParser, Parser, RandomParser, TTJsonParser};
+use mapvas::parser::{FileParser, GrepParser, RandomParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use tokio::time::sleep;
@@ -45,7 +45,21 @@ struct Args {
   screenshot: String,
 
   /// A file to parse. stdin is used if this is not provided.
-  file: Option<std::path::PathBuf>,
+  files: Vec<std::path::PathBuf>,
+}
+
+fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
+  let mut res: Vec<Box<dyn BufRead>> = Vec::new();
+  if !paths.is_empty() {
+    paths.iter().for_each(|f| {
+      res.push(Box::new(BufReader::new(
+        File::open(f).expect("File exists"),
+      )))
+    });
+  } else {
+    res.push(Box::new(std::io::stdin().lock()));
+  };
+  res
 }
 
 #[tokio::main]
@@ -60,51 +74,31 @@ async fn main() {
     sender.send_event(MapEvent::Clear);
   }
   sender.finalize().await;
+
   let sender = sender::MapSender::new().await;
 
-  let mut parser: Box<dyn Parser> = match args.parser.as_str() {
-    "random" => Box::new(RandomParser::new()),
-    "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
-    "grep" => Box::new(
-      GrepParser::new(args.invert_coordinates)
-        .with_color(color)
-        .with_label_pattern(&args.label_pattern),
-    ),
-    _ => {
-      error!("Unkown parser: {}. Falling back to grep.", args.parser);
-      Box::new(GrepParser::new(args.invert_coordinates))
+  let parser = || -> Box<dyn FileParser> {
+    match args.parser.as_str() {
+      "random" => Box::new(RandomParser::new()),
+      "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
+      "grep" => Box::new(
+        GrepParser::new(args.invert_coordinates)
+          .with_color(color)
+          .with_label_pattern(&args.label_pattern),
+      ),
+      _ => {
+        error!("Unkown parser: {}. Falling back to grep.", args.parser);
+        Box::new(GrepParser::new(args.invert_coordinates))
+      }
     }
   };
 
-  let mut reader: Box<dyn BufRead> = if let Some(file) = args.file {
-    let f = File::open(file);
-    if let Ok(file) = f {
-      Box::new(BufReader::new(file))
-    } else {
-      error!("File not found.");
-      return;
-    }
-  } else {
-    Box::new(std::io::stdin().lock())
-  };
-
-  let mut line = String::new();
-  while let Ok(res) = reader.read_line(&mut line) {
-    let parsed = if res == 0 {
-      parser.finalize()
-    } else {
-      parser.parse_line(&line)
-    };
-    if let Some(e) = parsed {
-      sender.send_event(e);
-    }
-    line.clear();
-    if res == 0 {
-      break;
-    }
+  let readers = readers(&args.files);
+  for reader in readers {
+    let mut parser = parser();
+    parser.parse(reader).for_each(|e| sender.send_event(e));
+    // Waiting for all tasks to finish.
   }
-
-  // Waiting for all tasks to finish.
   sender.finalize().await;
 
   if args.focus {
