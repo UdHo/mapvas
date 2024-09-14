@@ -48,10 +48,10 @@ It then shows the parsed result on a single instance of mapvas, which it spawns 
 
 This parser greps for coordinates latitude and longitude as float in a line. In addition it supports colors and filling of polygons.
 
-The input can come from a pipe or read via a file.
+The input can come from a pipe or from files.
 
 ```
-    mapcat <file_with_coordinates>
+    mapcat <files_with_coordinates>
 ```
 
 Examples:

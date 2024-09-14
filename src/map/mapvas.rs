@@ -362,7 +362,9 @@ impl MapVas {
               };
               self.zoom_canvas(1.0 + (change / 10.0), self.mousex, self.mousey);
             }
-
+            WindowEvent::DroppedFile(pathbuf) => {
+              eprintln!("{pathbuf:?}");
+            }
             WindowEvent::TouchpadMagnify {
               device_id: _,
               delta,
@@ -476,6 +478,7 @@ impl MapVas {
     let sender = self.get_event_sender();
     rayon::spawn(move || {
       if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
+        eprintln!("{text}");
         if let Some(map_event) = GrepParser::new(false).parse_line(&text) {
           let _ = block_on(sender.send(map_event));
         }
@@ -810,10 +813,4 @@ impl MapVas {
       let _ = image::save_buffer(pb, &img_buf, w as u32, h as u32, image::ColorType::Rgb8);
     }
   }
-}
-
-#[cfg(test)]
-mod test {
-  #[test]
-  fn image_loading_test() {}
 }
