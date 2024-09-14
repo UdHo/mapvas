@@ -3,7 +3,7 @@ use std::{
   fs::File,
   io::{BufRead, BufReader},
   iter::empty,
-  path::PathBuf,
+  path::{Path, PathBuf},
 };
 
 pub use grep::GrepParser;
@@ -27,7 +27,7 @@ pub trait Parser {
 }
 
 pub trait FileParser {
-  /// Gives an iterator over persed MapEvents parsed from read.
+  /// Gives an iterator over persed `MapEvents` parsed from read.
   /// This is the default method to use.
   fn parse<'a>(&'a mut self, file: Box<dyn BufRead>) -> Box<dyn Iterator<Item = MapEvent> + '_>;
 }
@@ -71,6 +71,7 @@ pub struct AutoFileParser {
 }
 
 impl AutoFileParser {
+  #[must_use]
   pub fn new(path: PathBuf) -> Self {
     Self {
       parser: Self::get_parser(&path),
@@ -78,7 +79,7 @@ impl AutoFileParser {
     }
   }
 
-  fn get_parser(_path: &PathBuf) -> Box<dyn FileParser> {
+  fn get_parser(_path: &Path) -> Box<dyn FileParser> {
     Box::new(GrepParser::new(false))
   }
 
@@ -101,10 +102,10 @@ mod tests {
 
   #[test]
   fn parse() {
-    let data = r#"52.0, 10.0
+    let data = r"52.0, 10.0
                         nothing\n
                         53.0, 11.0 green
-                        end"#;
+                        end";
     let mut parser = Box::new(GrepParser::new(false));
     let read = Box::new(data.as_bytes());
     let parsed: Vec<_> = parser.parse(read).collect();

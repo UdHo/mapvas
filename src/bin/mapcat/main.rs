@@ -50,14 +50,14 @@ struct Args {
 
 fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
   let mut res: Vec<Box<dyn BufRead>> = Vec::new();
-  if !paths.is_empty() {
-    paths.iter().for_each(|f| {
+  if paths.is_empty() {
+    res.push(Box::new(std::io::stdin().lock()));
+  } else {
+    for f in paths {
       res.push(Box::new(BufReader::new(
         File::open(f).expect("File exists"),
-      )))
-    });
-  } else {
-    res.push(Box::new(std::io::stdin().lock()));
+      )));
+    }
   };
   res
 }
