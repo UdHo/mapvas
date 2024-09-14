@@ -1,7 +1,9 @@
 # Changelog
-## 0.1.x
+## 0.1.19
 
 - mapcat can read several files.
+- dropping files on the map displays them
+- delete (Fn+delete on Mac) clears the map
 
 ## 0.1.15
 

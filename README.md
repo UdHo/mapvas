@@ -36,8 +36,10 @@ Start `mapvas` and a map window will appear.
 | focus to drawn elements | f centers the drawn elements |
 | moving | Left mouse and dragging or arrow keys |
 | paste | pressing v will paste the clipboard into the grep parser |
+| pasting file data | dropping a file on the map will draw the contents on the map |
 | information about element | right click near an element with label will show the label. L will use the current mouse position for poor mac users. |
 | screenshot | the S key takes a screenshot of the currently displayed area |
+| delete (Fn+delete on Mac)    | clears the canvas |
 
 ### mapcat
 
