@@ -41,6 +41,7 @@ arboard = "3.3.2"
 ttf-noto-sans = "0.1.2"
 surf-governor = "0.2.0"
 chrono = "0.4.38"
+csv = "1.3.0"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}

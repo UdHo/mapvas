@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{FileParser, GrepParser, RandomParser, TTJsonParser};
+use mapvas::parser::{FileParser, GrepParser, RandomParser, TTJsonParser, Wkt};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use tokio::time::sleep;
@@ -15,7 +15,7 @@ mod sender;
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, random, ttjson.
+  /// Which parser to use. Values: grep, random, ttjson, wkt.
   #[arg(short, long, default_value = "grep")]
   parser: String,
 
@@ -81,6 +81,7 @@ async fn main() {
     match args.parser.as_str() {
       "random" => Box::new(RandomParser::new()),
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
+      "wkt" => Box::new(Wkt::new()),
       "grep" => Box::new(
         GrepParser::new(args.invert_coordinates)
           .with_color(color)

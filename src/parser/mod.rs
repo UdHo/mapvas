@@ -11,8 +11,11 @@ mod random;
 pub use random::RandomParser;
 mod tt_json;
 pub use tt_json::TTJsonParser;
+mod wkt;
+pub use wkt::Wkt;
+mod csv;
 
-use crate::map::map_event::MapEvent;
+use crate::map::map_event::{Color, MapEvent};
 
 /// An interface for input parsers.
 pub trait Parser {
@@ -24,6 +27,9 @@ pub trait Parser {
   fn finalize(&self) -> Option<MapEvent> {
     None
   }
+  /// Sets current color. Can be used for coloring different columns of csv differently
+  /// for example.
+  fn set_color(&mut self, _color: Color) {}
 }
 
 pub trait FileParser {

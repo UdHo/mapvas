@@ -63,6 +63,10 @@ impl Parser for GrepParser {
       Some(MapEvent::Layer(layer))
     }
   }
+
+  fn set_color(&mut self, color: Color) {
+    self.color = color;
+  }
 }
 
 impl GrepParser {
@@ -99,7 +103,7 @@ impl GrepParser {
 
   #[must_use]
   pub fn with_color(mut self, color: Color) -> Self {
-    self.color = color;
+    self.set_color(color);
     self
   }
 
