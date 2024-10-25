@@ -28,6 +28,35 @@ pub struct PixelPosition {
   pub y: f32,
 }
 
+impl std::ops::AddAssign for PixelPosition {
+  fn add_assign(&mut self, other: Self) {
+    self.x += other.x;
+    self.y += other.y;
+  }
+}
+
+impl std::ops::Add for PixelPosition {
+  type Output = Self;
+
+  fn add(self, rhs: Self) -> Self {
+    Self {
+      x: self.x + rhs.x,
+      y: self.y + rhs.y,
+    }
+  }
+}
+
+impl std::ops::Mul<f32> for PixelPosition {
+  type Output = Self;
+
+  fn mul(self, rhs: f32) -> Self {
+    Self {
+      x: self.x * rhs,
+      y: self.y * rhs,
+    }
+  }
+}
+
 pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
@@ -53,9 +82,22 @@ impl From<TileCoordinate> for PixelPosition {
     }
   }
 }
+
 impl From<Coordinate> for PixelPosition {
   fn from(coord: Coordinate) -> Self {
     TileCoordinate::from_coordinate(coord, 2).into()
+  }
+}
+
+impl From<egui::Pos2> for PixelPosition {
+  fn from(pos: egui::Pos2) -> Self {
+    PixelPosition { x: pos.x, y: pos.y }
+  }
+}
+
+impl From<PixelPosition> for egui::Pos2 {
+  fn from(pp: PixelPosition) -> Self {
+    egui::Pos2::new(pp.x, pp.y)
   }
 }
 
@@ -277,9 +319,91 @@ impl BoundingBox {
   }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Transform {
+  pub zoom: f32,
+  pub trans: PixelPosition,
+}
+
+impl Default for Transform {
+  fn default() -> Self {
+    Self {
+      zoom: 1.,
+      trans: PixelPosition { x: 0., y: 0. },
+    }
+  }
+}
+
+impl Transform {
+  #[must_use]
+  pub fn zoomed(mut self, factor: f32) -> Self {
+    self.zoom *= factor;
+    self
+  }
+
+  pub fn zoom(&mut self, factor: f32) -> &mut Self {
+    self.zoom *= factor;
+    self
+  }
+
+  pub fn translate(&mut self, delta: PixelPosition) -> &mut Self {
+    self.trans += delta;
+    self
+  }
+
+  #[must_use]
+  pub fn translated(mut self, delta: PixelPosition) -> Self {
+    self.translate(delta);
+    self
+  }
+
+  #[must_use]
+  pub fn and_then_transform(self, transform: &Transform) -> Self {
+    Self {
+      zoom: self.zoom * transform.zoom,
+      trans: self.trans * transform.zoom + transform.trans,
+    }
+  }
+
+  #[must_use]
+  pub fn invert(self) -> Self {
+    Self {
+      zoom: 1. / self.zoom,
+      trans: self.trans * (-1. / self.zoom),
+    }
+  }
+
+  #[must_use]
+  pub fn invalid() -> Self {
+    Self {
+      zoom: 0.,
+      trans: PixelPosition { x: 0., y: 0. },
+    }
+  }
+
+  #[must_use]
+  pub fn is_invalid(&self) -> bool {
+    self.zoom == 0.
+  }
+
+  #[must_use]
+  pub fn apply(&self, pp: PixelPosition) -> PixelPosition {
+    pp * self.zoom + self.trans
+  }
+
+  #[must_use]
+  pub fn new(zoom: f32, x: f32, y: f32) -> Self {
+    Self {
+      zoom,
+      trans: PixelPosition { x, y },
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use assert_approx_eq::assert_approx_eq;
 
   #[test]
   fn coordinate_tile_conversions() {
@@ -356,5 +480,31 @@ mod tests {
 
     let tiles: Vec<_> = tiles_in_box(nw, se).collect();
     assert_eq!(tiles.len(), 200);
+  }
+
+  #[test]
+  fn transform() {
+    let trans = Transform::default()
+      .zoomed(5.)
+      .translated(PixelPosition { x: 10., y: 20. });
+    let inv = trans.invert();
+
+    assert_approx_eq!(trans.zoom, 5.);
+    assert_approx_eq!(trans.trans.x, 10.);
+    assert_approx_eq!(trans.trans.y, 20.);
+
+    assert_approx_eq!(inv.zoom, 1. / 5.);
+    assert_approx_eq!(inv.trans.x, -2.);
+    assert_approx_eq!(inv.trans.y, -4.);
+
+    let prod = trans.and_then_transform(&inv);
+    assert_approx_eq!(prod.zoom, 1.);
+    assert_approx_eq!(prod.trans.x, 0.);
+    assert_approx_eq!(prod.trans.y, 0.);
+
+    let prod = inv.and_then_transform(&trans);
+    assert_approx_eq!(prod.zoom, 1.);
+    assert_approx_eq!(prod.trans.x, 0.);
+    assert_approx_eq!(prod.trans.y, 0.);
   }
 }
