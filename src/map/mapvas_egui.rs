@@ -28,10 +28,11 @@ pub struct MapData {
 impl MapData {
   #[must_use]
   pub fn new(ctx: egui::Context) -> Self {
-    let tile_layer = TileLayer::new(ctx);
+    let tile_layer = TileLayer::new(ctx.clone());
+    let shape_layer = shape_layer::ShapeLayer::new(ctx.clone());
     Self {
       transform: Transform::invalid(),
-      layers: vec![Box::new(tile_layer)],
+      layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
     }
   }
 
@@ -105,6 +106,12 @@ impl Widget for &mut MapData {
         rect.center().into(),
         &mut self.transform,
       );
+
+      assert!(
+        !self.transform.is_invalid(),
+        "Transform: {:?}",
+        self.transform
+      );
     }
 
     if response.hovered() {
@@ -159,6 +166,7 @@ impl Widget for &mut MapData {
         layer.draw(ui, &self.transform, rect);
       }
     }
+    debug!("Transform: {:?}", self.transform);
 
     response
   }

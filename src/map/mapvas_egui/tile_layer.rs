@@ -1,7 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, u8};
 
 use egui::{Color32, ColorImage, Rect, Ui};
-use log::{debug, info};
+use log::{debug, error, info};
 
 use crate::map::{
   coordinates::{
@@ -62,12 +62,12 @@ impl TileLayer {
         if let Ok(image_data) = image_data {
           let img = image::io::Reader::new(std::io::Cursor::new(image_data)).with_guessed_format();
           if img.is_err() {
-            debug!("Failed to load image: {:?}", img.err());
+            error!("Failed to load image: {:?}", img.err());
             return;
           }
           let img = img.unwrap().decode();
           if img.is_err() {
-            debug!("Failed to decode image: {:?}", img.err());
+            error!("Failed to decode image: {:?}", img.err());
             return;
           }
           let img = img.unwrap();
@@ -102,30 +102,32 @@ impl Layer for TileLayer {
     self.collect_new_tile_data(ui);
 
     let (width, height) = (rect.width(), rect.height());
-    let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as i32;
+    let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as u8 + 1;
     let inv = transform.invert();
-    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom as u8);
-    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom as u8);
+    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
+    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
 
     for tile in tiles_in_box(min_pos, max_pos) {
+      if !self.loaded_tiles.contains_key(&tile) {
+        self.get_tile(tile);
+      }
+    }
+
+    let mut tiles_to_draw = tiles_in_box(min_pos, max_pos)
+      .filter_map(|mut tile| {
+        while !self.loaded_tiles.contains_key(&tile) {
+          tile = tile.parent()?;
+        }
+        Some(tile)
+      })
+      .collect::<Vec<_>>();
+    tiles_to_draw.sort_by_key(|tile| u8::MAX - tile.zoom);
+    tiles_to_draw.dedup();
+
+    for tile in tiles_to_draw {
       if !self.draw_tile(ui, rect, &tile, transform) {
         self.get_tile(tile);
       }
     }
-  }
-
-  fn bounding_box(&self) -> Option<crate::map::coordinates::BoundingBox> {
-    Some(BoundingBox::from_iterator([
-      Coordinate {
-        lat: 52.5,
-        lon: 13.,
-      }
-      .into(),
-      Coordinate {
-        lat: 52.6,
-        lon: 13.1,
-      }
-      .into(),
-    ]))
   }
 }

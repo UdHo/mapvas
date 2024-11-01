@@ -29,17 +29,14 @@ pub trait Parser {
 pub trait FileParser {
   /// Gives an iterator over persed `MapEvents` parsed from read.
   /// This is the default method to use.
-  fn parse<'a>(&'a mut self, file: Box<dyn BufRead>) -> Box<dyn Iterator<Item = MapEvent> + '_>;
+  fn parse(&mut self, file: Box<dyn BufRead>) -> Box<dyn Iterator<Item = MapEvent> + '_>;
 }
 
 impl<T> FileParser for T
 where
   T: Parser,
 {
-  fn parse<'a>(
-    &'a mut self,
-    mut file: Box<dyn BufRead>,
-  ) -> Box<dyn Iterator<Item = MapEvent> + '_> {
+  fn parse(&mut self, mut file: Box<dyn BufRead>) -> Box<dyn Iterator<Item = MapEvent> + '_> {
     let mut buf = String::new();
     let mut end = false;
     Box::new(

@@ -9,6 +9,10 @@ pub struct Coordinate {
 }
 
 impl Coordinate {
+  pub fn new(lat: f32, lon: f32) -> Self {
+    Self { lat, lon }
+  }
+
   #[must_use]
   pub fn is_valid(&self) -> bool {
     -90.0 < self.lat && self.lat < 90.0 && -180.0 < self.lon && self.lon < 180.0
@@ -72,7 +76,7 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Ite
 }
 
 pub const CANVAS_SIZE: f32 = 1000.;
-pub const TILE_SIZE: f32 = 250.;
+pub const TILE_SIZE: f32 = 512.;
 
 impl From<TileCoordinate> for PixelPosition {
   fn from(tile_coord: TileCoordinate) -> Self {
@@ -383,7 +387,7 @@ impl Transform {
 
   #[must_use]
   pub fn is_invalid(&self) -> bool {
-    self.zoom == 0.
+    !self.zoom.is_nan() && !self.trans.x.is_nan() && !self.trans.y.is_nan() && self.zoom == 0.
   }
 
   #[must_use]
