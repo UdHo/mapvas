@@ -53,6 +53,24 @@ impl Color {
   }
 
   #[must_use]
+  pub fn to_egui_color(self, alpha: u8) -> egui::Color32 {
+    match self {
+      Color::Blue => egui::Color32::from_rgba_premultiplied(0, 0, 255, alpha),
+      Color::DarkBlue => egui::Color32::from_rgba_premultiplied(0, 0, 150, alpha),
+      Color::Red => egui::Color32::from_rgba_premultiplied(255, 0, 0, alpha),
+      Color::DarkRed => egui::Color32::from_rgba_premultiplied(150, 0, 0, alpha),
+      Color::Green => egui::Color32::from_rgba_premultiplied(0, 255, 0, alpha),
+      Color::DarkGreen => egui::Color32::from_rgba_premultiplied(0, 150, 0, alpha),
+      Color::Yellow => egui::Color32::from_rgba_premultiplied(255, 255, 0, alpha),
+      Color::DarkYellow => egui::Color32::from_rgba_premultiplied(150, 150, 0, alpha),
+      Color::Black => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
+      Color::White => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+      Color::Grey => egui::Color32::from_rgba_premultiplied(127, 127, 127, alpha),
+      Color::Brown => egui::Color32::from_rgba_premultiplied(153, 76, 0, alpha),
+    }
+  }
+
+  #[must_use]
   pub fn to_rgb(self) -> femtovg::Color {
     self.to_rgba(255)
   }

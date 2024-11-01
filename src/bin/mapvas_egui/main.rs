@@ -8,7 +8,9 @@ struct MapApp {
 impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     egui::CentralPanel::default().show(ctx, |ui| {
-      (&mut self.map).ui(ui);
+      if (ctx.has_requested_repaint()) {
+        (&mut self.map).ui(ui);
+      }
     });
   }
 }
