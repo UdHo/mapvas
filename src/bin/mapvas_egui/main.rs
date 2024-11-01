@@ -1,4 +1,5 @@
-use mapvas::map::mapvas_egui::{map_ui, MapData};
+use egui::Widget as _;
+use mapvas::map::mapvas_egui::MapData;
 
 #[derive(Default)]
 struct MapApp {
@@ -7,7 +8,7 @@ struct MapApp {
 impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     egui::CentralPanel::default().show(ctx, |ui| {
-      map_ui(ui, &mut self.map);
+      (&mut self.map).ui(ui);
     });
   }
 }
@@ -31,14 +32,14 @@ fn main() -> eframe::Result {
     ..Default::default()
   };
   eframe::run_native(
-    "My egui App",
+    "mapvas",
     options,
     Box::new(|cc| {
       // This gives us image support:
       egui_extras::install_image_loaders(&cc.egui_ctx);
 
       Ok(Box::new(MapApp {
-        map: MapData::new(),
+        map: MapData::new(cc.egui_ctx.clone()),
       }))
     }),
   )
