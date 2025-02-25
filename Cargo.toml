@@ -11,36 +11,36 @@ repository = "https://github.com/UdHo/mapvas.git"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-anyhow = "1.0.80"
-async-std = "1.12.0"
-axum = "0.7.4"
-femtovg = "0.9.0"
-futures = "0.3.28"
-glutin = "0.30.10"
-glutin-winit = "0.3.0"
-image = "0.24.7"
-itertools = "0.13.0"
-log = "0.4.20"
-raw-window-handle = "0.5.2"
-rayon = "1.8.0"
+anyhow = "1.0.96"
+async-std = "1.13.0"
+axum = "0.7.5"
+femtovg = "0.9.1"
+futures = "0.3.31"
+glutin = "0.32.2"
+glutin-winit = "0.5.0"
+image = "0.25.2"
+itertools = "0.14.0"
+log = "0.4.26"
+raw-window-handle = "0.6.2"
+rayon = "1.10.0"
 resource = "0.5.0"
-serde = "1.0.188"
+serde = "1.0.210"
 surf = "2.3.2"
-thiserror = "1.0.49"
-tokio = {version = "1.32.0", features = ["full"]}
-tracing-subscriber = {version = "0.3.17", features = ["env-filter"]}
+thiserror = "1.0.65"
+tokio = {version = "1.43.0", features = ["full"]}
+tracing-subscriber = {version = "0.3.19", features = ["env-filter"]}
 tower-http = {version = "0.5.2", features = ["trace"]}
-winit = "0.28.7"
+winit = "0.30.9"
 tracing = "0.1.37"
-serde_json = "1.0.107"
-env_logger = "0.11.3"
-regex = "1.9.5"
-rand = "0.8.5"
-clap = {version ="4.4.5", features=["derive"]}
-arboard = "3.3.2"
+serde_json = "1.0.139"
+env_logger = "0.11.6"
+regex = "1.11.1"
+rand = "0.9.0"
+clap = {version ="4.5.13", features=["derive"]}
+arboard = "3.4.1"
 ttf-noto-sans = "0.1.2"
 surf-governor = "0.2.0"
-chrono = "0.4.38"
+chrono = "0.4.39"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}
