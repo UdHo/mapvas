@@ -1,5 +1,6 @@
 use std::sync::mpsc::Receiver;
 
+use arboard::Clipboard;
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box, MAX_ZOOM, MIN_ZOOM};
 use log::{debug, info};
@@ -8,6 +9,8 @@ use tile_layer::TileLayer;
 
 use crate::{
   map::coordinates::{PixelPosition, Transform},
+  parser::GrepParser,
+  parser::Parser,
   remote::Remote,
 };
 
@@ -31,6 +34,7 @@ pub struct Map {
   layers: Vec<Box<dyn Layer>>,
   recv: Receiver<MapEvent>,
   ctx: egui::Context,
+  remote: Remote,
 }
 
 impl Map {
@@ -54,6 +58,7 @@ impl Map {
         layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
         recv,
         ctx,
+        remote: remote.clone(),
       },
       remote,
     )
@@ -97,8 +102,9 @@ impl Map {
             self.show_bounding_box(rect);
           }
 
-          egui::Key::V => todo!(),
-          egui::Key::C => todo!(),
+          egui::Key::V => self.paste(),
+
+          egui::Key::C => self.copy(),
           _ => {
             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
           }
@@ -116,6 +122,17 @@ impl Map {
       },
     );
     show_box(&mut self.transform, &bb, rect);
+  }
+
+  fn paste(&self) {
+    let sender = self.remote.layer.clone();
+    rayon::spawn(move || {
+      if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
+        if let Some(map_event) = GrepParser::new(false).parse_line(&text) {
+          let _ = sender.send(map_event);
+        }
+      }
+    });
   }
 
   fn handle_mouse_wheel(&mut self, ui: &Ui, response: &Response) {
@@ -168,6 +185,10 @@ impl Map {
 
   fn clear(&mut self) {
     self.layers.iter_mut().for_each(|l| l.clear());
+  }
+
+  fn copy(&self) {
+    // TODO
   }
 }
 
