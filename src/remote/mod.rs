@@ -10,19 +10,11 @@ use crate::map::map_event::MapEvent;
 
 pub const DEFAULT_PORT: u16 = 12345;
 
-pub async fn serve_axum(
-  State(sender): State<Sender<MapEvent>>,
-  Json(event): Json<MapEvent>,
-) -> String {
-  let _ = sender.send(event);
-  42.to_string()
-}
-
 pub async fn mapvas_remote_handler(
   State(remote): State<Remote>,
   Json(event): Json<MapEvent>,
 ) -> String {
-  let _ = remote.handle_map_event(event).await;
+  remote.handle_map_event(event);
   42.to_string()
 }
 
@@ -54,7 +46,9 @@ pub async fn remote_runner(remote: Remote) {
 
   tokio::spawn(async {
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr)
+      .await
+      .expect("Port is free.");
     let _ = axum::serve(listener, app).await;
   });
 
@@ -76,7 +70,7 @@ pub struct Remote {
 }
 
 impl Remote {
-  pub async fn handle_map_event(&self, event: MapEvent) {
+  pub fn handle_map_event(&self, event: MapEvent) {
     match event {
       l @ MapEvent::Layer(_) => {
         let _ = self.layer.send(l);

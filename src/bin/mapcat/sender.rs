@@ -3,7 +3,6 @@ use mapvas::map::map_event::{Layer, MapEvent, Shape};
 use mapvas::remote::DEFAULT_PORT;
 use std::process::Stdio;
 
-use async_std::task::block_on;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -72,7 +71,7 @@ impl SenderInner {
 
     let send_mut_condv = self.send_mutex.clone();
     rayon::spawn(move || {
-      block_on(Self::compact_and_send(queue));
+      async_std::task::block_on(Self::compact_and_send(queue));
       let lock_stuff = send_mut_condv;
       let mut count = lock_stuff.0.lock().expect("can aquire lock");
       *count -= 1;
@@ -102,9 +101,10 @@ impl SenderInner {
   }
 
   async fn send_event(event: &MapEvent) {
-    let _ = surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
+    let _r = surf::post(format!("http://localhost:{DEFAULT_PORT}/"))
       .body_json(&event)
       .expect("cannot serialize json")
+      .send()
       .await;
   }
 }

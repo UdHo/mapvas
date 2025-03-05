@@ -2,7 +2,7 @@ use std::sync::mpsc::Receiver;
 
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box, MAX_ZOOM, MIN_ZOOM};
-use log::debug;
+use log::{debug, info};
 use shape_layer::ShapeLayer;
 use tile_layer::TileLayer;
 
@@ -111,7 +111,6 @@ impl Map {
     let bb = self.layers.iter().filter_map(|l| l.bounding_box()).fold(
       BoundingBox::get_invalid(),
       |mut acc, bb| {
-        eprintln!("bb: {:?}", bb);
         acc.extend(&bb);
         acc
       },
@@ -155,7 +154,7 @@ impl Map {
 
   fn handle_map_events(&mut self, rect: Rect) {
     let events = self.recv.try_iter().collect::<Vec<_>>();
-    for event in events.iter() {
+    for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
         MapEvent::Clear => self.clear(),
@@ -204,7 +203,7 @@ impl Widget for &mut Map {
     self.handle_keys(events.into_iter(), rect);
 
     if response.clicked() {
-      eprintln!("Clicked {:?} {:?}", response, response.hover_pos());
+      info!("Clicked at: {:?}", response.hover_pos());
     }
 
     if response.dragged() && response.dragged_by(PointerButton::Primary) {

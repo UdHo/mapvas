@@ -1,6 +1,5 @@
 use crate::map::coordinates::Tile;
 use anyhow::Result;
-use async_std::task::block_on;
 use log::{debug, error, info, trace};
 use regex::Regex;
 use std::collections::HashSet;
@@ -30,11 +29,6 @@ pub type TileData = Vec<u8>;
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
-  /// A blocking version of `tile_data`.
-  #[allow(unused)]
-  fn tile_data_blocking(&self, tile: &Tile) -> Result<TileData> {
-    block_on(self.tile_data(tile))
-  }
 }
 
 #[derive(Debug, Clone)]
@@ -224,14 +218,16 @@ impl TileLoader for CachedTileLoader {
 mod tests {
   use super::*;
 
-  #[test]
-  fn downloader_test() {
+  #[tokio::test]
+  async fn downloader_test() {
     let downloader = CachedTileLoader::default();
-    let data = downloader.tile_data_blocking(&Tile {
-      x: 1,
-      y: 1,
-      zoom: 17,
-    });
+    let data = downloader
+      .tile_data(&Tile {
+        x: 1,
+        y: 1,
+        zoom: 17,
+      })
+      .await;
     assert!(data.is_ok());
     assert!(data.unwrap().len() > 100);
   }

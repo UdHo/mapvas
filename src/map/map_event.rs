@@ -36,30 +36,6 @@ pub enum Color {
 
 impl Color {
   #[must_use]
-  pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
-    match self {
-      Color::Blue => femtovg::Color::rgba(0, 0, 255, alpha),
-      Color::DarkBlue => femtovg::Color::rgba(0, 0, 150, alpha),
-      Color::Red => femtovg::Color::rgba(255, 0, 0, alpha),
-      Color::DarkRed => femtovg::Color::rgba(150, 0, 0, alpha),
-      Color::Green => femtovg::Color::rgba(0, 255, 0, alpha),
-      Color::DarkGreen => femtovg::Color::rgba(0, 150, 0, alpha),
-      Color::Yellow => femtovg::Color::rgba(255, 255, 0, alpha),
-      Color::DarkYellow => femtovg::Color::rgba(150, 150, 0, alpha),
-      Color::Black => femtovg::Color::rgba(0, 0, 0, alpha),
-      Color::White => femtovg::Color::rgba(255, 255, 255, alpha),
-      Color::Grey => femtovg::Color::rgba(127, 127, 127, alpha),
-      Color::Brown => femtovg::Color::rgba(153, 76, 0, alpha),
-      Color::Color32(r, g, b, a) => femtovg::Color::rgba(r, g, b, a),
-    }
-  }
-
-  #[must_use]
-  pub fn to_rgb(self) -> femtovg::Color {
-    self.to_rgba(255)
-  }
-
-  #[must_use]
   pub fn all() -> &'static [Color] {
     &ALL_COLORS
   }

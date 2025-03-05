@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, u8};
+use std::{collections::HashMap, sync::Arc};
 
 use egui::{Color32, ColorImage, Rect, Ui};
 use log::{error, info};
@@ -39,7 +39,7 @@ impl TileLayer {
         image_data.id(),
         Rect::from_min_max(nw.into(), se.into()),
         Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        if false && (tile.x + tile.y) % 2 == 0 {
+        if (tile.x + tile.y) % 2 == 0 {
           Color32::WHITE
         } else {
           Color32::from_rgb(230, 230, 230)

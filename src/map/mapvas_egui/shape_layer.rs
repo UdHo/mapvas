@@ -110,10 +110,9 @@ impl Layer for ShapeLayer {
         .shape_map
         .values()
         .flatten()
-        .map(|s| s.coordinates.iter().map(|c| PixelPosition::from(*c)))
-        .flatten(),
+        .flat_map(|s| s.coordinates.iter().map(|c| PixelPosition::from(*c))),
     );
-    bb.is_valid().then(|| bb)
+    bb.is_valid().then_some(bb)
   }
 
   fn clear(&mut self) {

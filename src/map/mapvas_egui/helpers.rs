@@ -23,7 +23,7 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
   let inv = transform.invert();
-  let PixelPosition { x, y } = dbg!(inv.apply(PixelPosition { x: 0., y: 0. }));
+  let PixelPosition { x, y } = inv.apply(PixelPosition { x: 0., y: 0. });
   if x < 0. || y < 0. {
     transform.translate(
       PixelPosition {
@@ -33,10 +33,10 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
     );
   }
 
-  let PixelPosition { x, y } = dbg!(inv.apply(PixelPosition {
+  let PixelPosition { x, y } = inv.apply(PixelPosition {
     x: rect.max.x,
     y: rect.max.y,
-  }));
+  });
   if x > 2000. || y > 2000. {
     transform.translate(
       PixelPosition {
