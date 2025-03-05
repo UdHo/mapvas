@@ -1,7 +1,6 @@
 use crate::map::coordinates::Tile;
 use anyhow::Result;
-use async_std::task::block_on;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs::File;
@@ -9,8 +8,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use surf::http::Method;
-use surf::{Request, Url};
+use surf::{Config, Request, Url};
 use surf_governor::GovernorMiddleware;
 use thiserror::Error;
 
@@ -29,11 +29,6 @@ pub type TileData = Vec<u8>;
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
-  /// A blocking version of `tile_data`.
-  #[allow(unused)]
-  fn tile_data_blocking(&self, tile: &Tile) -> Result<TileData> {
-    block_on(self.tile_data(tile))
-  }
 }
 
 #[derive(Debug, Clone)]
@@ -88,10 +83,14 @@ impl TileDownloader {
     let url_template = std::env::var("MAPVAS_TILE_URL").unwrap_or(String::from(
       "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
     ));
+    let client: surf::Client = Config::new()
+      .set_timeout(Some(Duration::from_secs(5)))
+      .try_into()
+      .expect("client");
     Self {
       url_template,
       tiles_in_download: Arc::default(),
-      client: surf::Client::new().with(GovernorMiddleware::per_second(50).unwrap()),
+      client: client.with(GovernorMiddleware::per_second(20).unwrap()),
     }
   }
 
@@ -108,6 +107,7 @@ impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     {
       let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
+      info!("Tiles in download: {:?}", tiles_in_download);
       let is_in_progress = tiles_in_download.get(tile);
       if is_in_progress.is_some() {
         return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
@@ -116,7 +116,7 @@ impl TileLoader for TileDownloader {
     }
 
     let url = self.get_path_for_tile(tile);
-    debug!("Downloading {}.", url);
+    info!("Downloading {}.", url);
     let request = Request::new(Method::Get, Url::parse(&url).unwrap());
     let result = self
       .client
@@ -136,6 +136,7 @@ impl TileLoader for TileDownloader {
       debug!("{result:?}");
       Err(TileLoaderError::TileNotAvailableError { tile: *tile })
     };
+    info!("Downloaded {:?}.", tile);
 
     let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
     tiles_in_download.remove(tile);
@@ -217,14 +218,16 @@ impl TileLoader for CachedTileLoader {
 mod tests {
   use super::*;
 
-  #[test]
-  fn downloader_test() {
+  #[tokio::test]
+  async fn downloader_test() {
     let downloader = CachedTileLoader::default();
-    let data = downloader.tile_data_blocking(&Tile {
-      x: 1,
-      y: 1,
-      zoom: 17,
-    });
+    let data = downloader
+      .tile_data(&Tile {
+        x: 1,
+        y: 1,
+        zoom: 17,
+      })
+      .await;
     assert!(data.is_ok());
     assert!(data.unwrap().len() > 100);
   }

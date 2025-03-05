@@ -1,72 +1,40 @@
-use mapvas::{
-  map::{map_event::MapEvent, mapvas::MapVas},
-  remote::{serve_axum, DEFAULT_PORT},
-};
+use egui::Widget as _;
+use mapvas::{map::mapvas_egui::Map, remote::spawn_remote_runner};
 
-use std::net::SocketAddr;
-
-use axum::extract::DefaultBodyLimit;
-use axum::{routing::get, routing::post, Router};
-use tokio::sync::mpsc::Sender;
-use tower_http::trace::{self, TraceLayer};
-use tracing_subscriber::EnvFilter;
-
-async fn shutdown_signal(sender: Sender<MapEvent>) {
-  let ctrl_c = async {
-    tokio::signal::ctrl_c()
-      .await
-      .expect("failed to install Ctrl+C handler");
-  };
-
-  #[cfg(unix)]
-  let terminate = async {
-    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-      .expect("failed to install signal handler")
-      .recv()
-      .await;
-  };
-
-  #[cfg(not(unix))]
-  let terminate = std::future::pending::<()>();
-
-  tokio::select! {
-      () = ctrl_c => {},
-      () = terminate => {},
-  }
-
-  let _ = sender.send(MapEvent::Shutdown).await;
+struct MapApp {
+  map: Map,
 }
+impl eframe::App for MapApp {
+  fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    egui::CentralPanel::default()
+      .frame(egui::Frame::none())
+      .show(ctx, |ui| {
+        (&mut self.map).ui(ui);
+      });
+  }
+}
+fn main() -> eframe::Result {
+  // init logger.
+  env_logger::init();
 
-async fn healthcheck() {}
+  // Tokio runtime.
+  let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+  let _enter = rt.enter();
 
-#[tokio::main]
-async fn main() {
-  tracing_subscriber::fmt()
-    .with_target(false)
-    .with_env_filter(EnvFilter::from_default_env())
-    .compact()
-    .init();
+  let options = eframe::NativeOptions {
+    ..Default::default()
+  };
 
-  let widget: MapVas = MapVas::new();
-  let sender = widget.get_event_sender();
-  let app = Router::new()
-    .route("/", post(serve_axum))
-    .route("/healtcheck", get(healthcheck))
-    .with_state(sender.clone())
-    .layer(DefaultBodyLimit::max(10_000_000_000_000))
-    .layer(
-      TraceLayer::new_for_http()
-        .make_span_with(trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
-        .on_response(trace::DefaultOnResponse::new().level(tracing::Level::INFO)),
-    );
+  eframe::run_native(
+    "mapvas",
+    options,
+    Box::new(|cc| {
+      // This gives us image support:
+      egui_extras::install_image_loaders(&cc.egui_ctx);
+      let (mapapp, remote) = Map::new(cc.egui_ctx.clone());
+      spawn_remote_runner(rt, remote);
 
-  tokio::spawn(async {
-    let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let _ = axum::serve(listener, app)
-      .with_graceful_shutdown(shutdown_signal(sender))
-      .await;
-  });
-
-  widget.run();
+      Ok(Box::new(MapApp { map: mapapp }))
+    }),
+  )
 }

@@ -1,4 +1,4 @@
-use super::coordinates::{Coordinate, Tile};
+use super::coordinates::Coordinate;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
@@ -31,32 +31,10 @@ pub enum Color {
   Grey,
   White,
   Brown,
+  Color32(u8, u8, u8, u8),
 }
 
 impl Color {
-  #[must_use]
-  pub fn to_rgba(self, alpha: u8) -> femtovg::Color {
-    match self {
-      Color::Blue => femtovg::Color::rgba(0, 0, 255, alpha),
-      Color::DarkBlue => femtovg::Color::rgba(0, 0, 150, alpha),
-      Color::Red => femtovg::Color::rgba(255, 0, 0, alpha),
-      Color::DarkRed => femtovg::Color::rgba(150, 0, 0, alpha),
-      Color::Green => femtovg::Color::rgba(0, 255, 0, alpha),
-      Color::DarkGreen => femtovg::Color::rgba(0, 150, 0, alpha),
-      Color::Yellow => femtovg::Color::rgba(255, 255, 0, alpha),
-      Color::DarkYellow => femtovg::Color::rgba(150, 150, 0, alpha),
-      Color::Black => femtovg::Color::rgba(0, 0, 0, alpha),
-      Color::White => femtovg::Color::rgba(255, 255, 255, alpha),
-      Color::Grey => femtovg::Color::rgba(127, 127, 127, alpha),
-      Color::Brown => femtovg::Color::rgba(153, 76, 0, alpha),
-    }
-  }
-
-  #[must_use]
-  pub fn to_rgb(self) -> femtovg::Color {
-    self.to_rgba(255)
-  }
-
   #[must_use]
   pub fn all() -> &'static [Color] {
     &ALL_COLORS
@@ -81,6 +59,27 @@ impl FromStr for Color {
       "grey" => Ok(Color::Grey),
       "brown" => Ok(Color::Brown),
       _ => Err(()),
+    }
+  }
+}
+
+impl From<Color> for egui::Color32 {
+  fn from(value: Color) -> Self {
+    let alpha = 255;
+    match value {
+      Color::Blue => egui::Color32::from_rgba_premultiplied(0, 0, 255, alpha),
+      Color::DarkBlue => egui::Color32::from_rgba_premultiplied(0, 0, 150, alpha),
+      Color::Red => egui::Color32::from_rgba_premultiplied(255, 0, 0, alpha),
+      Color::DarkRed => egui::Color32::from_rgba_premultiplied(150, 0, 0, alpha),
+      Color::Green => egui::Color32::from_rgba_premultiplied(0, 255, 0, alpha),
+      Color::DarkGreen => egui::Color32::from_rgba_premultiplied(0, 150, 0, alpha),
+      Color::Yellow => egui::Color32::from_rgba_premultiplied(255, 255, 0, alpha),
+      Color::DarkYellow => egui::Color32::from_rgba_premultiplied(150, 150, 0, alpha),
+      Color::Black => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
+      Color::White => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+      Color::Grey => egui::Color32::from_rgba_premultiplied(127, 127, 127, alpha),
+      Color::Brown => egui::Color32::from_rgba_premultiplied(153, 76, 0, alpha),
+      Color::Color32(r, g, b, a) => egui::Color32::from_rgba_premultiplied(r, g, b, a),
     }
   }
 }
@@ -169,7 +168,6 @@ pub struct Focus {}
 pub enum MapEvent {
   Shutdown,
   Clear,
-  TileDataArrived { tile: Tile, data: Vec<u8> },
   Layer(Layer),
   Focus,
   Screenshot(PathBuf),

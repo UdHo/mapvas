@@ -1,4 +1,9 @@
 # Changelog
+
+## 0.2.x
+
+- Change to egui instead of femtovg.
+
 ## 0.1.19
 
 - mapcat can read several files.
