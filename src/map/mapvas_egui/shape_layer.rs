@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::map::{
-  coordinates::{Coordinate, PixelPosition, Transform},
+  coordinates::{BoundingBox, Coordinate, PixelPosition, Transform},
   map_event::{self, Color, FillStyle, Layer as EventLayer, MapEvent, Style},
 };
 
@@ -119,5 +119,17 @@ impl Layer for ShapeLayer {
       ui.painter()
         .add(Shape::from_shape_with_transform(shape, transform).shape);
     }
+  }
+
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    let bb = BoundingBox::from_iterator(
+      self
+        .shape_map
+        .values()
+        .flatten()
+        .map(|s| s.coordinates.iter().map(|c| PixelPosition::from(*c)))
+        .flatten(),
+    );
+    bb.is_valid().then(|| bb)
   }
 }

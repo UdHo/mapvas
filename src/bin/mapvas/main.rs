@@ -1,7 +1,7 @@
 use egui::Widget as _;
 use mapvas::{
   map::mapvas_egui::Map,
-  remote::{remote_runner, spawn_remote_runner},
+  remote::spawn_remote_runner,
 };
 
 #[derive(Default)]
