@@ -2,7 +2,7 @@ use std::sync::mpsc::Receiver;
 
 use arboard::Clipboard;
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
-use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box, MAX_ZOOM, MIN_ZOOM};
+use helpers::{MAX_ZOOM, MIN_ZOOM, fit_to_screen, set_coordinate_to_pixel, show_box};
 use log::{debug, info};
 use shape_layer::ShapeLayer;
 use tile_layer::TileLayer;
@@ -187,6 +187,7 @@ impl Map {
     self.layers.iter_mut().for_each(|l| l.clear());
   }
 
+  #[expect(clippy::unused_self)]
   fn copy(&self) {
     // TODO
   }

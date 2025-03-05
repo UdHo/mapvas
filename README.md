@@ -22,6 +22,7 @@ Via cargo from [crates.io](https://crates.io/crates/mapvas):
 - `cargo install mapvas --locked`
 
 Via brew on MacOs:
+
 - `brew tap udho/mapvas && brew install mapvas`
 
 ## Usage
@@ -39,7 +40,7 @@ Start `mapvas` and a map window will appear.
 | pasting file data | dropping a file on the map will draw the contents on the map |
 | information about element | right click near an element with label will show the label. L will use the current mouse position for poor mac users. |
 | screenshot | the S key takes a screenshot of the currently displayed area |
-| delete (Fn+delete on Mac)    | clears the canvas |
+| delete (Fn+delete on Mac) | clears the canvas |
 
 ### mapcat
 

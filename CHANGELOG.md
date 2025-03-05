@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.x
+## 0.2.0
 
 - Change to egui instead of femtovg.
 

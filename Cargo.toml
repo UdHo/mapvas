@@ -2,9 +2,9 @@
 name = "mapvas"
 readme = "README.md"
 description = "A map viewer with drawing functionality"
-version = "0.1.19"
+version = "0.2.0"
 authors = ["Udo Hoffmann <hoffmann.odu@gmail.com>"]
-edition = "2021"
+edition = "2024"
 keywords = ["map", "openstreetmap", "drawing"]
 homepage = "https://github.com/UdHo/mapvas"
 repository = "https://github.com/UdHo/mapvas.git"
