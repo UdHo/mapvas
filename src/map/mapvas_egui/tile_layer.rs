@@ -4,9 +4,7 @@ use egui::{Color32, ColorImage, Rect, Ui};
 use log::{debug, error, info};
 
 use crate::map::{
-  coordinates::{
-    tiles_in_box, BoundingBox, Coordinate, Tile, TileCoordinate, Transform, TILE_SIZE,
-  },
+  coordinates::{tiles_in_box, Tile, TileCoordinate, Transform, TILE_SIZE},
   tile_loader::{CachedTileLoader, TileLoader},
 };
 
@@ -41,7 +39,7 @@ impl TileLayer {
         image_data.id(),
         Rect::from_min_max(nw.into(), se.into()),
         Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        if (tile.x + tile.y) % 2 == 0 {
+        if false && (tile.x + tile.y) % 2 == 0 {
           Color32::WHITE
         } else {
           Color32::from_rgb(230, 230, 230)
@@ -102,7 +100,7 @@ impl Layer for TileLayer {
     self.collect_new_tile_data(ui);
 
     let (width, height) = (rect.width(), rect.height());
-    let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as u8 + 1;
+    let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as u8 + 2;
     let inv = transform.invert();
     let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
     let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);

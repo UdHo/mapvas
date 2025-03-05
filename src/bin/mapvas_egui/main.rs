@@ -1,9 +1,12 @@
 use egui::Widget as _;
-use mapvas::map::mapvas_egui::MapData;
+use mapvas::{
+  map::mapvas_egui::Map,
+  remote::{remote_runner, spawn_remote_runner},
+};
 
 #[derive(Default)]
 struct MapApp {
-  map: MapData,
+  map: Map,
 }
 impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -12,35 +15,28 @@ impl eframe::App for MapApp {
     });
   }
 }
-
 fn main() -> eframe::Result {
   // init logger.
   env_logger::init();
 
-  // start tokio on another thread.
+  // Tokio runtime.
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
   let _enter = rt.enter();
-  std::thread::spawn(move || {
-    rt.block_on(async {
-      loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-      }
-    });
-  });
 
   let options = eframe::NativeOptions {
     ..Default::default()
   };
+
   eframe::run_native(
     "mapvas",
     options,
     Box::new(|cc| {
       // This gives us image support:
       egui_extras::install_image_loaders(&cc.egui_ctx);
+      let (mapapp, remote) = Map::new(cc.egui_ctx.clone());
+      spawn_remote_runner(rt, remote);
 
-      Ok(Box::new(MapApp {
-        map: MapData::new(cc.egui_ctx.clone()),
-      }))
+      Ok(Box::new(MapApp { map: mapapp }))
     }),
   )
 }

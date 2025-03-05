@@ -1,9 +1,12 @@
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
-use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box};
+use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box, MAX_ZOOM, MIN_ZOOM};
 use log::debug;
 use tile_layer::TileLayer;
 
-use crate::map::coordinates::{PixelPosition, Transform};
+use crate::{
+  map::coordinates::{PixelPosition, Transform},
+  remote::Remote,
+};
 
 use super::coordinates::BoundingBox;
 
@@ -11,6 +14,7 @@ mod helpers;
 mod shape_layer;
 mod tile_layer;
 
+/// A layer that can be drawn on the map.
 trait Layer {
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
   fn clear(&mut self) {}
@@ -20,20 +24,30 @@ trait Layer {
 }
 
 #[derive(Default)]
-pub struct MapData {
+pub struct Map {
   transform: Transform,
   layers: Vec<Box<dyn Layer>>,
 }
 
-impl MapData {
+impl Map {
   #[must_use]
-  pub fn new(ctx: egui::Context) -> Self {
+  pub fn new(ctx: egui::Context) -> (Self, Remote) {
     let tile_layer = TileLayer::new(ctx.clone());
     let shape_layer = shape_layer::ShapeLayer::new(ctx.clone());
-    Self {
-      transform: Transform::invalid(),
-      layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
-    }
+    let remote = Remote {
+      layer: shape_layer.get_sender(),
+      focus: shape_layer.get_sender(),
+      clear: shape_layer.get_sender(),
+      shutdown: shape_layer.get_sender(),
+      screenshot: shape_layer.get_sender(),
+    };
+    (
+      Self {
+        transform: Transform::invalid(),
+        layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
+      },
+      remote,
+    )
   }
 
   fn handle_keys(&mut self, events: impl Iterator<Item = Event>, rect: Rect) {
@@ -63,13 +77,11 @@ impl MapData {
 
           egui::Key::Minus => {
             let middle = self.transform.invert().apply(rect.center().into());
-            let _ = self.transform.zoom(0.9);
-            set_coordinate_to_pixel(middle, rect.center().into(), &mut self.transform);
+            self.zoom_center(0.9, middle);
           }
           egui::Key::Plus | egui::Key::Equals => {
             let middle = self.transform.invert().apply(rect.center().into());
-            let _ = self.transform.zoom(1. / 0.9);
-            set_coordinate_to_pixel(middle, rect.center().into(), &mut self.transform);
+            self.zoom_center(1. / 0.9, middle);
           }
 
           egui::Key::F => {
@@ -92,28 +104,8 @@ impl MapData {
       }
     }
   }
-}
 
-impl Widget for &mut MapData {
-  fn ui(self, ui: &mut Ui) -> Response {
-    let size = ui.available_size();
-    let (rect, /*mut*/ response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-
-    if self.transform.is_invalid() {
-      fit_to_screen(&mut self.transform, &rect);
-      set_coordinate_to_pixel(
-        PixelPosition { x: 500., y: 500. },
-        rect.center().into(),
-        &mut self.transform,
-      );
-
-      assert!(
-        !self.transform.is_invalid(),
-        "Transform: {:?}",
-        self.transform
-      );
-    }
-
+  fn handle_mouse_wheel(&mut self, ui: &Ui, response: &Response) {
     if response.hovered() {
       // check mouse wheel movvement
       let delta = ui
@@ -133,11 +125,42 @@ impl Widget for &mut MapData {
         .map(|d| (d.y / 1. + 1.).clamp(0.8, 1.4).sqrt());
       if let Some(delta) = delta {
         let cursor = response.hover_pos().unwrap_or_default().into();
-        let hover_pos: PixelPosition = self.transform.invert().apply(cursor);
-        self.transform.zoom(delta);
-        set_coordinate_to_pixel(hover_pos, cursor, &mut self.transform);
+        self.zoom_center(delta, cursor);
       }
     }
+  }
+
+  fn zoom_center(&mut self, delta: f32, center: PixelPosition) {
+    if self.transform.zoom * delta < MIN_ZOOM || self.transform.zoom * delta > MAX_ZOOM {
+      return;
+    }
+    let hover_pos: PixelPosition = self.transform.invert().apply(center);
+    self.transform.zoom(delta);
+    set_coordinate_to_pixel(hover_pos, center, &mut self.transform);
+  }
+}
+
+impl Widget for &mut Map {
+  fn ui(self, ui: &mut Ui) -> Response {
+    let size = ui.available_size();
+    let (rect, /*mut*/ response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+
+    if self.transform.is_invalid() {
+      fit_to_screen(&mut self.transform, &rect);
+      set_coordinate_to_pixel(
+        PixelPosition { x: 500., y: 500. },
+        rect.center().into(),
+        &mut self.transform,
+      );
+
+      assert!(
+        !self.transform.is_invalid(),
+        "Transform: {:?}",
+        self.transform
+      );
+    }
+
+    self.handle_mouse_wheel(ui, &response);
 
     let events = ui.input(|i: &InputState| {
       i.events

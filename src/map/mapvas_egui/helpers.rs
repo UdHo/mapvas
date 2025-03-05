@@ -1,8 +1,13 @@
 use egui::Rect;
 use log::debug;
+use tracing::instrument;
 
 use crate::map::coordinates::{BoundingBox, PixelPosition, Transform};
 
+pub const MAX_ZOOM: f32 = 524_288.;
+pub const MIN_ZOOM: f32 = 1.;
+
+#[instrument]
 pub(crate) fn set_coordinate_to_pixel(
   coord: PixelPosition,
   cursor: PixelPosition,
@@ -12,10 +17,9 @@ pub(crate) fn set_coordinate_to_pixel(
   transform.translate(current_pos_in_gui * (-1.) + cursor);
 }
 
+#[instrument]
 pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   debug!("Fit to screen: input transform: {transform:?}, rect: {rect:?}");
-  const MAX_ZOOM: f32 = 524_288.;
-  const MIN_ZOOM: f32 = 2.;
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
   let inv = transform.invert();
@@ -29,18 +33,18 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
     );
   }
 
-  /*let PixelPosition { x, y } = dbg!(inv.apply(PixelPosition {
+  let PixelPosition { x, y } = dbg!(inv.apply(PixelPosition {
     x: rect.max.x,
     y: rect.max.y,
   }));
-  if x > 1000. || y > 1000. {
+  if x > 2000. || y > 2000. {
     transform.translate(
       PixelPosition {
-        x: (x - 1000.).max(0.),
-        y: (y - 1000.).max(0.),
+        x: (x - 2000.).max(0.),
+        y: (y - 2000.).max(0.),
       } * transform.zoom,
     );
-  }*/
+  }
   debug!("Fit to screen: output transform: {transform:?}");
 }
 

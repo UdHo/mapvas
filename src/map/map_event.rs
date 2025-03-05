@@ -1,4 +1,4 @@
-use super::coordinates::{Coordinate, Tile};
+use super::coordinates::Coordinate;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
@@ -192,7 +192,6 @@ pub struct Focus {}
 pub enum MapEvent {
   Shutdown,
   Clear,
-  TileDataArrived { tile: Tile, data: Vec<u8> },
   Layer(Layer),
   Focus,
   Screenshot(PathBuf),

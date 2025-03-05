@@ -61,6 +61,7 @@ pub struct ShapeLayer {
   shape_map: HashMap<String, Vec<map_event::Shape>>,
   recv: Receiver<MapEvent>,
   send: Sender<MapEvent>,
+  #[expect(dead_code)]
   ctx: egui::Context,
 }
 
