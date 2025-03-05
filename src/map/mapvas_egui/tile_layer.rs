@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
 use egui::{Color32, ColorImage, Rect, Ui};
-use log::{debug, error, info};
+use log::{error, info};
 
 use crate::map::{
   coordinates::{tiles_in_box, Tile, TileCoordinate, Transform, TILE_SIZE},
@@ -74,7 +74,9 @@ impl TileLayer {
           let pixel = image_buffer.as_flat_samples();
           let egui_image = egui::ColorImage::from_rgba_unmultiplied(size, pixel.as_slice());
           sender.send((tile, egui_image)).unwrap();
-          debug!("Sent tile to UI: {:?}", tile);
+
+          // tokio sleep for 100ms
+          tokio::time::sleep(std::time::Duration::from_millis(100)).await;
           ctx.request_repaint();
         }
       });
@@ -111,6 +113,8 @@ impl Layer for TileLayer {
       }
     }
 
+    // Draw parent tiles if detailed tiles are not available yet. Coarser tiles are drawn first to
+    // have detailed textures visible on top.
     let mut tiles_to_draw = tiles_in_box(min_pos, max_pos)
       .filter_map(|mut tile| {
         while !self.loaded_tiles.contains_key(&tile) {
@@ -119,8 +123,9 @@ impl Layer for TileLayer {
         Some(tile)
       })
       .collect::<Vec<_>>();
-    tiles_to_draw.sort_by_key(|tile| u8::MAX - tile.zoom);
+    tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
     tiles_to_draw.dedup();
+    tiles_to_draw.reverse();
 
     for tile in tiles_to_draw {
       if !self.draw_tile(ui, rect, &tile, transform) {

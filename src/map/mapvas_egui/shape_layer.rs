@@ -26,9 +26,9 @@ impl Shape {
       .coordinates
       .iter()
       .map(|coord| PixelPosition::into((*coord).into()))
-      .map(|pos| transform.apply(pos))
-      .map(|pos| pos.into())
+      .map(|pos| transform.apply(pos).into())
       .collect();
+
     Self {
       shape: egui::Shape::Path(PathShape {
         points,

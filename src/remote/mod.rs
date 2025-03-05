@@ -4,6 +4,7 @@ use axum::{
   Json, Router,
 };
 use std::{net::SocketAddr, sync::mpsc::Sender};
+use tower_http::trace::{self, TraceLayer};
 
 use crate::map::map_event::MapEvent;
 
@@ -45,18 +46,16 @@ pub async fn remote_runner(remote: Remote) {
     .route("/healtcheck", get(healthcheck))
     .with_state(remote)
     .layer(DefaultBodyLimit::max(10_000_000_000_000))
-    /*.layer(
+    .layer(
       TraceLayer::new_for_http()
         .make_span_with(trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
         .on_response(trace::DefaultOnResponse::new().level(tracing::Level::INFO)),
-    )*/;
+    );
 
   tokio::spawn(async {
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let _ = axum::serve(listener, app)
-      //     .with_graceful_shutdown(shutdown_signal(sender))
-      .await;
+    let _ = axum::serve(listener, app).await;
   });
 
   // Keep it running.
