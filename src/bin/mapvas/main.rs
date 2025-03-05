@@ -13,6 +13,7 @@ impl eframe::App for MapApp {
       });
   }
 }
+
 fn main() -> eframe::Result {
   // init logger.
   env_logger::init();

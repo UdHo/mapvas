@@ -1,4 +1,4 @@
-use rand::{rngs::ThreadRng, Rng};
+use rand::{Rng, rngs::ThreadRng};
 
 use crate::map::{
   coordinates::Coordinate,

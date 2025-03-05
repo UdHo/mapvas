@@ -4,7 +4,7 @@ use egui::{Color32, ColorImage, Rect, Ui};
 use log::{error, info};
 
 use crate::map::{
-  coordinates::{tiles_in_box, Tile, TileCoordinate, Transform, TILE_SIZE},
+  coordinates::{TILE_SIZE, Tile, TileCoordinate, Transform, tiles_in_box},
   tile_loader::{CachedTileLoader, TileLoader},
 };
 

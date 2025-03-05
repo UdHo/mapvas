@@ -54,9 +54,11 @@ impl TTJsonParser {
   }
 
   fn convert_range(&self, center: Option<Coordinate>, boundary: Vec<Coordinate>) -> MapEvent {
-    let mut shapes = vec![Shape::new(boundary)
-      .with_color(self.color)
-      .with_fill(FillStyle::Transparent)];
+    let mut shapes = vec![
+      Shape::new(boundary)
+        .with_color(self.color)
+        .with_fill(FillStyle::Transparent),
+    ];
     if let Some(c) = center {
       shapes.push(
         Shape::new(vec![c])

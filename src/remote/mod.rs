@@ -1,7 +1,7 @@
 use axum::{
+  Json, Router,
   extract::{DefaultBodyLimit, State},
   routing::{get, post},
-  Json, Router,
 };
 use std::{net::SocketAddr, sync::mpsc::Sender};
 use tower_http::trace::{self, TraceLayer};

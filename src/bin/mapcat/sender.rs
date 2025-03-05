@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 /// Creates a sender that spawns a mapvas instance and queues requests and summarizes layers for
 /// performance speedup with some parsers. The events are send from another thread to not block the

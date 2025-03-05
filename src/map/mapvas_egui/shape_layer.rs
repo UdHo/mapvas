@@ -4,8 +4,8 @@ use crate::map::{
   map_event::{self, FillStyle, Layer as EventLayer, MapEvent},
 };
 use egui::{
-  epaint::{CircleShape, PathShape, PathStroke},
   Color32, Rect, Stroke, Ui,
+  epaint::{CircleShape, PathShape, PathStroke},
 };
 use std::{
   collections::HashMap,
