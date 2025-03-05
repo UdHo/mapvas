@@ -1,20 +1,16 @@
-use std::{
-  collections::HashMap,
-  iter::once,
-  sync::mpsc::{Receiver, Sender},
+use super::Layer;
+use crate::map::{
+  coordinates::{BoundingBox, PixelPosition, Transform},
+  map_event::{self, FillStyle, Layer as EventLayer, MapEvent},
 };
-
 use egui::{
   epaint::{CircleShape, PathShape, PathStroke},
   Color32, Rect, Stroke, Ui,
 };
-
-use crate::map::{
-  coordinates::{BoundingBox, Coordinate, PixelPosition, Transform},
-  map_event::{self, Color, FillStyle, Layer as EventLayer, MapEvent, Style},
+use std::{
+  collections::HashMap,
+  sync::mpsc::{Receiver, Sender},
 };
-
-use super::Layer;
 
 struct Shape {
   shape: egui::Shape,
@@ -70,30 +66,17 @@ pub struct ShapeLayer {
   shape_map: HashMap<String, Vec<map_event::Shape>>,
   recv: Receiver<MapEvent>,
   send: Sender<MapEvent>,
-  #[expect(dead_code)]
-  ctx: egui::Context,
 }
 
 impl ShapeLayer {
   #[must_use]
-  pub fn new(ctx: egui::Context) -> Self {
+  pub fn new() -> Self {
     let (send, recv) = std::sync::mpsc::channel();
 
-    let s = map_event::Shape {
-      coordinates: vec![Coordinate::new(52., 12.), Coordinate::new(52., 10.)],
-      style: Style {
-        color: Color::Black,
-        fill: FillStyle::NoFill,
-      },
-      visible: true,
-      label: None,
-    };
-
     Self {
-      shape_map: HashMap::from_iter(once(("test".to_string(), vec![s]))),
+      shape_map: HashMap::new(),
       recv,
       send,
-      ctx,
     }
   }
 
@@ -131,5 +114,9 @@ impl Layer for ShapeLayer {
         .flatten(),
     );
     bb.is_valid().then(|| bb)
+  }
+
+  fn clear(&mut self) {
+    self.shape_map.clear();
   }
 }

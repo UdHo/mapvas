@@ -1,6 +1,9 @@
+use std::sync::mpsc::Receiver;
+
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{fit_to_screen, set_coordinate_to_pixel, show_box, MAX_ZOOM, MIN_ZOOM};
 use log::debug;
+use shape_layer::ShapeLayer;
 use tile_layer::TileLayer;
 
 use crate::{
@@ -8,7 +11,7 @@ use crate::{
   remote::Remote,
 };
 
-use super::coordinates::BoundingBox;
+use super::{coordinates::BoundingBox, map_event::MapEvent};
 
 mod helpers;
 mod shape_layer;
@@ -23,28 +26,34 @@ trait Layer {
   }
 }
 
-#[derive(Default)]
 pub struct Map {
   transform: Transform,
   layers: Vec<Box<dyn Layer>>,
+  recv: Receiver<MapEvent>,
+  ctx: egui::Context,
 }
 
 impl Map {
   #[must_use]
   pub fn new(ctx: egui::Context) -> (Self, Remote) {
     let tile_layer = TileLayer::new(ctx.clone());
-    let shape_layer = shape_layer::ShapeLayer::new(ctx.clone());
+    let shape_layer = ShapeLayer::new();
+    let (send, recv) = std::sync::mpsc::channel();
+
     let remote = Remote {
       layer: shape_layer.get_sender(),
-      focus: shape_layer.get_sender(),
-      clear: shape_layer.get_sender(),
+      focus: send.clone(),
+      clear: send.clone(),
       shutdown: shape_layer.get_sender(),
       screenshot: shape_layer.get_sender(),
+      update: ctx.clone(),
     };
     (
       Self {
         transform: Transform::invalid(),
         layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
+        recv,
+        ctx,
       },
       remote,
     )
@@ -60,7 +69,7 @@ impl Map {
       } = event
       {
         match key {
-          egui::Key::Delete => self.layers.iter_mut().for_each(|l| l.clear()),
+          egui::Key::Delete => self.clear(),
 
           egui::Key::ArrowDown => {
             let _ = self.transform.translate(PixelPosition { x: 0., y: -10. });
@@ -85,14 +94,7 @@ impl Map {
           }
 
           egui::Key::F => {
-            let bb = self.layers.iter().filter_map(|l| l.bounding_box()).fold(
-              BoundingBox::get_invalid(),
-              |mut acc, bb| {
-                acc.extend(&bb);
-                acc
-              },
-            );
-            show_box(&mut self.transform, &bb, rect);
+            self.show_bounding_box(rect);
           }
 
           egui::Key::V => todo!(),
@@ -103,6 +105,18 @@ impl Map {
         }
       }
     }
+  }
+
+  fn show_bounding_box(&mut self, rect: Rect) {
+    let bb = self.layers.iter().filter_map(|l| l.bounding_box()).fold(
+      BoundingBox::get_invalid(),
+      |mut acc, bb| {
+        eprintln!("bb: {:?}", bb);
+        acc.extend(&bb);
+        acc
+      },
+    );
+    show_box(&mut self.transform, &bb, rect);
   }
 
   fn handle_mouse_wheel(&mut self, ui: &Ui, response: &Response) {
@@ -137,6 +151,24 @@ impl Map {
     let hover_pos: PixelPosition = self.transform.invert().apply(center);
     self.transform.zoom(delta);
     set_coordinate_to_pixel(hover_pos, center, &mut self.transform);
+  }
+
+  fn handle_map_events(&mut self, rect: Rect) {
+    let events = self.recv.try_iter().collect::<Vec<_>>();
+    for event in events.iter() {
+      match event {
+        MapEvent::Focus => self.show_bounding_box(rect),
+        MapEvent::Clear => self.clear(),
+        _ => (),
+      }
+    }
+    if !events.is_empty() {
+      self.ctx.request_repaint();
+    }
+  }
+
+  fn clear(&mut self) {
+    self.layers.iter_mut().for_each(|l| l.clear());
   }
 }
 
@@ -189,8 +221,8 @@ impl Widget for &mut Map {
         layer.draw(ui, &self.transform, rect);
       }
     }
-    debug!("Transform: {:?}", self.transform);
 
+    self.handle_map_events(rect);
     response
   }
 }

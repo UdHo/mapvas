@@ -71,6 +71,8 @@ pub struct Remote {
   pub clear: Sender<MapEvent>,
   pub shutdown: Sender<MapEvent>,
   pub screenshot: Sender<MapEvent>,
+  /// TODO: keep egui out of here.
+  pub update: egui::Context,
 }
 
 impl Remote {
@@ -92,5 +94,6 @@ impl Remote {
         let _ = self.screenshot.send(e);
       }
     }
+    self.update.request_repaint();
   }
 }

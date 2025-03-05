@@ -1,18 +1,16 @@
 use egui::Widget as _;
-use mapvas::{
-  map::mapvas_egui::Map,
-  remote::spawn_remote_runner,
-};
+use mapvas::{map::mapvas_egui::Map, remote::spawn_remote_runner};
 
-#[derive(Default)]
 struct MapApp {
   map: Map,
 }
 impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-      (&mut self.map).ui(ui);
-    });
+    egui::CentralPanel::default()
+      .frame(egui::Frame::none())
+      .show(ctx, |ui| {
+        (&mut self.map).ui(ui);
+      });
   }
 }
 fn main() -> eframe::Result {
