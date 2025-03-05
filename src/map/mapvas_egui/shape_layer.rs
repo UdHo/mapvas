@@ -5,8 +5,8 @@ use std::{
 };
 
 use egui::{
-  epaint::{PathShape, PathStroke},
-  Color32, Rect, Ui,
+  epaint::{CircleShape, PathShape, PathStroke},
+  Color32, Rect, Stroke, Ui,
 };
 
 use crate::map::{
@@ -22,21 +22,30 @@ struct Shape {
 
 impl Shape {
   pub fn from_shape_with_transform(event: &map_event::Shape, transform: &Transform) -> Self {
-    let points = event
+    let points: Vec<_> = event
       .coordinates
       .iter()
       .map(|coord| PixelPosition::into((*coord).into()))
       .map(|pos| transform.apply(pos).into())
       .collect();
 
-    Self {
-      shape: egui::Shape::Path(PathShape {
+    let shape = if points.len() == 1 {
+      egui::Shape::Circle(CircleShape {
+        center: points[0],
+        radius: 3.0,
+        fill: Into::<Color32>::into(event.style.color),
+        stroke: Stroke::new(0.0, event.style.color),
+      })
+    } else {
+      egui::Shape::Path(PathShape {
         points,
         closed: event.style.fill != FillStyle::NoFill,
         fill: event.style.color.into(),
-        stroke: PathStroke::new(1.0, event.style.color),
-      }),
-    }
+        stroke: PathStroke::new(2.0, event.style.color),
+      })
+    };
+
+    Self { shape }
   }
 }
 
