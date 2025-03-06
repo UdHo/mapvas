@@ -1,4 +1,6 @@
-use egui::Widget as _;
+use std::sync::Arc;
+
+use egui::{IconData, Widget as _};
 use mapvas::{map::mapvas_egui::Map, remote::spawn_remote_runner};
 
 struct MapApp {
@@ -14,6 +16,12 @@ impl eframe::App for MapApp {
   }
 }
 
+fn load_icon() -> Option<Arc<IconData>> {
+  Some(Arc::new(
+    eframe::icon_data::from_png_bytes(include_bytes!("../../../logo.png")).ok()?,
+  ))
+}
+
 fn main() -> eframe::Result {
   // init logger.
   env_logger::init();
@@ -23,6 +31,12 @@ fn main() -> eframe::Result {
   let _enter = rt.enter();
 
   let options = eframe::NativeOptions {
+    viewport: egui::ViewportBuilder {
+      inner_size: Some(egui::vec2(1600.0, 1200.0)),
+      clamp_size_to_monitor_size: Some(true),
+      icon: load_icon(),
+      ..Default::default()
+    },
     ..Default::default()
   };
 

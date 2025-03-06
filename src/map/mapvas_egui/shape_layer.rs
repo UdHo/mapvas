@@ -11,6 +11,7 @@ use std::{
   collections::HashMap,
   sync::mpsc::{Receiver, Sender},
 };
+use tracing::instrument;
 
 struct Shape {
   shape: egui::Shape,
@@ -36,12 +37,21 @@ impl Shape {
       egui::Shape::Path(PathShape {
         points,
         closed: event.style.fill != FillStyle::NoFill,
-        fill: event.style.color.into(),
+        fill: fill_color(event.style.fill, event.style.color.into()),
         stroke: PathStroke::new(2.0, event.style.color),
       })
     };
 
     Self { shape }
+  }
+}
+
+#[instrument]
+fn fill_color(style: FillStyle, color: Color32) -> Color32 {
+  match style {
+    FillStyle::NoFill => Color32::TRANSPARENT,
+    FillStyle::Solid => color,
+    FillStyle::Transparent => color.to_opaque(),
   }
 }
 
