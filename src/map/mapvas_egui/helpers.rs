@@ -1,5 +1,4 @@
 use egui::Rect;
-use log::debug;
 use tracing::instrument;
 
 use crate::map::coordinates::{BoundingBox, PixelPosition, Transform};

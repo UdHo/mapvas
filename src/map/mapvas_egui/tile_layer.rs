@@ -61,7 +61,7 @@ impl TileLayer {
           }
           let img = img.unwrap().decode();
           if img.is_err() {
-            error!("Failed to decode image: {:?}", img.err());
+            error!("Failed to decode image for {tile:?}: {:?}", img.err());
             return;
           }
           let img = img.unwrap();
