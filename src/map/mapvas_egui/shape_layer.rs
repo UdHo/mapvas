@@ -51,7 +51,7 @@ fn fill_color(style: FillStyle, color: Color32) -> Color32 {
   match style {
     FillStyle::NoFill => Color32::TRANSPARENT,
     FillStyle::Solid => color,
-    FillStyle::Transparent => color.to_opaque(),
+    FillStyle::Transparent => color.gamma_multiply(0.4),
   }
 }
 
