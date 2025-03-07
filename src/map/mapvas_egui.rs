@@ -9,6 +9,7 @@ use tile_layer::TileLayer;
 
 use crate::{
   map::coordinates::{PixelPosition, Transform},
+  parser::FileParser,
   parser::GrepParser,
   parser::Parser,
   remote::Remote,
@@ -187,6 +188,28 @@ impl Map {
     self.layers.iter_mut().for_each(|l| l.clear());
   }
 
+  fn handle_dropped_files(&self, ctx: &egui::Context) {
+    for file in ctx.input(|i| i.raw.dropped_files.clone()) {
+      if let Some(file) = file.path {
+        let sender = self.remote.layer.clone();
+        let update = self.remote.update.clone();
+        tokio::spawn(async move {
+          // Buf Reader of file:
+          let file = std::fs::File::open(file).inspect_err(|e| {
+            log::error!("Failed to open file: {:?}", e);
+          });
+          if let Ok(file) = file {
+            let read = Box::new(std::io::BufReader::new(file));
+            for map_event in GrepParser::new(false).parse(read) {
+              let _ = sender.send(map_event);
+              update.request_repaint();
+            }
+          }
+        });
+      }
+    }
+  }
+
   #[expect(clippy::unused_self)]
   fn copy(&self) {
     // TODO
@@ -213,6 +236,7 @@ impl Widget for &mut Map {
       );
     }
 
+    self.handle_dropped_files(&ui.ctx());
     self.handle_mouse_wheel(ui, &response);
 
     let events = ui.input(|i: &InputState| {
@@ -243,6 +267,8 @@ impl Widget for &mut Map {
       }
     }
 
+    // Handle map events last (and request repaint if there were any) to have all the other input
+    // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
     response
   }

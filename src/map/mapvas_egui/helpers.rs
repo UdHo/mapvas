@@ -17,9 +17,7 @@ pub(crate) fn set_coordinate_to_pixel(
   transform.translate(current_pos_in_gui * (-1.) + cursor);
 }
 
-#[instrument]
 pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
-  debug!("Fit to screen: input transform: {transform:?}, rect: {rect:?}");
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
   let inv = transform.invert();
@@ -45,7 +43,6 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
       } * transform.zoom,
     );
   }
-  debug!("Fit to screen: output transform: {transform:?}");
 }
 
 pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect) {
