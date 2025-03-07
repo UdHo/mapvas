@@ -236,7 +236,7 @@ impl Widget for &mut Map {
       );
     }
 
-    self.handle_dropped_files(&ui.ctx());
+    self.handle_dropped_files(ui.ctx());
     self.handle_mouse_wheel(ui, &response);
 
     let events = ui.input(|i: &InputState| {

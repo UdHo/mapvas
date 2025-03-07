@@ -1682,6 +1682,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "flexpolyline"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15f0709fdb3ca03c4d112480001aef7b28298752c69b48fa33b53f8338386d0b"
+
+[[package]]
 name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2847,6 +2853,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "env_logger",
+ "flexpolyline",
  "image 0.24.9",
  "itertools",
  "log",

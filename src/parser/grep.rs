@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use log::{debug, error};
+use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 
 use crate::map::{
@@ -20,6 +20,7 @@ pub struct GrepParser {
   fill_re: Regex,
   coord_re: Regex,
   clear_re: Regex,
+  flexpoly_re: Regex,
   label_re: Option<Regex>,
 }
 
@@ -43,7 +44,7 @@ impl Parser for GrepParser {
             Shape::new(coordinates)
               .with_color(self.color)
               .with_fill(FillStyle::Solid)
-              .with_label(label),
+              .with_label(label.clone()),
           );
         }
         _ => {
@@ -51,10 +52,15 @@ impl Parser for GrepParser {
             Shape::new(coordinates)
               .with_color(self.color)
               .with_fill(self.fill)
-              .with_label(label),
+              .with_label(label.clone()),
           );
         }
       }
+      layer.shapes.extend(self.parse_flexpolyline(l).map(|c| {
+        Shape::new(c)
+          .with_fill(FillStyle::NoFill)
+          .with_color(self.color)
+      }));
     }
 
     if layer.shapes.is_empty() {
@@ -84,6 +90,7 @@ impl GrepParser {
       .case_insensitive(true)
       .build()
       .unwrap();
+    let flexpoly_re = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
 
     Self {
       invert_coordinates,
@@ -93,6 +100,7 @@ impl GrepParser {
       fill_re,
       coord_re,
       clear_re,
+      flexpoly_re,
       label_re: None,
     }
   }
@@ -139,6 +147,30 @@ impl GrepParser {
       }
     }
     coordinates
+  }
+
+  #[expect(clippy::cast_possible_truncation)]
+  fn parse_flexpolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+    let mut v = Vec::new();
+    for (_, [poly]) in self.flexpoly_re.captures_iter(line).map(|c| c.extract()) {
+      if let Ok(flexpolyline::Polyline::Data2d {
+        coordinates,
+        precision2d: _,
+      }) = flexpolyline::Polyline::decode(poly)
+        .inspect_err(|e| info!("Could not parse possible flexpolyline {:?}", e))
+      {
+        v.push(
+          coordinates
+            .into_iter()
+            .map(|c| Coordinate {
+              lat: c.0 as f32,
+              lon: c.1 as f32,
+            })
+            .collect(),
+        );
+      }
+    }
+    v.into_iter()
   }
 
   fn parse_label(&self, line: &str) -> Option<String> {

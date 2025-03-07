@@ -37,6 +37,7 @@ eframe = "0.29.1"
 egui_extras = { version = "0.29.1", features = ["all_loaders"] }
 assert_approx_eq = "1.1.0"
 async-std = "1.13.0"
+flexpolyline = "1.0.0"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}
