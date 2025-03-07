@@ -21,6 +21,7 @@ pub struct GrepParser {
   coord_re: Regex,
   clear_re: Regex,
   flexpoly_re: Regex,
+  googlepoly_re: Regex,
   label_re: Option<Regex>,
 }
 
@@ -61,6 +62,11 @@ impl Parser for GrepParser {
           .with_fill(FillStyle::NoFill)
           .with_color(self.color)
       }));
+      layer.shapes.extend(self.parse_googlepolyline(l).map(|c| {
+        Shape::new(c)
+          .with_fill(FillStyle::NoFill)
+          .with_color(self.color)
+      }));
     }
 
     if layer.shapes.is_empty() {
@@ -91,6 +97,8 @@ impl GrepParser {
       .build()
       .unwrap();
     let flexpoly_re = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
+    let googlepoly_re = Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
+      .expect("Invalid regex pattern");
 
     Self {
       invert_coordinates,
@@ -101,6 +109,7 @@ impl GrepParser {
       coord_re,
       clear_re,
       flexpoly_re,
+      googlepoly_re,
       label_re: None,
     }
   }
@@ -165,6 +174,26 @@ impl GrepParser {
             .map(|c| Coordinate {
               lat: c.0 as f32,
               lon: c.1 as f32,
+            })
+            .collect(),
+        );
+      }
+    }
+    v.into_iter()
+  }
+
+  #[expect(clippy::cast_possible_truncation)]
+  fn parse_googlepolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+    let mut v = Vec::new();
+    for (_, [poly]) in self.googlepoly_re.captures_iter(line).map(|c| c.extract()) {
+      let decoded = polyline::decode_polyline(poly, 5)
+        .inspect_err(|e| info!("Could not parse possible googlepolyline {:?}", e));
+      if let Ok(ls) = decoded {
+        v.push(
+          ls.into_iter()
+            .map(|c| Coordinate {
+              lat: c.y as f32,
+              lon: c.x as f32,
             })
             .collect(),
         );

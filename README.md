@@ -85,10 +85,12 @@ Examples:
 
 Filling a polyline causes it to be drawn as closed polygon.
 
-- drawing flexpolylines
+- drawing flexpolylines or google polylines
 
 ```
     echo BFoz5xJ67i1B1B7PzIhaxL7Y | mapcat
+    echo '_p~iF~ps|U_ulLnnqC_mqNvxq@' | mapcat
+
 ```
 
 - --invert-coordinates (-i) reverses the order of lat/lon:

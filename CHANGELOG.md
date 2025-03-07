@@ -2,7 +2,7 @@
 
 ## 0.2.x
 
-- Add support for HERE flexpolyline format.
+- Add support for HERE flexpolyline and google polyline format.
 
 ## 0.2.0
 
