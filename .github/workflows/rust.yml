@@ -2,28 +2,27 @@ name: Rust
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
     branches:
-      - '**'
+      - "**"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup Rust
-      run: rustup component add rustfmt clippy
-    - name: Build
-      run: cargo build
-    - name: tests
-      run: cargo test
-    - name: clippy
-      run: cargo clippy --no-deps
-    - name: fmt
-      run: cargo fmt --check
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        run: rustup component add rustfmt clippy
+      - name: Build
+        run: cargo build
+      - name: tests
+        run: cargo test
+      - name: clippy
+        run: cargo clippy --no-deps -- -D warnings
+      - name: fmt
+        run: cargo fmt --check
