@@ -12,29 +12,29 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.80"
-axum = "0.7.4"
-image = "0.24.7"
-itertools = "0.13.0"
+axum = "0.8.1"
+image = "0.25.5"
+itertools = "0.14.0"
 log = "0.4.20"
 rayon = "1.8.0"
-serde = "1.0.188"
+serde = "1.0.219"
 surf = "2.3.2"
-thiserror = "1.0.49"
-tokio = {version = "1.32.0", features = ["full"]}
+thiserror = "2.0.12"
+tokio = {version = "1.44.0", features = ["full"]}
 tracing-subscriber = {version = "0.3.17", features = ["env-filter"]}
-tower-http = {version = "0.5.2", features = ["trace"]}
+tower-http = {version = "0.6.2", features = ["trace"]}
 tracing = "0.1.37"
 serde_json = "1.0.107"
-env_logger = "0.11.3"
+env_logger = "0.11.7"
 regex = "1.9.5"
-rand = "0.8.5"
-clap = {version ="4.4.5", features=["derive"]}
+rand = "0.9.0"
+clap = {version ="4.5.32", features=["derive"]}
 arboard = "3.3.2"
 surf-governor = "0.2.0"
 chrono = "0.4.38"
-egui = "0.29.1"
-eframe = "0.29.1"
-egui_extras = { version = "0.29.1", features = ["all_loaders"] }
+egui = "0.31.1"
+eframe = "0.31.1"
+egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 assert_approx_eq = "1.1.0"
 async-std = "1.13.0"
 flexpolyline = "1.0.0"
