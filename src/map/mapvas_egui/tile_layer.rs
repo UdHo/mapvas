@@ -54,7 +54,7 @@ impl TileLayer {
       tokio::spawn(async move {
         let image_data = tile_loader.tile_data(&tile).await;
         if let Ok(image_data) = image_data {
-          let img = image::io::Reader::new(std::io::Cursor::new(image_data)).with_guessed_format();
+          let img = image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format();
           if img.is_err() {
             error!("Failed to load image: {:?}", img.err());
             return;
