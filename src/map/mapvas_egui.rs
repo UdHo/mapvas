@@ -1,14 +1,10 @@
-use std::{
-  path::{self, PathBuf},
-  sync::mpsc::Receiver,
-};
+use std::sync::mpsc::Receiver;
 
 use arboard::Clipboard;
-use egui::{
-  Event, InputState, PointerButton, Rect, Response, Sense, Ui, UserData, ViewportCommand, Widget,
-};
+use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{MAX_ZOOM, MIN_ZOOM, fit_to_screen, set_coordinate_to_pixel, show_box};
 use log::{debug, info};
+use screenshot::ScreenshotLayer;
 use shape_layer::ShapeLayer;
 use tile_layer::TileLayer;
 
@@ -23,7 +19,12 @@ use crate::{
 use super::{coordinates::BoundingBox, map_event::MapEvent};
 
 mod helpers;
+
+/// Handles screenshot functionality.
+mod screenshot;
+/// Draws and holds the shapes on the map.
 mod shape_layer;
+/// Draws the map.
 mod tile_layer;
 
 /// A layer that can be drawn on the map.
@@ -48,6 +49,7 @@ impl Map {
   pub fn new(ctx: egui::Context) -> (Self, Remote) {
     let tile_layer = TileLayer::new(ctx.clone());
     let shape_layer = ShapeLayer::new();
+    let screenshot_layer = ScreenshotLayer::new(ctx.clone());
     let (send, recv) = std::sync::mpsc::channel();
 
     let remote = Remote {
@@ -55,13 +57,17 @@ impl Map {
       focus: send.clone(),
       clear: send.clone(),
       shutdown: shape_layer.get_sender(),
-      screenshot: shape_layer.get_sender(),
+      screenshot: screenshot_layer.get_sender(),
       update: ctx.clone(),
     };
     (
       Self {
         transform: Transform::invalid(),
-        layers: vec![Box::new(tile_layer), Box::new(shape_layer)],
+        layers: vec![
+          Box::new(tile_layer),
+          Box::new(shape_layer),
+          Box::new(screenshot_layer),
+        ],
         recv,
         ctx,
         remote: remote.clone(),
@@ -111,7 +117,10 @@ impl Map {
           egui::Key::V => self.paste(),
           egui::Key::C => self.copy(),
           egui::Key::S => {
-            self.take_screenshot(current_time_screenshot_name());
+            let _ = self
+              .remote
+              .screenshot
+              .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
           }
           _ => {
             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
@@ -183,9 +192,6 @@ impl Map {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
         MapEvent::Clear => self.clear(),
-        MapEvent::Screenshot(path) => {
-          self.take_screenshot(path.clone());
-        }
         _ => (),
       }
     }
@@ -224,52 +230,6 @@ impl Map {
   fn copy(&self) {
     // TODO
   }
-
-  fn take_screenshot(&self, path: path::PathBuf) {
-    self
-      .ctx
-      .send_viewport_cmd(ViewportCommand::Screenshot(UserData::new(path)));
-  }
-
-  #[expect(clippy::cast_possible_truncation)]
-  fn handle_screenshots(&self) {
-    let image_path = self.ctx.input(|i| {
-      i.events
-        .iter()
-        .filter_map(|e| {
-          if let egui::Event::Screenshot {
-            image, user_data, ..
-          } = e
-          {
-            Some((
-              image.clone(),
-              user_data
-                .data
-                .clone()
-                .and_then(|d| d.downcast_ref::<path::PathBuf>().cloned())
-                .unwrap_or_else(current_time_screenshot_name),
-            ))
-          } else {
-            None
-          }
-        })
-        .last()
-    });
-
-    if let Some((image, path)) = image_path {
-      let img = image::RgbaImage::from_raw(
-        image.width() as u32,
-        image.height() as u32,
-        image.as_raw().to_vec(),
-      )
-      .map(image::DynamicImage::ImageRgba8);
-      if let Some(img) = img {
-        let _ = img.save(path).inspect_err(|e| {
-          log::error!("Failed to save image: {:?}", e);
-        });
-      }
-    }
-  }
 }
 
 impl Widget for &mut Map {
@@ -293,7 +253,6 @@ impl Widget for &mut Map {
     }
 
     self.handle_dropped_files(ui.ctx());
-    self.handle_screenshots();
     self.handle_mouse_wheel(ui, &response);
 
     let events = ui.input(|i: &InputState| {
@@ -329,12 +288,4 @@ impl Widget for &mut Map {
     self.handle_map_events(rect);
     response
   }
-}
-
-fn current_time_screenshot_name() -> PathBuf {
-  format!(
-    "mapvas_screenshot_{}.png",
-    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-  )
-  .into()
 }
