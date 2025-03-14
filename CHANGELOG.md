@@ -4,6 +4,7 @@
 
 - Add support for HERE flexpolyline and google polyline format.
 - Restore screenshot functionality.
+- Extended screenshot functionality, showing previews, saving to `MAPVAS_SCREENSHOT_PATH`.
 
 ## 0.2.0
 
