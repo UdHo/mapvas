@@ -3,6 +3,7 @@
 ## 0.2.x
 
 - Add support for HERE flexpolyline and google polyline format.
+- Restore screenshot functionality.
 
 ## 0.2.0
 
