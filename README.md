@@ -120,7 +120,8 @@ echo "52.4,12.4" | mapcat -l "(.*)"
 
 - --focus (-f) zooms and pans to show all elements on the map.
 
-- `--screenshot <file.png>` takes a screenshot of the map. If the mapvas is not already running it should probably be combined with `-f`.
+- `--screenshot <file.png>` takes a screenshot of the map. If mapvas is not already running it should probably be combined with `-f`.
+  If the path to the file is relative (or the `S` key is used) the screenshot will be saved in the working directory unless `MAPVAS_SCREENSHOT_PATH` is set.
 
 #### Random (for performance testing)
 

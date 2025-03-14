@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use egui::Rect;
 use tracing::instrument;
 
@@ -52,4 +54,12 @@ pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect) 
     transform.zoom(0.95);
     set_coordinate_to_pixel(bb.center(), rect.center().into(), transform);
   }
+}
+
+pub fn current_time_screenshot_name() -> PathBuf {
+  format!(
+    "mapvas_screenshot_{}.png",
+    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+  )
+  .into()
 }
