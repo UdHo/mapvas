@@ -121,7 +121,11 @@ impl Layer for ScreenshotLayer {
         .with_min_x(rect.max.x - (rect.max.x - rect.min.x) * 0.2)
         .with_min_y(rect.max.y - (rect.max.y - rect.min.y) * 0.2);
 
-      let gamma = self.compute_gamma();
+      let gamma = ui
+        .ctx()
+        .pointer_hover_pos()
+        .and_then(|pos| screenshot_rect.contains(pos).then_some(1.0))
+        .unwrap_or_else(|| self.compute_gamma());
       if gamma < 0. {
         self.last_screenshot = None;
         return;
