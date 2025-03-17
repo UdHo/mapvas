@@ -1,5 +1,42 @@
 use serde::{Deserialize, Serialize};
 
+/// A trait generalizing types of coordinates used in this application.
+pub trait Coordinate: Copy + Clone + std::fmt::Debug {
+  fn as_wsg84(&self) -> WGS84Coordinate;
+  fn as_pixel_position(&self) -> PixelPosition;
+}
+
+impl Coordinate for WGS84Coordinate {
+  fn as_wsg84(&self) -> WGS84Coordinate {
+    *self
+  }
+
+  fn as_pixel_position(&self) -> PixelPosition {
+    PixelPosition::from(*self)
+  }
+}
+
+impl Coordinate for TileCoordinate {
+  fn as_wsg84(&self) -> WGS84Coordinate {
+    WGS84Coordinate::from(*self)
+  }
+
+  fn as_pixel_position(&self) -> PixelPosition {
+    PixelPosition::from(*self)
+  }
+}
+
+impl Coordinate for PixelPosition {
+  fn as_wsg84(&self) -> WGS84Coordinate {
+    WGS84Coordinate::from(*self)
+  }
+
+  fn as_pixel_position(&self) -> PixelPosition {
+    *self
+  }
+}
+
+/// The standard WGS84 coordinate system.
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct WGS84Coordinate {
   #[serde(alias = "latitude")]
@@ -27,6 +64,8 @@ pub struct TileCoordinate {
   pub zoom: u8,
 }
 
+/// A coordinate system used in this application to draw on an imaginary canvas.
+/// Is equivalent to Web Mercator projection on a fixed zoom level.
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct PixelPosition {
   pub x: f32,
@@ -76,6 +115,7 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Ite
     .filter(Tile::exists)
 }
 
+/// The fixed canvas size for ``PixelPosition``s.
 pub const CANVAS_SIZE: f32 = 1000.;
 pub const TILE_SIZE: f32 = 512.;
 
@@ -149,6 +189,7 @@ impl From<PixelPosition> for WGS84Coordinate {
   }
 }
 
+/// A tile in the Web Mercator projection.
 #[derive(Debug, PartialEq, Copy, Clone, Hash, Eq, Serialize, Deserialize)]
 pub struct Tile {
   pub x: u32,
