@@ -129,3 +129,23 @@ impl Layer for ShapeLayer {
     self.shape_map.clear();
   }
 }
+
+type Painter = egui::Painter;
+
+/// An abstraction for anything that can be drawn on the map that is dependent on coordinates/the
+/// transformation.
+pub trait Drawable {
+  fn draw(&self, painter: &Painter, transform: &Transform);
+}
+
+impl Drawable for egui::Shape {
+  fn draw(&self, painter: &Painter, _transform: &Transform) {
+    painter.add(self.clone());
+  }
+}
+
+impl Drawable for Shape {
+  fn draw(&self, painter: &Painter, transform: &Transform) {
+    self.shape.draw(painter, transform);
+  }
+}
