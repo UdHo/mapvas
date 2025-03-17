@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
-pub struct Coordinate {
+pub struct WGS84Coordinate {
   #[serde(alias = "latitude")]
   pub lat: f32,
   #[serde(alias = "longitude")]
   pub lon: f32,
 }
 
-impl Coordinate {
+impl WGS84Coordinate {
   #[must_use]
   pub fn new(lat: f32, lon: f32) -> Self {
     Self { lat, lon }
@@ -88,8 +88,8 @@ impl From<TileCoordinate> for PixelPosition {
   }
 }
 
-impl From<Coordinate> for PixelPosition {
-  fn from(coord: Coordinate) -> Self {
+impl From<WGS84Coordinate> for PixelPosition {
+  fn from(coord: WGS84Coordinate) -> Self {
     TileCoordinate::from_coordinate(coord, 2).into()
   }
 }
@@ -143,9 +143,9 @@ impl PixelPosition {
   }
 }
 
-impl From<PixelPosition> for Coordinate {
+impl From<PixelPosition> for WGS84Coordinate {
   fn from(pp: PixelPosition) -> Self {
-    Coordinate::from(TileCoordinate::from_pixel_position(pp, 2))
+    WGS84Coordinate::from(TileCoordinate::from_pixel_position(pp, 2))
   }
 }
 
@@ -214,7 +214,7 @@ impl From<TileCoordinate> for Tile {
 
 impl TileCoordinate {
   #[must_use]
-  pub fn from_coordinate(coord: Coordinate, zoom: u8) -> Self {
+  pub fn from_coordinate(coord: WGS84Coordinate, zoom: u8) -> Self {
     let x = (coord.lon + 180.) / 360. * 2f32.powi(zoom.into());
     let y = (1. - ((coord.lat * PI / 180.).tan() + 1. / (coord.lat * PI / 180.).cos()).ln() / PI)
       * 2f32.powi((zoom - 1).into());
@@ -232,9 +232,9 @@ impl TileCoordinate {
 }
 
 const PI: f32 = std::f32::consts::PI;
-impl From<TileCoordinate> for Coordinate {
+impl From<TileCoordinate> for WGS84Coordinate {
   fn from(tile_coord: TileCoordinate) -> Self {
-    Coordinate {
+    WGS84Coordinate {
       lat: f32::atan(f32::sinh(
         PI - tile_coord.y / 2f32.powi(tile_coord.zoom.into()) * 2. * PI,
       )) * 180.
@@ -412,14 +412,14 @@ mod tests {
 
   #[test]
   fn coordinate_tile_conversions() {
-    let coord = Coordinate {
+    let coord = WGS84Coordinate {
       lat: 52.521_977,
       lon: 13.413_305,
     };
 
     let tc13 = TileCoordinate::from_coordinate(coord, 13);
-    assert!(Coordinate::from(tc13).lat - coord.lat < 0.000_000_1);
-    assert!(Coordinate::from(tc13).lon - coord.lon < 0.000_000_1);
+    assert!(WGS84Coordinate::from(tc13).lat - coord.lat < 0.000_000_1);
+    assert!(WGS84Coordinate::from(tc13).lon - coord.lon < 0.000_000_1);
 
     let t13: Tile = tc13.into();
     assert_eq!(
@@ -432,8 +432,8 @@ mod tests {
     );
 
     let tc17 = TileCoordinate::from_coordinate(coord, 17);
-    assert!(Coordinate::from(tc17).lat - coord.lat < 0.000_000_1);
-    assert!(Coordinate::from(tc17).lon - coord.lon < 0.000_000_1);
+    assert!(WGS84Coordinate::from(tc17).lat - coord.lat < 0.000_000_1);
+    assert!(WGS84Coordinate::from(tc17).lon - coord.lon < 0.000_000_1);
     let t17: Tile = tc17.into();
     assert_eq!(
       t17,
@@ -448,7 +448,7 @@ mod tests {
   #[ignore = "Changed some canvas size constants"]
   #[test]
   fn coordinate_to_pixel_zero() {
-    let coord = Coordinate { lat: 0.0, lon: 0.0 };
+    let coord = WGS84Coordinate { lat: 0.0, lon: 0.0 };
     let tc2 = TileCoordinate::from_coordinate(coord, 2);
     let tc3 = TileCoordinate::from_coordinate(coord, 3);
     let tc4 = TileCoordinate::from_coordinate(coord, 4);
@@ -469,7 +469,7 @@ mod tests {
     let pp = PixelPosition { x: 250., y: 125. };
     assert_eq!(PixelPosition::from(tc3), pp);
     assert_eq!(TileCoordinate::from_pixel_position(pp, 3), tc3);
-    assert_eq!(Coordinate::from(tc3), Coordinate::from(pp));
+    assert_eq!(WGS84Coordinate::from(tc3), WGS84Coordinate::from(pp));
   }
 
   #[test]

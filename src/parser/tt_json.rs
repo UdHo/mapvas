@@ -2,7 +2,7 @@ use log::error;
 use serde::Deserialize;
 
 use crate::map::{
-  coordinates::Coordinate,
+  coordinates::WGS84Coordinate,
   map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
@@ -53,7 +53,11 @@ impl TTJsonParser {
     MapEvent::Layer(layer)
   }
 
-  fn convert_range(&self, center: Option<Coordinate>, boundary: Vec<Coordinate>) -> MapEvent {
+  fn convert_range(
+    &self,
+    center: Option<WGS84Coordinate>,
+    boundary: Vec<WGS84Coordinate>,
+  ) -> MapEvent {
     let mut shapes = vec![
       Shape::new(boundary)
         .with_color(self.color)
@@ -74,7 +78,7 @@ impl TTJsonParser {
 
 #[derive(Deserialize, Debug)]
 struct Leg {
-  points: Vec<Coordinate>,
+  points: Vec<WGS84Coordinate>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,8 +88,8 @@ struct Route {
 
 #[derive(Deserialize, Debug)]
 struct Polygon {
-  center: Option<Coordinate>,
-  boundary: Vec<Coordinate>,
+  center: Option<WGS84Coordinate>,
+  boundary: Vec<WGS84Coordinate>,
 }
 
 #[derive(Deserialize, Debug)]

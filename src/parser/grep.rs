@@ -4,7 +4,7 @@ use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 
 use crate::map::{
-  coordinates::Coordinate,
+  coordinates::WGS84Coordinate,
   map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
@@ -147,7 +147,7 @@ impl GrepParser {
     }
   }
 
-  fn parse_shape(&self, line: &str) -> Vec<Coordinate> {
+  fn parse_shape(&self, line: &str) -> Vec<WGS84Coordinate> {
     let mut coordinates = vec![];
     for (_, [lat, lon]) in self.coord_re.captures_iter(line).map(|c| c.extract()) {
       if let Some(coord) = self.parse_coordinate(lat, lon) {
@@ -158,7 +158,7 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_flexpolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+  fn parse_flexpolyline(&self, line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
     for (_, [poly]) in self.flexpoly_re.captures_iter(line).map(|c| c.extract()) {
       if let Ok(flexpolyline::Polyline::Data2d {
@@ -170,7 +170,7 @@ impl GrepParser {
         v.push(
           coordinates
             .into_iter()
-            .map(|c| Coordinate {
+            .map(|c| WGS84Coordinate {
               lat: c.0 as f32,
               lon: c.1 as f32,
             })
@@ -182,7 +182,7 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_googlepolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+  fn parse_googlepolyline(&self, line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
     for (_, [poly]) in self.googlepoly_re.captures_iter(line).map(|c| c.extract()) {
       let decoded = polyline::decode_polyline(poly, 5)
@@ -190,7 +190,7 @@ impl GrepParser {
       if let Ok(ls) = decoded {
         v.push(
           ls.into_iter()
-            .map(|c| Coordinate {
+            .map(|c| WGS84Coordinate {
               lat: c.y as f32,
               lon: c.x as f32,
             })
@@ -218,7 +218,7 @@ impl GrepParser {
     }
   }
 
-  fn parse_coordinate(&self, x: &str, y: &str) -> Option<Coordinate> {
+  fn parse_coordinate(&self, x: &str, y: &str) -> Option<WGS84Coordinate> {
     let lat = match x.parse::<f32>() {
       Ok(v) => v,
       Err(e) => {
@@ -233,7 +233,7 @@ impl GrepParser {
         return None;
       }
     };
-    let mut coordinates = Coordinate { lat, lon };
+    let mut coordinates = WGS84Coordinate { lat, lon };
     if self.invert_coordinates {
       std::mem::swap(&mut coordinates.lat, &mut coordinates.lon);
     }

@@ -1,4 +1,4 @@
-use super::coordinates::Coordinate;
+use super::coordinates::WGS84Coordinate;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
@@ -113,7 +113,7 @@ impl FromStr for FillStyle {
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
-  pub coordinates: Vec<Coordinate>,
+  pub coordinates: Vec<WGS84Coordinate>,
   pub style: Style,
   pub visible: bool,
   pub label: Option<String>,
@@ -121,7 +121,7 @@ pub struct Shape {
 
 impl Shape {
   #[must_use]
-  pub fn new(coordinates: Vec<Coordinate>) -> Self {
+  pub fn new(coordinates: Vec<WGS84Coordinate>) -> Self {
     Shape {
       coordinates,
       visible: true,

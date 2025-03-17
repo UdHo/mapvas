@@ -1,7 +1,7 @@
 use rand::{Rng, rngs::ThreadRng};
 
 use crate::map::{
-  coordinates::Coordinate,
+  coordinates::WGS84Coordinate,
   map_event::{Color, FillStyle, Layer, MapEvent, Shape},
 };
 
@@ -10,7 +10,7 @@ use super::Parser;
 #[allow(clippy::module_name_repetitions)]
 pub struct RandomParser {
   rng: ThreadRng,
-  coordinate: Coordinate,
+  coordinate: WGS84Coordinate,
 }
 
 impl Default for RandomParser {
@@ -27,15 +27,15 @@ impl RandomParser {
     Self { rng, coordinate }
   }
 
-  fn rand_coordinate(rng: &mut ThreadRng) -> Coordinate {
-    Coordinate {
+  fn rand_coordinate(rng: &mut ThreadRng) -> WGS84Coordinate {
+    WGS84Coordinate {
       lat: rng.random_range(-80.0..80.0),
       lon: rng.random_range(-179.0..179.0),
     }
   }
 
-  fn rand_move(&mut self) -> Coordinate {
-    let new_coord = Coordinate {
+  fn rand_move(&mut self) -> WGS84Coordinate {
+    let new_coord = WGS84Coordinate {
       lat: (self.coordinate.lat + self.rng.random_range(-1.0..1.0)).clamp(-80., 80.),
       lon: (self.coordinate.lon + self.rng.random_range(-1.0..1.0)).clamp(-179., 179.),
     };
