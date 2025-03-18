@@ -72,6 +72,13 @@ pub struct PixelPosition {
   pub y: f32,
 }
 
+impl PixelPosition {
+  #[must_use]
+  pub fn new(x: f32, y: f32) -> Self {
+    Self { x, y }
+  }
+}
+
 impl std::ops::AddAssign for PixelPosition {
   fn add_assign(&mut self, other: Self) {
     self.x += other.x;
