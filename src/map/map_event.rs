@@ -1,4 +1,7 @@
-use super::coordinates::WGS84Coordinate;
+use super::{
+  coordinates::{PixelPosition, WGS84Coordinate},
+  geometry_collection::Geometry,
+};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
@@ -151,13 +154,16 @@ impl Shape {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
   pub id: String,
-  pub shapes: Vec<Shape>,
+  pub geometries: Vec<Geometry<PixelPosition>>,
 }
 
 impl Layer {
   #[must_use]
   pub fn new(id: String) -> Self {
-    Layer { id, shapes: vec![] }
+    Layer {
+      id,
+      geometries: vec![],
+    }
   }
 }
 

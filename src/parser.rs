@@ -7,8 +7,6 @@ use std::{
 };
 
 pub use grep::GrepParser;
-mod random;
-pub use random::RandomParser;
 mod tt_json;
 pub use tt_json::TTJsonParser;
 

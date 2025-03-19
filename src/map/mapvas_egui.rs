@@ -131,13 +131,11 @@ impl Map {
   }
 
   fn show_bounding_box(&mut self, rect: Rect) {
-    let bb = self.layers.iter().filter_map(|l| l.bounding_box()).fold(
-      BoundingBox::get_invalid(),
-      |mut acc, bb| {
-        acc.extend(&bb);
-        acc
-      },
-    );
+    let bb = self
+      .layers
+      .iter()
+      .filter_map(|l| l.bounding_box())
+      .fold(BoundingBox::get_invalid(), |acc, bb| acc.extend(&bb));
     show_box(&mut self.transform, &bb, rect);
   }
 

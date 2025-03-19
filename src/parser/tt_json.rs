@@ -1,9 +1,11 @@
+use egui::Color32;
 use log::error;
 use serde::Deserialize;
 
 use crate::map::{
-  coordinates::WGS84Coordinate,
-  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
+  coordinates::{Coordinate, WGS84Coordinate},
+  geometry_collection::{Geometry, Metadata, Style},
+  map_event::{Color, Layer, MapEvent},
 };
 
 use super::Parser;
@@ -36,42 +38,70 @@ impl TTJsonParser {
   }
 
   fn convert_routes(&self, routes: &[Route]) -> MapEvent {
-    let colors = Color::all();
-    let color_offset = colors.iter().position(|&c| c == self.color).unwrap_or(0);
-    let mut shapes: Vec<Shape> = vec![];
-    for (r_index, route) in routes.iter().enumerate() {
-      for (l_index, leg) in route.legs.iter().enumerate() {
-        shapes.push(
-          Shape::new(leg.points.clone())
-            .with_color(colors[(color_offset + 2 * r_index + (l_index % 2)) % colors.len()]),
-        );
-      }
+    let mut res = vec![];
+    for route in routes {
+      res.push(Geometry::GeometryCollection(
+        route
+          .legs
+          .iter()
+          .map(|leg| {
+            leg
+              .points
+              .iter()
+              .map(Coordinate::as_pixel_position)
+              .collect()
+          })
+          .enumerate()
+          .map(|(i, points)| {
+            Geometry::LineString(
+              points,
+              Metadata {
+                label: Some(format!("Leg {i}")),
+                style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
+              },
+            )
+          })
+          .collect(),
+        Metadata::default(),
+      ));
     }
 
     let mut layer = Layer::new("Routes".to_string());
-    layer.shapes = shapes;
+    layer.geometries = vec![Geometry::GeometryCollection(res, Metadata::default())];
     MapEvent::Layer(layer)
   }
 
   fn convert_range(
     &self,
     center: Option<WGS84Coordinate>,
-    boundary: Vec<WGS84Coordinate>,
+    boundary: &[WGS84Coordinate],
   ) -> MapEvent {
-    let mut shapes = vec![
-      Shape::new(boundary)
-        .with_color(self.color)
-        .with_fill(FillStyle::Transparent),
-    ];
+    let mut shapes = vec![Geometry::Polygon(
+      boundary.iter().map(Coordinate::as_pixel_position).collect(),
+      Metadata {
+        label: Some("Range boundary".into()),
+        style: Some(
+          Style::default()
+            .with_color(Into::<Color32>::into(self.color))
+            .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+        ),
+      },
+    )];
     if let Some(c) = center {
-      shapes.push(
-        Shape::new(vec![c])
-          .with_color(self.color)
-          .with_fill(FillStyle::Solid),
-      );
+      shapes.push(Geometry::Polygon(
+        vec![c.as_pixel_position()],
+        Metadata {
+          label: Some("Range center".into()),
+          style: Some(
+            Style::default()
+              .with_color(Into::<Color32>::into(self.color))
+              .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+          ),
+        },
+      ));
     }
     let mut layer = Layer::new("Range".to_string());
-    layer.shapes = shapes;
+    layer.geometries = shapes;
     MapEvent::Layer(layer)
   }
 }
@@ -118,7 +148,7 @@ impl Parser for TTJsonParser {
       }
       Ok(JsonResponse::Routes { routes }) => Some(self.convert_routes(&routes)),
       Ok(JsonResponse::Range { polygon }) => {
-        Some(self.convert_range(polygon.center, polygon.boundary))
+        Some(self.convert_range(polygon.center, &polygon.boundary))
       }
     }
   }

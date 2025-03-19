@@ -1,6 +1,7 @@
 use super::Layer;
 use crate::map::{
-  coordinates::{BoundingBox, PixelPosition, Transform},
+  coordinates::{BoundingBox, Coordinate, PixelPosition, Transform},
+  geometry_collection::{DEFAULT_STYLE, Geometry, Style},
   map_event::{self, FillStyle, Layer as EventLayer, MapEvent},
 };
 use egui::{
@@ -18,7 +19,7 @@ struct Shape {
 }
 
 impl Shape {
-  pub fn from_shape_with_transform(event: &map_event::Shape, transform: &Transform) -> Self {
+  /*pub fn from_shape_with_transform(event: &map_event::Shape, transform: &Transform) -> Self {
     let points: Vec<_> = event
       .coordinates
       .iter()
@@ -43,7 +44,7 @@ impl Shape {
     };
 
     Self { shape }
-  }
+  }*/
 }
 
 #[instrument]
@@ -73,7 +74,7 @@ impl From<&map_event::Shape> for Shape {
 }
 
 pub struct ShapeLayer {
-  shape_map: HashMap<String, Vec<map_event::Shape>>,
+  shape_map: HashMap<String, Vec<Geometry<PixelPosition>>>,
   recv: Receiver<MapEvent>,
   send: Sender<MapEvent>,
 }
@@ -92,9 +93,9 @@ impl ShapeLayer {
 
   fn handle_new_shapes(&mut self) {
     for event in self.recv.try_iter() {
-      if let MapEvent::Layer(EventLayer { id, shapes }) = event {
+      if let MapEvent::Layer(EventLayer { id, geometries }) = event {
         let l = self.shape_map.entry(id).or_default();
-        l.extend(shapes);
+        l.extend(geometries.into_iter());
       }
     }
   }
@@ -109,19 +110,17 @@ impl Layer for ShapeLayer {
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     self.handle_new_shapes();
     for shape in self.shape_map.values().flatten() {
-      ui.painter()
-        .add(Shape::from_shape_with_transform(shape, transform).shape);
+      shape.draw(ui.painter(), transform);
     }
   }
 
   fn bounding_box(&self) -> Option<BoundingBox> {
-    let bb = BoundingBox::from_iterator(
-      self
-        .shape_map
-        .values()
-        .flatten()
-        .flat_map(|s| s.coordinates.iter().map(|c| PixelPosition::from(*c))),
-    );
+    let bb = self
+      .shape_map
+      .values()
+      .flat_map(|s| s.iter().map(Geometry::bounding_box))
+      .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
+
     bb.is_valid().then_some(bb)
   }
 
@@ -147,5 +146,54 @@ impl Drawable for egui::Shape {
 impl Drawable for Shape {
   fn draw(&self, painter: &Painter, transform: &Transform) {
     self.shape.draw(painter, transform);
+  }
+}
+
+impl<C: Coordinate> Drawable for Geometry<C> {
+  fn draw(&self, painter: &Painter, transform: &Transform) {
+    for el in self
+      .flat_iterate_with_merged_style(&Style::default())
+      .filter(Geometry::is_visible)
+    {
+      let shape = match el {
+        Geometry::GeometryCollection(_, _) => {
+          unreachable!("GeometryCollections should be flattened")
+        }
+        Geometry::Point(coord, metadata) => {
+          let color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+          egui::Shape::Circle(CircleShape {
+            center: transform.apply(coord.as_pixel_position()).into(),
+            radius: 3.0,
+            fill: color,
+            stroke: Stroke::new(0.0, color),
+          })
+        }
+        Geometry::LineString(coord, metadata) => {
+          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+          egui::Shape::Path(PathShape {
+            points: coord
+              .iter()
+              .map(|c| transform.apply(c.as_pixel_position()).into())
+              .collect(),
+            closed: false,
+            fill: style.fill_color(),
+            stroke: PathStroke::new(2.0, style.color()),
+          })
+        }
+        Geometry::Polygon(vec, metadata) => {
+          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+          egui::Shape::Path(PathShape {
+            points: vec
+              .iter()
+              .map(|c| transform.apply(c.as_pixel_position()).into())
+              .collect(),
+            closed: true,
+            fill: style.fill_color(),
+            stroke: PathStroke::new(2.0, style.color()),
+          })
+        }
+      };
+      painter.add(shape);
+    }
   }
 }

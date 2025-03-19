@@ -5,7 +5,8 @@ use regex::{Regex, RegexBuilder};
 
 use crate::map::{
   coordinates::WGS84Coordinate,
-  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
+  geometry_collection::{Geometry, Metadata, Style},
+  map_event::{Color, FillStyle, Layer, MapEvent},
 };
 
 use super::Parser;
@@ -40,35 +41,39 @@ impl Parser for GrepParser {
       let coordinates = self.parse_shape(l);
       match coordinates.len() {
         0 => (),
-        1 => {
-          layer.shapes.push(
-            Shape::new(coordinates)
-              .with_color(self.color)
-              .with_fill(FillStyle::Solid)
-              .with_label(label.clone()),
-          );
-        }
-        _ => {
-          layer.shapes.push(
-            Shape::new(coordinates)
-              .with_color(self.color)
-              .with_fill(self.fill)
-              .with_label(label.clone()),
-          );
-        }
+        1 => layer.geometries.push(Geometry::Point(
+          coordinates[0].into(),
+          Metadata {
+            label: label.clone(),
+            style: Some(Style::default().with_color(self.color.into())),
+          },
+        )),
+        _ => todo!(),
       }
-      layer.shapes.extend(self.parse_flexpolyline(l).map(|c| {
-        Shape::new(c)
-          .with_fill(FillStyle::NoFill)
-          .with_color(self.color)
+
+      layer.geometries.extend(self.parse_flexpolyline(l).map(|c| {
+        Geometry::LineString(
+          c.into_iter().map(Into::into).collect(),
+          Metadata {
+            label: label.clone(),
+            style: Some(Style::default().with_color(self.color.into())),
+          },
+        )
       }));
-      layer.shapes.extend(self.parse_googlepolyline(l).map(|c| {
-        Shape::new(c)
-          .with_fill(FillStyle::NoFill)
-          .with_color(self.color)
-      }));
+
+      layer
+        .geometries
+        .extend(self.parse_googlepolyline(l).map(|c| {
+          Geometry::LineString(
+            c.into_iter().map(Into::into).collect(),
+            Metadata {
+              label: label.clone(),
+              style: Some(Style::default().with_color(self.color.into())),
+            },
+          )
+        }));
     }
-    if layer.shapes.is_empty() {
+    if layer.geometries.is_empty() {
       None
     } else {
       Some(MapEvent::Layer(layer))

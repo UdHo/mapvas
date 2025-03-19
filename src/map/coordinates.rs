@@ -292,7 +292,7 @@ impl From<TileCoordinate> for WGS84Coordinate {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct BoundingBox {
   max_x: f32,
   min_x: f32,
@@ -330,9 +330,11 @@ impl BoundingBox {
     }
   }
 
-  pub fn from_iterator<I: IntoIterator<Item = PixelPosition>>(positions: I) -> Self {
+  pub fn from_iterator<C: Coordinate, I: IntoIterator<Item = C>>(positions: I) -> Self {
     let mut bb = Self::get_invalid();
-    positions.into_iter().for_each(|pos| bb.add_coordinate(pos));
+    positions
+      .into_iter()
+      .for_each(|pos| bb.add_coordinate(pos.as_pixel_position()));
     bb
   }
 
@@ -348,7 +350,8 @@ impl BoundingBox {
     self.max_x = self.max_x.max(pp.x);
   }
 
-  pub fn extend(&mut self, bb: &Self) {
+  #[must_use]
+  pub fn extend(mut self, bb: &Self) -> Self {
     if bb.is_valid() {
       self.add_coordinate(PixelPosition {
         x: bb.min_x,
@@ -359,6 +362,7 @@ impl BoundingBox {
         y: bb.max_y,
       });
     }
+    self
   }
 
   #[must_use]
