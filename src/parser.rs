@@ -1,4 +1,3 @@
-mod grep;
 use std::{
   fs::File,
   io::{BufRead, BufReader},
@@ -6,9 +5,12 @@ use std::{
   path::{Path, PathBuf},
 };
 
+mod grep;
 pub use grep::GrepParser;
 mod tt_json;
 pub use tt_json::TTJsonParser;
+pub mod geojson;
+pub mod geojson_converter;
 
 use crate::map::map_event::MapEvent;
 

@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "style": {
+    "stroke": "black",
+    "fill": "red"
+  },
+  "properties": { "prop0": "value0" },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "coordinates": [
+          [
+            [10, 20],
+            [20, 40],
+            [0, 20]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "properties": { "prop0": "value0" },
+      "style": { "stroke": "green" }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "coordinates": [
+          [
+            [10, 20],
+            [20, 40],
+            [0, 20]
+          ]
+        ],
+        "properties": { "prop0": "value0" },
+        "type": "Polygon"
+      }
+    }
+  ]
+}
