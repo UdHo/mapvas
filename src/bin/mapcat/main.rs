@@ -65,7 +65,7 @@ fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
 #[tokio::main]
 async fn main() {
   let args = Args::parse();
-  let color = Color::from_str(&args.color).unwrap_or(Color::Green);
+  let color = Color::from_str(&args.color).unwrap_or_default();
 
   env_logger::init();
 
