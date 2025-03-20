@@ -32,13 +32,14 @@ clap = {version ="4.5.32", features=["derive"]}
 arboard = "3.3.2"
 surf-governor = "0.2.0"
 chrono = "0.4.38"
-egui = "0.31.1"
+egui ={version =  "0.31.1", features = ["serde"]}
 eframe = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 assert_approx_eq = "1.1.0"
 async-std = "1.13.1"
 flexpolyline = "1.0.0"
 polyline = "0.11.0"
+lazy_static = "1.5.0"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}

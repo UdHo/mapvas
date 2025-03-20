@@ -1,5 +1,7 @@
 use log::debug;
-use mapvas::map::map_event::{Layer, MapEvent, Shape};
+use mapvas::map::coordinates::PixelPosition;
+use mapvas::map::geometry_collection::Geometry;
+use mapvas::map::map_event::{Layer, MapEvent};
 use mapvas::remote::DEFAULT_PORT;
 use std::process::Stdio;
 
@@ -81,22 +83,22 @@ impl SenderInner {
   }
 
   async fn compact_and_send(queue: VecDeque<MapEvent>) {
-    let mut layers: BTreeMap<String, Vec<Shape>> = BTreeMap::new();
+    let mut layers: BTreeMap<String, Vec<Geometry<PixelPosition>>> = BTreeMap::new();
 
     for event in queue {
       match event {
-        MapEvent::Layer(Layer { id, mut shapes }) => {
+        MapEvent::Layer(Layer { id, mut geometries }) => {
           layers
             .entry(id)
-            .and_modify(|e| e.append(&mut shapes))
-            .or_insert(shapes);
+            .and_modify(|e| e.append(&mut geometries))
+            .or_insert(geometries);
         }
         e => Self::send_event(&e).await,
       }
     }
 
-    for (id, shapes) in layers {
-      Self::send_event(&MapEvent::Layer(Layer { id, shapes })).await;
+    for (id, geometries) in layers {
+      Self::send_event(&MapEvent::Layer(Layer { id, geometries })).await;
     }
   }
 

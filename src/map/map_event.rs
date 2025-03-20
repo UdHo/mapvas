@@ -1,43 +1,20 @@
-use super::coordinates::Coordinate;
+use super::{coordinates::PixelPosition, geometry_collection::Geometry};
+use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
-static ALL_COLORS: [Color; 11] = [
-  Color::Blue,
-  Color::DarkBlue,
-  Color::Red,
-  Color::DarkRed,
-  Color::Green,
-  Color::DarkGreen,
-  Color::Black,
-  Color::Grey,
-  Color::Yellow,
-  Color::White,
-  Color::Brown,
-];
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Color(pub Color32);
 
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub enum Color {
-  #[default]
-  Blue,
-  DarkBlue,
-  Red,
-  DarkRed,
-  Green,
-  DarkGreen,
-  Yellow,
-  DarkYellow,
-  Black,
-  Grey,
-  White,
-  Brown,
-  Color32(u8, u8, u8, u8),
+impl From<Color32> for Color {
+  fn from(value: egui::Color32) -> Self {
+    Color(value)
+  }
 }
 
-impl Color {
-  #[must_use]
-  pub fn all() -> &'static [Color] {
-    &ALL_COLORS
+impl Default for Color {
+  fn default() -> Self {
+    Color(egui::Color32::BLUE)
   }
 }
 
@@ -46,18 +23,17 @@ impl FromStr for Color {
   fn from_str(input: &str) -> Result<Color, Self::Err> {
     let lowercase = input.to_lowercase();
     match lowercase.as_str() {
-      "blue" => Ok(Color::Blue),
-      "darkblue" => Ok(Color::DarkBlue),
-      "red" => Ok(Color::Red),
-      "darkred" => Ok(Color::DarkRed),
-      "green" => Ok(Color::Green),
-      "darkgreen" => Ok(Color::DarkGreen),
-      "yellow" => Ok(Color::Yellow),
-      "darkyellow" => Ok(Color::DarkYellow),
-      "black" => Ok(Color::Black),
-      "white" => Ok(Color::White),
-      "grey" => Ok(Color::Grey),
-      "brown" => Ok(Color::Brown),
+      "blue" => Ok(Color32::BLUE.into()),
+      "darkblue" => Ok(Color32::DARK_BLUE.into()),
+      "red" => Ok(Color32::RED.into()),
+      "darkred" => Ok(Color32::DARK_RED.into()),
+      "green" => Ok(Color32::GREEN.into()),
+      "darkgreen" => Ok(Color32::DARK_GREEN.into()),
+      "yellow" => Ok(Color32::YELLOW.into()),
+      "black" => Ok(Color32::BLACK.into()),
+      "white" => Ok(Color32::WHITE.into()),
+      "grey" | "gray" => Ok(Color32::GRAY.into()),
+      "brown" => Ok(Color32::BROWN.into()),
       _ => Err(()),
     }
   }
@@ -65,22 +41,7 @@ impl FromStr for Color {
 
 impl From<Color> for egui::Color32 {
   fn from(value: Color) -> Self {
-    let alpha = 255;
-    match value {
-      Color::Blue => egui::Color32::from_rgba_premultiplied(0, 0, 255, alpha),
-      Color::DarkBlue => egui::Color32::from_rgba_premultiplied(0, 0, 150, alpha),
-      Color::Red => egui::Color32::from_rgba_premultiplied(255, 0, 0, alpha),
-      Color::DarkRed => egui::Color32::from_rgba_premultiplied(150, 0, 0, alpha),
-      Color::Green => egui::Color32::from_rgba_premultiplied(0, 255, 0, alpha),
-      Color::DarkGreen => egui::Color32::from_rgba_premultiplied(0, 150, 0, alpha),
-      Color::Yellow => egui::Color32::from_rgba_premultiplied(255, 255, 0, alpha),
-      Color::DarkYellow => egui::Color32::from_rgba_premultiplied(150, 150, 0, alpha),
-      Color::Black => egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
-      Color::White => egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
-      Color::Grey => egui::Color32::from_rgba_premultiplied(127, 127, 127, alpha),
-      Color::Brown => egui::Color32::from_rgba_premultiplied(153, 76, 0, alpha),
-      Color::Color32(r, g, b, a) => egui::Color32::from_rgba_premultiplied(r, g, b, a),
-    }
+    value.0
   }
 }
 
@@ -111,53 +72,19 @@ impl FromStr for FillStyle {
   }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Shape {
-  pub coordinates: Vec<Coordinate>,
-  pub style: Style,
-  pub visible: bool,
-  pub label: Option<String>,
-}
-
-impl Shape {
-  #[must_use]
-  pub fn new(coordinates: Vec<Coordinate>) -> Self {
-    Shape {
-      coordinates,
-      visible: true,
-      ..Default::default()
-    }
-  }
-
-  #[must_use]
-  pub fn with_color(mut self, color: Color) -> Self {
-    self.style.color = color;
-    self
-  }
-
-  #[must_use]
-  pub fn with_fill(mut self, fill: FillStyle) -> Self {
-    self.style.fill = fill;
-    self
-  }
-
-  #[must_use]
-  pub fn with_label(mut self, label: Option<String>) -> Self {
-    self.label = label;
-    self
-  }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
   pub id: String,
-  pub shapes: Vec<Shape>,
+  pub geometries: Vec<Geometry<PixelPosition>>,
 }
 
 impl Layer {
   #[must_use]
   pub fn new(id: String) -> Self {
-    Layer { id, shapes: vec![] }
+    Layer {
+      id,
+      geometries: vec![],
+    }
   }
 }
 

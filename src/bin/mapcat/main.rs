@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{FileParser, GrepParser, RandomParser, TTJsonParser};
+use mapvas::parser::{FileParser, GrepParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use tokio::time::sleep;
@@ -15,7 +15,7 @@ mod sender;
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, random, ttjson.
+  /// Which parser to use. Values: grep, ttjson.
   #[arg(short, long, default_value = "grep")]
   parser: String,
 
@@ -65,7 +65,7 @@ fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
 #[tokio::main]
 async fn main() {
   let args = Args::parse();
-  let color = Color::from_str(&args.color).unwrap_or(Color::Green);
+  let color = Color::from_str(&args.color).unwrap_or_default();
 
   env_logger::init();
 
@@ -79,7 +79,6 @@ async fn main() {
 
   let parser = || -> Box<dyn FileParser> {
     match args.parser.as_str() {
-      "random" => Box::new(RandomParser::new()),
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
       "grep" => Box::new(
         GrepParser::new(args.invert_coordinates)

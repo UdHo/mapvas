@@ -1,14 +1,35 @@
 use std::str::FromStr;
 
+use egui::Color32;
 use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 
-use crate::map::{
-  coordinates::Coordinate,
-  map_event::{Color, FillStyle, Layer, MapEvent, Shape},
-};
-
 use super::Parser;
+use crate::map::{
+  coordinates::WGS84Coordinate,
+  geometry_collection::{Geometry, Metadata, Style},
+  map_event::{Color, FillStyle, Layer, MapEvent},
+};
+use lazy_static::lazy_static;
+
+lazy_static! {
+  static ref COLOR_RE: Regex = RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+  static ref FILL_RE: Regex = RegexBuilder::new(r"(solid|transparent|nofill)")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+  static ref COORD_RE: Regex =  Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
+  static ref CLEAR_RE: Regex =  RegexBuilder::new("clear")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+  static ref FLEXPOLY_RE: Regex = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
+  static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
+        .expect("Invalid regex pattern");
+}
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug)]
@@ -16,18 +37,12 @@ pub struct GrepParser {
   invert_coordinates: bool,
   color: Color,
   fill: FillStyle,
-  color_re: Regex,
-  fill_re: Regex,
-  coord_re: Regex,
-  clear_re: Regex,
-  flexpoly_re: Regex,
-  googlepoly_re: Regex,
   label_re: Option<Regex>,
 }
 
 impl Parser for GrepParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
-    if let Some(event) = self.parse_clear(line) {
+    if let Some(event) = Self::parse_clear(line) {
       return Some(event);
     }
 
@@ -37,38 +52,66 @@ impl Parser for GrepParser {
       self.parse_color(l);
       self.parse_fill(l);
       let label = self.parse_label(l);
-      let coordinates = self.parse_shape(l);
+      let coordinates = self.parse_geometry(l);
       match coordinates.len() {
         0 => (),
-        1 => {
-          layer.shapes.push(
-            Shape::new(coordinates)
-              .with_color(self.color)
-              .with_fill(FillStyle::Solid)
-              .with_label(label.clone()),
-          );
-        }
+        1 => layer.geometries.push(Geometry::Point(
+          coordinates[0].into(),
+          Metadata {
+            label: label.clone(),
+            style: Some(Style::default().with_color(self.color.into())),
+          },
+        )),
         _ => {
-          layer.shapes.push(
-            Shape::new(coordinates)
-              .with_color(self.color)
-              .with_fill(self.fill)
-              .with_label(label.clone()),
-          );
+          if coordinates.len() == 2 || self.fill == FillStyle::NoFill {
+            layer.geometries.push(Geometry::LineString(
+              coordinates.into_iter().map(Into::into).collect(),
+              Metadata {
+                label: label.clone(),
+                style: Some(Style::default().with_color(self.color.into())),
+              },
+            ));
+          } else {
+            layer.geometries.push(Geometry::Polygon(
+              coordinates.into_iter().map(Into::into).collect(),
+              Metadata {
+                label: label.clone(),
+                style: Some(
+                  Style::default()
+                    .with_color(self.color.into())
+                    .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+                ),
+              },
+            ));
+          }
         }
       }
-      layer.shapes.extend(self.parse_flexpolyline(l).map(|c| {
-        Shape::new(c)
-          .with_fill(FillStyle::NoFill)
-          .with_color(self.color)
-      }));
-      layer.shapes.extend(self.parse_googlepolyline(l).map(|c| {
-        Shape::new(c)
-          .with_fill(FillStyle::NoFill)
-          .with_color(self.color)
-      }));
+
+      layer
+        .geometries
+        .extend(Self::parse_flexpolyline(l).map(|c| {
+          Geometry::LineString(
+            c.into_iter().map(Into::into).collect(),
+            Metadata {
+              label: label.clone(),
+              style: Some(Style::default().with_color(self.color.into())),
+            },
+          )
+        }));
+
+      layer
+        .geometries
+        .extend(Self::parse_googlepolyline(l).map(|c| {
+          Geometry::LineString(
+            c.into_iter().map(Into::into).collect(),
+            Metadata {
+              label: label.clone(),
+              style: Some(Style::default().with_color(self.color.into())),
+            },
+          )
+        }));
     }
-    if layer.shapes.is_empty() {
+    if layer.geometries.is_empty() {
       None
     } else {
       Some(MapEvent::Layer(layer))
@@ -81,34 +124,10 @@ impl GrepParser {
   /// # Panics
   /// If there is a typo in some regex.
   pub fn new(invert_coordinates: bool) -> Self {
-    let color_re =
-      RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
-        .case_insensitive(true)
-        .build()
-        .unwrap();
-    let fill_re = RegexBuilder::new(r"(solid|transparent|nofill)")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    let coord_re = Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
-    let clear_re = RegexBuilder::new("clear")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    let flexpoly_re = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
-    let googlepoly_re = Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
-      .expect("Invalid regex pattern");
-
     Self {
       invert_coordinates,
       color: Color::default(),
       fill: FillStyle::default(),
-      color_re,
-      fill_re,
-      coord_re,
-      clear_re,
-      flexpoly_re,
-      googlepoly_re,
       label_re: None,
     }
   }
@@ -127,12 +146,12 @@ impl GrepParser {
     self
   }
 
-  fn parse_clear(&self, line: &str) -> Option<MapEvent> {
-    self.clear_re.is_match(line).then_some(MapEvent::Clear)
+  fn parse_clear(line: &str) -> Option<MapEvent> {
+    CLEAR_RE.is_match(line).then_some(MapEvent::Clear)
   }
 
   fn parse_color(&mut self, line: &str) {
-    for (_, [color]) in self.color_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [color]) in COLOR_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
         .map_err(|()| error!("Failed parsing {}", color));
@@ -140,16 +159,16 @@ impl GrepParser {
   }
 
   fn parse_fill(&mut self, line: &str) {
-    for (_, [fill]) in self.fill_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [fill]) in FILL_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = FillStyle::from_str(fill)
         .map(|parsed_fill| self.fill = parsed_fill)
         .map_err(|()| error!("Failed parsing {}", fill));
     }
   }
 
-  fn parse_shape(&self, line: &str) -> Vec<Coordinate> {
+  fn parse_geometry(&self, line: &str) -> Vec<WGS84Coordinate> {
     let mut coordinates = vec![];
-    for (_, [lat, lon]) in self.coord_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [lat, lon]) in COORD_RE.captures_iter(line).map(|c| c.extract()) {
       if let Some(coord) = self.parse_coordinate(lat, lon) {
         coordinates.push(coord);
       }
@@ -158,9 +177,9 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_flexpolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+  fn parse_flexpolyline(line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
-    for (_, [poly]) in self.flexpoly_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [poly]) in FLEXPOLY_RE.captures_iter(line).map(|c| c.extract()) {
       if let Ok(flexpolyline::Polyline::Data2d {
         coordinates,
         precision2d: _,
@@ -170,7 +189,7 @@ impl GrepParser {
         v.push(
           coordinates
             .into_iter()
-            .map(|c| Coordinate {
+            .map(|c| WGS84Coordinate {
               lat: c.0 as f32,
               lon: c.1 as f32,
             })
@@ -182,15 +201,15 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_googlepolyline(&self, line: &str) -> impl Iterator<Item = Vec<Coordinate>> {
+  fn parse_googlepolyline(line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
-    for (_, [poly]) in self.googlepoly_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [poly]) in GOOGLEPOLY_RE.captures_iter(line).map(|c| c.extract()) {
       let decoded = polyline::decode_polyline(poly, 5)
         .inspect_err(|e| info!("Could not parse possible googlepolyline {:?}", e));
       if let Ok(ls) = decoded {
         v.push(
           ls.into_iter()
-            .map(|c| Coordinate {
+            .map(|c| WGS84Coordinate {
               lat: c.y as f32,
               lon: c.x as f32,
             })
@@ -218,7 +237,7 @@ impl GrepParser {
     }
   }
 
-  fn parse_coordinate(&self, x: &str, y: &str) -> Option<Coordinate> {
+  fn parse_coordinate(&self, x: &str, y: &str) -> Option<WGS84Coordinate> {
     let lat = match x.parse::<f32>() {
       Ok(v) => v,
       Err(e) => {
@@ -233,7 +252,7 @@ impl GrepParser {
         return None;
       }
     };
-    let mut coordinates = Coordinate { lat, lon };
+    let mut coordinates = WGS84Coordinate { lat, lon };
     if self.invert_coordinates {
       std::mem::swap(&mut coordinates.lat, &mut coordinates.lon);
     }
