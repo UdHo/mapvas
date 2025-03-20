@@ -52,7 +52,7 @@ impl Parser for GrepParser {
       self.parse_color(l);
       self.parse_fill(l);
       let label = self.parse_label(l);
-      let coordinates = self.parse_shape(l);
+      let coordinates = self.parse_geometry(l);
       match coordinates.len() {
         0 => (),
         1 => layer.geometries.push(Geometry::Point(
@@ -166,7 +166,7 @@ impl GrepParser {
     }
   }
 
-  fn parse_shape(&self, line: &str) -> Vec<WGS84Coordinate> {
+  fn parse_geometry(&self, line: &str) -> Vec<WGS84Coordinate> {
     let mut coordinates = vec![];
     for (_, [lat, lon]) in COORD_RE.captures_iter(line).map(|c| c.extract()) {
       if let Some(coord) = self.parse_coordinate(lat, lon) {

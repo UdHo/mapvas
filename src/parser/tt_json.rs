@@ -76,7 +76,7 @@ impl TTJsonParser {
     center: Option<WGS84Coordinate>,
     boundary: &[WGS84Coordinate],
   ) -> MapEvent {
-    let mut shapes = vec![Geometry::Polygon(
+    let mut geometries = vec![Geometry::Polygon(
       boundary.iter().map(Coordinate::as_pixel_position).collect(),
       Metadata {
         label: Some("Range boundary".into()),
@@ -88,7 +88,7 @@ impl TTJsonParser {
       },
     )];
     if let Some(c) = center {
-      shapes.push(Geometry::Polygon(
+      geometries.push(Geometry::Polygon(
         vec![c.as_pixel_position()],
         Metadata {
           label: Some("Range center".into()),
@@ -101,7 +101,7 @@ impl TTJsonParser {
       ));
     }
     let mut layer = Layer::new("Range".to_string());
-    layer.geometries = shapes;
+    layer.geometries = geometries;
     MapEvent::Layer(layer)
   }
 }
