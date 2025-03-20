@@ -1,8 +1,10 @@
 use std::str::FromStr;
 
+use egui::Color32;
 use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 
+use super::Parser;
 use crate::map::{
   coordinates::WGS84Coordinate,
   geometry_collection::{Geometry, Metadata, Style},
@@ -10,34 +12,23 @@ use crate::map::{
 };
 use lazy_static::lazy_static;
 
-use super::Parser;
 lazy_static! {
- static ref COLOR_RE: Regex=  RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
+  static ref COLOR_RE: Regex = RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
         .case_insensitive(true)
         .build()
         .unwrap();
-
- static ref FILL_RE: Regex=
- RegexBuilder::new(r"(solid|transparent|nofill)")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-
- static ref  COORD_RE: Regex =  Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
-
- static ref CLEAR_RE: Regex =  RegexBuilder::new("clear")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-
- static ref FLEXPOLY_RE: Regex =
-     Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
-     static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
-      .expect("Invalid regex pattern");
-
-
-
-
+  static ref FILL_RE: Regex = RegexBuilder::new(r"(solid|transparent|nofill)")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+  static ref COORD_RE: Regex =  Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
+  static ref CLEAR_RE: Regex =  RegexBuilder::new("clear")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+  static ref FLEXPOLY_RE: Regex = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
+  static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
+        .expect("Invalid regex pattern");
 }
 
 #[allow(clippy::module_name_repetitions)]
@@ -71,7 +62,29 @@ impl Parser for GrepParser {
             style: Some(Style::default().with_color(self.color.into())),
           },
         )),
-        _ => todo!(),
+        _ => {
+          if coordinates.len() == 2 || self.fill == FillStyle::NoFill {
+            layer.geometries.push(Geometry::LineString(
+              coordinates.into_iter().map(Into::into).collect(),
+              Metadata {
+                label: label.clone(),
+                style: Some(Style::default().with_color(self.color.into())),
+              },
+            ));
+          } else {
+            layer.geometries.push(Geometry::Polygon(
+              coordinates.into_iter().map(Into::into).collect(),
+              Metadata {
+                label: label.clone(),
+                style: Some(
+                  Style::default()
+                    .with_color(self.color.into())
+                    .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+                ),
+              },
+            ));
+          }
+        }
       }
 
       layer
