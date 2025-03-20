@@ -9,6 +9,8 @@ use std::{
 pub use grep::GrepParser;
 mod tt_json;
 pub use tt_json::TTJsonParser;
+mod geojson;
+pub use geojson::GeoJsonParser;
 
 use crate::map::map_event::MapEvent;
 
