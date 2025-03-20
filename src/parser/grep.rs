@@ -8,8 +8,37 @@ use crate::map::{
   geometry_collection::{Geometry, Metadata, Style},
   map_event::{Color, FillStyle, Layer, MapEvent},
 };
+use lazy_static::lazy_static;
 
 use super::Parser;
+lazy_static! {
+ static ref COLOR_RE: Regex=  RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+
+ static ref FILL_RE: Regex=
+ RegexBuilder::new(r"(solid|transparent|nofill)")
+      .case_insensitive(true)
+      .build()
+      .unwrap();
+
+ static ref  COORD_RE: Regex =  Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
+
+ static ref CLEAR_RE: Regex =  RegexBuilder::new("clear")
+      .case_insensitive(true)
+      .build()
+      .unwrap();
+
+ static ref FLEXPOLY_RE: Regex =
+     Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
+     static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
+      .expect("Invalid regex pattern");
+
+
+
+
+}
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug)]
@@ -17,18 +46,12 @@ pub struct GrepParser {
   invert_coordinates: bool,
   color: Color,
   fill: FillStyle,
-  color_re: Regex,
-  fill_re: Regex,
-  coord_re: Regex,
-  clear_re: Regex,
-  flexpoly_re: Regex,
-  googlepoly_re: Regex,
   label_re: Option<Regex>,
 }
 
 impl Parser for GrepParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
-    if let Some(event) = self.parse_clear(line) {
+    if let Some(event) = Self::parse_clear(line) {
       return Some(event);
     }
 
@@ -51,19 +74,21 @@ impl Parser for GrepParser {
         _ => todo!(),
       }
 
-      layer.geometries.extend(self.parse_flexpolyline(l).map(|c| {
-        Geometry::LineString(
-          c.into_iter().map(Into::into).collect(),
-          Metadata {
-            label: label.clone(),
-            style: Some(Style::default().with_color(self.color.into())),
-          },
-        )
-      }));
+      layer
+        .geometries
+        .extend(Self::parse_flexpolyline(l).map(|c| {
+          Geometry::LineString(
+            c.into_iter().map(Into::into).collect(),
+            Metadata {
+              label: label.clone(),
+              style: Some(Style::default().with_color(self.color.into())),
+            },
+          )
+        }));
 
       layer
         .geometries
-        .extend(self.parse_googlepolyline(l).map(|c| {
+        .extend(Self::parse_googlepolyline(l).map(|c| {
           Geometry::LineString(
             c.into_iter().map(Into::into).collect(),
             Metadata {
@@ -86,34 +111,10 @@ impl GrepParser {
   /// # Panics
   /// If there is a typo in some regex.
   pub fn new(invert_coordinates: bool) -> Self {
-    let color_re =
-      RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
-        .case_insensitive(true)
-        .build()
-        .unwrap();
-    let fill_re = RegexBuilder::new(r"(solid|transparent|nofill)")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    let coord_re = Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap();
-    let clear_re = RegexBuilder::new("clear")
-      .case_insensitive(true)
-      .build()
-      .unwrap();
-    let flexpoly_re = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
-    let googlepoly_re = Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
-      .expect("Invalid regex pattern");
-
     Self {
       invert_coordinates,
       color: Color::default(),
       fill: FillStyle::default(),
-      color_re,
-      fill_re,
-      coord_re,
-      clear_re,
-      flexpoly_re,
-      googlepoly_re,
       label_re: None,
     }
   }
@@ -132,12 +133,12 @@ impl GrepParser {
     self
   }
 
-  fn parse_clear(&self, line: &str) -> Option<MapEvent> {
-    self.clear_re.is_match(line).then_some(MapEvent::Clear)
+  fn parse_clear(line: &str) -> Option<MapEvent> {
+    CLEAR_RE.is_match(line).then_some(MapEvent::Clear)
   }
 
   fn parse_color(&mut self, line: &str) {
-    for (_, [color]) in self.color_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [color]) in COLOR_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
         .map_err(|()| error!("Failed parsing {}", color));
@@ -145,7 +146,7 @@ impl GrepParser {
   }
 
   fn parse_fill(&mut self, line: &str) {
-    for (_, [fill]) in self.fill_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [fill]) in FILL_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = FillStyle::from_str(fill)
         .map(|parsed_fill| self.fill = parsed_fill)
         .map_err(|()| error!("Failed parsing {}", fill));
@@ -154,7 +155,7 @@ impl GrepParser {
 
   fn parse_shape(&self, line: &str) -> Vec<WGS84Coordinate> {
     let mut coordinates = vec![];
-    for (_, [lat, lon]) in self.coord_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [lat, lon]) in COORD_RE.captures_iter(line).map(|c| c.extract()) {
       if let Some(coord) = self.parse_coordinate(lat, lon) {
         coordinates.push(coord);
       }
@@ -163,9 +164,9 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_flexpolyline(&self, line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
+  fn parse_flexpolyline(line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
-    for (_, [poly]) in self.flexpoly_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [poly]) in FLEXPOLY_RE.captures_iter(line).map(|c| c.extract()) {
       if let Ok(flexpolyline::Polyline::Data2d {
         coordinates,
         precision2d: _,
@@ -187,9 +188,9 @@ impl GrepParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn parse_googlepolyline(&self, line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
+  fn parse_googlepolyline(line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
-    for (_, [poly]) in self.googlepoly_re.captures_iter(line).map(|c| c.extract()) {
+    for (_, [poly]) in GOOGLEPOLY_RE.captures_iter(line).map(|c| c.extract()) {
       let decoded = polyline::decode_polyline(poly, 5)
         .inspect_err(|e| info!("Could not parse possible googlepolyline {:?}", e));
       if let Ok(ls) = decoded {

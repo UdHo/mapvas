@@ -2966,6 +2966,7 @@ dependencies = [
  "flexpolyline",
  "image",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "polyline",
  "rand 0.9.0",

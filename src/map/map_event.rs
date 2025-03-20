@@ -5,20 +5,6 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
-static ALL_COLORS: [Color; 11] = [
-  Color::Blue,
-  Color::DarkBlue,
-  Color::Red,
-  Color::DarkRed,
-  Color::Green,
-  Color::DarkGreen,
-  Color::Black,
-  Color::Grey,
-  Color::Yellow,
-  Color::White,
-  Color::Brown,
-];
-
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Color {
   #[default]
@@ -35,13 +21,6 @@ pub enum Color {
   White,
   Brown,
   Color32(u8, u8, u8, u8),
-}
-
-impl Color {
-  #[must_use]
-  pub fn all() -> &'static [Color] {
-    &ALL_COLORS
-  }
 }
 
 impl FromStr for Color {
