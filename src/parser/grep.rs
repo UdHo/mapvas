@@ -154,7 +154,7 @@ impl GrepParser {
     for (_, [color]) in COLOR_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
-        .map_err(|()| error!("Failed parsing {}", color));
+        .map_err(|()| error!("Failed parsing {color}"));
     }
   }
 
@@ -162,7 +162,7 @@ impl GrepParser {
     for (_, [fill]) in FILL_RE.captures_iter(line).map(|c| c.extract()) {
       let _ = FillStyle::from_str(fill)
         .map(|parsed_fill| self.fill = parsed_fill)
-        .map_err(|()| error!("Failed parsing {}", fill));
+        .map_err(|()| error!("Failed parsing {fill}"));
     }
   }
 
@@ -184,7 +184,7 @@ impl GrepParser {
         coordinates,
         precision2d: _,
       }) = flexpolyline::Polyline::decode(poly)
-        .inspect_err(|e| info!("Could not parse possible flexpolyline {:?}", e))
+        .inspect_err(|e| info!("Could not parse possible flexpolyline {e:?}"))
       {
         v.push(
           coordinates
@@ -205,7 +205,7 @@ impl GrepParser {
     let mut v = Vec::new();
     for (_, [poly]) in GOOGLEPOLY_RE.captures_iter(line).map(|c| c.extract()) {
       let decoded = polyline::decode_polyline(poly, 5)
-        .inspect_err(|e| info!("Could not parse possible googlepolyline {:?}", e));
+        .inspect_err(|e| info!("Could not parse possible googlepolyline {e:?}"));
       if let Ok(ls) = decoded {
         v.push(
           ls.into_iter()
@@ -241,14 +241,14 @@ impl GrepParser {
     let lat = match x.parse::<f32>() {
       Ok(v) => v,
       Err(e) => {
-        debug!("Could not parse {} {:?}.", x, e);
+        debug!("Could not parse {x} {e:?}.");
         return None;
       }
     };
     let lon = match y.parse::<f32>() {
       Ok(v) => v,
       Err(e) => {
-        debug!("Could not parse {} {:?}", y, e);
+        debug!("Could not parse {y} {e:?}");
         return None;
       }
     };

@@ -141,7 +141,7 @@ impl MapSender {
       .send()
       .await
     {
-      debug!("Healthcheck {}", e);
+      debug!("Healthcheck {e}");
     }
   }
 

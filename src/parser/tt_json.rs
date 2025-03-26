@@ -143,7 +143,7 @@ impl Parser for TTJsonParser {
     let routes: Result<JsonResponse, _> = serde_json::from_str(&self.data);
     match routes {
       Err(e) => {
-        error!("{:?}", e);
+        error!("{e:?}");
         None
       }
       Ok(JsonResponse::Routes { routes }) => Some(self.convert_routes(&routes)),

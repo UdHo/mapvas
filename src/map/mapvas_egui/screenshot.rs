@@ -81,7 +81,7 @@ impl ScreenshotLayer {
       .map(image::DynamicImage::ImageRgba8);
       if let Some(img) = img {
         let _ = img.save(path).inspect_err(|e| {
-          log::error!("Failed to save image: {:?}", e);
+          log::error!("Failed to save image: {e:?}");
         });
       }
     }

@@ -81,7 +81,7 @@ impl TileLayer {
 
   fn collect_new_tile_data(&mut self, ui: &Ui) {
     for (tile, egui_image) in self.receiver.try_iter() {
-      info!("Received tile from loader: {:?}", tile);
+      info!("Received tile from loader: {tile:?}");
       let handle = ui.ctx().load_texture(
         format!("{}-{}-{}", tile.zoom, tile.x, tile.y),
         egui_image,
