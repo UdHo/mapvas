@@ -210,7 +210,7 @@ impl Map {
         tokio::spawn(async move {
           // Buf Reader of file:
           let file = std::fs::File::open(file).inspect_err(|e| {
-            log::error!("Failed to open file: {:?}", e);
+            log::error!("Failed to open file: {e:?}");
           });
           if let Ok(file) = file {
             let read = Box::new(std::io::BufReader::new(file));

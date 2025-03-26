@@ -107,7 +107,7 @@ impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     {
       let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
-      info!("Tiles in download: {:?}", tiles_in_download);
+      info!("Tiles in download: {tiles_in_download:?}");
       let is_in_progress = tiles_in_download.get(tile);
       if is_in_progress.is_some() {
         return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
@@ -116,7 +116,7 @@ impl TileLoader for TileDownloader {
     }
 
     let url = self.get_path_for_tile(tile);
-    info!("Downloading {}.", url);
+    info!("Downloading {url}.");
     let request = Request::new(Method::Get, Url::parse(&url).unwrap());
     let result = self
       .client
@@ -136,7 +136,7 @@ impl TileLoader for TileDownloader {
       debug!("{result:?}");
       Err(TileLoaderError::TileNotAvailableError { tile: *tile })
     };
-    info!("Downloaded {:?}.", tile);
+    info!("Downloaded {tile:?}.");
 
     let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
     tiles_in_download.remove(tile);
