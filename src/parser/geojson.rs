@@ -3,28 +3,69 @@ use std::iter::{empty, once};
 
 use serde::{Deserialize, Serialize};
 
-type GeojsonCoordinate = [f64; 2];
+use crate::map::coordinates::Coordinate;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct GeoJsonCoordinate([f32; 2]);
+
+impl From<[f32; 2]> for GeoJsonCoordinate {
+  fn from(arr: [f32; 2]) -> Self {
+    Self(arr)
+  }
+}
+
+impl Coordinate for GeoJsonCoordinate {
+  fn as_wsg84(&self) -> crate::map::coordinates::WGS84Coordinate {
+    crate::map::coordinates::WGS84Coordinate {
+      lat: self.0[1],
+      lon: self.0[0],
+    }
+  }
+
+  fn as_pixel_position(&self) -> crate::map::coordinates::PixelPosition {
+    self.as_wsg84().as_pixel_position()
+  }
+}
+
+impl Serialize for GeoJsonCoordinate {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    self.0.serialize(serializer)
+  }
+}
+
+impl<'de> Deserialize<'de> for GeoJsonCoordinate {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    let arr = <[f32; 2]>::deserialize(deserializer)?;
+    Ok(GeoJsonCoordinate(arr))
+  }
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub enum Geometry {
   Point {
-    coordinates: GeojsonCoordinate,
+    coordinates: GeoJsonCoordinate,
   },
   LineString {
-    coordinates: Vec<GeojsonCoordinate>,
+    coordinates: Vec<GeoJsonCoordinate>,
   },
   Polygon {
-    coordinates: Vec<Vec<GeojsonCoordinate>>,
+    coordinates: Vec<Vec<GeoJsonCoordinate>>,
   },
   MultiPoint {
-    coordinates: Vec<GeojsonCoordinate>,
+    coordinates: Vec<GeoJsonCoordinate>,
   },
   MultiLineString {
-    coordinates: Vec<Vec<GeojsonCoordinate>>,
+    coordinates: Vec<Vec<GeoJsonCoordinate>>,
   },
   MultiPolygon {
-    coordinates: Vec<Vec<Vec<GeojsonCoordinate>>>,
+    coordinates: Vec<Vec<Vec<GeoJsonCoordinate>>>,
   },
   GeometryCollection {
     geometries: Vec<Geometry>,
@@ -85,18 +126,18 @@ impl Style {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub struct Feature {
-  geometry: Geometry,
+  pub geometry: Geometry,
   #[serde(default)]
-  properties: Properties,
+  pub properties: Properties,
   #[serde(skip_serializing_if = "Option::is_none")]
-  style: Option<Style>,
+  pub style: Option<Style>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct FeatureCollection {
-  features: Vec<Feature>,
+  pub features: Vec<Feature>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  style: Option<Style>,
+  pub style: Option<Style>,
 }
 
 impl FeatureCollection {
@@ -131,19 +172,22 @@ mod test {
   use std::{fs, path::PathBuf};
 
   #[test]
-  #[expect(clippy::float_cmp)]
   fn test_coordinate() {
-    let c = [1.0, 2.0];
+    let c = GeoJsonCoordinate([1.0, 2.0]);
     let serialized = serde_json::to_string(&c).expect("Serialization failed.");
     assert_eq!(serialized, "[1.0,2.0]");
-    let deserialized: GeojsonCoordinate =
+    let deserialized: GeoJsonCoordinate =
       serde_json::from_str(&serialized).expect("Deserialization failed.");
     assert_eq!(c, deserialized);
   }
+
   #[test]
   fn test_polygon() {
     let p = Geometry::Polygon {
-      coordinates: vec![vec![[1.0, 2.0], [3.0, 4.0]]],
+      coordinates: vec![vec![
+        GeoJsonCoordinate([1.0, 2.0]),
+        GeoJsonCoordinate([3.0, 4.0]),
+      ]],
     };
     let serialized = serde_json::to_string(&p).expect("Serialization failed.");
     println!("{serialized}");
@@ -184,7 +228,12 @@ mod test {
       f,
       Feature {
         geometry: Geometry::LineString {
-          coordinates: vec![[102.0, 0.0], [103.0, 1.0], [104.0, 0.0], [105.0, 1.0]]
+          coordinates: vec![
+            GeoJsonCoordinate([102.0, 0.0]),
+            GeoJsonCoordinate([103.0, 1.0]),
+            GeoJsonCoordinate([104.0, 0.0]),
+            GeoJsonCoordinate([105.0, 1.0])
+          ]
         },
         properties: Properties {
           id: None,
@@ -196,16 +245,16 @@ mod test {
   }
 
   #[rstest]
-  #[case(Geometry::Point{coordinates:[1.0,2.0]}, r#"{"type":"Point","coordinates":[1.0,2.0]}"#)]
-  #[case(Geometry::LineString{coordinates: vec![[1.0, 2.0], [3.0, 4.0]]}, r#"{"type":"LineString","coordinates":[[1.0,2.0],[3.0,4.0]]}"#)]
-  #[case(Geometry::Polygon{coordinates: vec![vec![[1.0, 2.0], [3.0, 4.0], [5.0,6.0]]]},r#"{"type":"Polygon","coordinates":[[[1.0,2.0],[3.0,4.0],[5.0,6.0]]]}"#)]
-  #[case(Geometry::MultiPoint{coordinates: vec![[1.0, 2.0], [3.0, 4.0]]}, r#"{"type":"MultiPoint","coordinates":[[1.0,2.0],[3.0,4.0]]}"#)]
-  #[case(Geometry::MultiLineString{coordinates:vec![vec![[1.0,2.0],[3.0,4.0]],vec![[0.0,1.0],[1.0,2.0]]]}, r#"{"type":"MultiLineString","coordinates":[[[1.0,2.0],[3.0,4.0]],[[0.0,1.0],[1.0,2.0]]]}"#)]
-  #[case(Geometry::MultiPolygon{coordinates:vec![vec![vec![[1.0,2.0],[3.0,4.0]]],vec![vec![[0.0,1.0],[1.0,2.0]]]]}, r#"{"type":"MultiPolygon","coordinates":[[[[1.0,2.0],[3.0,4.0]]],[[[0.0,1.0],[1.0,2.0]]]]}"#)]
+  #[case(Geometry::Point{coordinates:GeoJsonCoordinate([1.0,2.0])}, r#"{"type":"Point","coordinates":[1.0,2.0]}"#)]
+  #[case(Geometry::LineString{coordinates: vec![GeoJsonCoordinate([1.0, 2.0]), GeoJsonCoordinate([3.0, 4.0])]}, r#"{"type":"LineString","coordinates":[[1.0,2.0],[3.0,4.0]]}"#)]
+  #[case(Geometry::Polygon{coordinates: vec![vec![GeoJsonCoordinate([1.0, 2.0]), GeoJsonCoordinate([3.0, 4.0]), GeoJsonCoordinate([5.0,6.0])]]},r#"{"type":"Polygon","coordinates":[[[1.0,2.0],[3.0,4.0],[5.0,6.0]]]}"#)]
+  #[case(Geometry::MultiPoint{coordinates: vec![GeoJsonCoordinate([1.0, 2.0]), GeoJsonCoordinate([3.0, 4.0])]}, r#"{"type":"MultiPoint","coordinates":[[1.0,2.0],[3.0,4.0]]}"#)]
+  #[case(Geometry::MultiLineString{coordinates:vec![vec![GeoJsonCoordinate([1.0,2.0]),GeoJsonCoordinate([3.0,4.0])],vec![GeoJsonCoordinate([0.0,1.0]),GeoJsonCoordinate([1.0,2.0])]]}, r#"{"type":"MultiLineString","coordinates":[[[1.0,2.0],[3.0,4.0]],[[0.0,1.0],[1.0,2.0]]]}"#)]
+  #[case(Geometry::MultiPolygon{coordinates:vec![vec![vec![GeoJsonCoordinate([1.0,2.0]),GeoJsonCoordinate([3.0,4.0])]],vec![vec![GeoJsonCoordinate([0.0,1.0]),GeoJsonCoordinate([1.0,2.0])]]]}, r#"{"type":"MultiPolygon","coordinates":[[[[1.0,2.0],[3.0,4.0]]],[[[0.0,1.0],[1.0,2.0]]]]}"#)]
   #[case(Geometry::GeometryCollection { geometries: vec![
-                                   Geometry::Point{coordinates:[1.0,2.0]},
-                                   Geometry::LineString{coordinates: vec![[1.0, 2.0], [3.0, 4.0]]},
-                                   Geometry::Polygon{coordinates: vec![vec![[1.0, 2.0], [3.0, 4.0], [5.0,6.0]]]}]},
+                                   Geometry::Point{coordinates:GeoJsonCoordinate([1.0,2.0])},
+                                   Geometry::LineString{coordinates: vec![GeoJsonCoordinate([1.0, 2.0]), GeoJsonCoordinate([3.0, 4.0])]},
+                                   Geometry::Polygon{coordinates: vec![vec![GeoJsonCoordinate([1.0, 2.0]), GeoJsonCoordinate([3.0, 4.0]), GeoJsonCoordinate([5.0,6.0])]]}]},
      r#"{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1.0,2.0]},{"type":"LineString","coordinates":[[1.0,2.0],[3.0,4.0]]},{"type":"Polygon","coordinates":[[[1.0,2.0],[3.0,4.0],[5.0,6.0]]]}]}"#)]
   fn geometry_geojson_test(#[case] geometry: Geometry, #[case] serialized: &str) {
     let serialized_geometry = serde_json::to_string(&geometry).expect("Serialization failed.");
@@ -215,12 +264,13 @@ mod test {
       serde_json::from_str(&serialized_geometry).expect("Deserialization failed.");
     assert_eq!(geometry, deserialized);
   }
+
   #[test]
   fn geojson_test2() {
     let geojson = GeoJson::FeatureCollection(FeatureCollection {
       features: vec![Feature {
         geometry: Geometry::Point {
-          coordinates: [1.0, 2.0],
+          coordinates: GeoJsonCoordinate([1.0, 2.0]),
         },
         properties: Properties {
           id: Some("1".into()),
@@ -250,7 +300,7 @@ mod test {
       features: vec![
         Feature {
           geometry: Geometry::Point {
-            coordinates: [102.0, 0.5],
+            coordinates: GeoJsonCoordinate([102.0, 0.5]),
           },
           properties: Properties {
             id: None,
@@ -260,7 +310,12 @@ mod test {
         },
         Feature {
           geometry: Geometry::LineString {
-            coordinates: vec![[102.0, 0.0], [103.0, 1.0], [104.0, 0.0], [105.0, 1.0]],
+            coordinates: vec![
+              GeoJsonCoordinate([102.0, 0.0]),
+              GeoJsonCoordinate([103.0, 1.0]),
+              GeoJsonCoordinate([104.0, 0.0]),
+              GeoJsonCoordinate([105.0, 1.0]),
+            ],
           },
           properties: Properties {
             id: None,
@@ -275,11 +330,11 @@ mod test {
         Feature {
           geometry: Geometry::Polygon {
             coordinates: vec![vec![
-              [100.0, 0.0],
-              [101.0, 0.0],
-              [101.0, 1.0],
-              [100.0, 1.0],
-              [100.0, 0.0],
+              GeoJsonCoordinate([100.0, 0.0]),
+              GeoJsonCoordinate([101.0, 0.0]),
+              GeoJsonCoordinate([101.0, 1.0]),
+              GeoJsonCoordinate([100.0, 1.0]),
+              GeoJsonCoordinate([100.0, 0.0]),
             ]],
           },
           properties: Properties {
@@ -307,7 +362,7 @@ mod test {
     let geojson = GeoJson::FeatureCollection(FeatureCollection {
       features: vec![Feature {
         geometry: Geometry::Point {
-          coordinates: [102.0, 0.5],
+          coordinates: GeoJsonCoordinate([102.0, 0.5]),
         },
         properties: Properties {
           id: Some("a".into()),
