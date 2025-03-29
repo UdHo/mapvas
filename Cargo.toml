@@ -40,6 +40,7 @@ async-std = "1.13.1"
 flexpolyline = "1.0.0"
 polyline = "0.11.0"
 lazy_static = "1.5.0"
+egui_kittest = { version = "0.31.1", features = ["snapshot", "wgpu"] }
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}

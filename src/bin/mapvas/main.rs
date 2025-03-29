@@ -53,3 +53,21 @@ fn main() -> eframe::Result {
     }),
   )
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use egui::CentralPanel;
+  use egui_kittest::Harness;
+
+  #[tokio::test]
+  async fn snapshot() {
+    Harness::builder().build(|ctx| {
+      egui_extras::install_image_loaders(ctx);
+      let (map, remote) = Map::new(ctx.clone());
+      CentralPanel::default().show(ctx, |ui| {
+        (&mut map).ui(ui);
+      });
+    });
+  }
+}
