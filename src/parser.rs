@@ -8,6 +8,7 @@ use std::{
 
 pub use grep::GrepParser;
 mod tt_json;
+use serde::{Deserialize, Serialize};
 pub use tt_json::TTJsonParser;
 
 use crate::map::map_event::MapEvent;
@@ -21,6 +22,28 @@ pub trait Parser {
   /// For parses that parse a complete document, e.g. a json parser it returns the result.
   fn finalize(&self) -> Option<MapEvent> {
     None
+  }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Parsers {
+  Grep(GrepParser),
+  TTJson(TTJsonParser),
+}
+
+impl Parser for Parsers {
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    match self {
+      Parsers::Grep(parser) => parser.parse_line(line),
+      Parsers::TTJson(parser) => parser.parse_line(line),
+    }
+  }
+
+  fn finalize(&self) -> Option<MapEvent> {
+    match self {
+      Parsers::Grep(parser) => parser.finalize(),
+      Parsers::TTJson(parser) => parser.finalize(),
+    }
   }
 }
 

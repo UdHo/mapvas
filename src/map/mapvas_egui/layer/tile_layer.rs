@@ -150,4 +150,8 @@ impl Layer for TileLayer {
   fn visible_mut(&mut self) -> &mut bool {
     &mut self.layer_properties.visible
   }
+
+  fn ui_content(&mut self, ui: &mut Ui) {
+    ui.label("Loading tiles...");
+  }
 }

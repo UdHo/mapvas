@@ -3,6 +3,7 @@ use std::str::FromStr;
 use egui::Color32;
 use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 
 use super::Parser;
 use crate::map::{
@@ -32,11 +33,12 @@ lazy_static! {
 }
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GrepParser {
   invert_coordinates: bool,
   color: Color,
   fill: FillStyle,
+  #[serde(skip, default)]
   label_re: Option<Regex>,
 }
 

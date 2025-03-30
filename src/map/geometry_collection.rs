@@ -4,7 +4,7 @@ use egui::Color32;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 
-use super::coordinates::{BoundingBox, Coordinate, PixelPosition, WGS84Coordinate};
+use super::coordinates::{BoundingBox, Coordinate, PixelCoordinate, WGS84Coordinate};
 
 type Color = Color32;
 
@@ -75,6 +75,20 @@ pub struct Metadata {
   pub style: Option<Style>,
 }
 
+impl Metadata {
+  #[must_use]
+  pub fn with_label(mut self, label: String) -> Self {
+    self.label = Some(label);
+    self
+  }
+
+  #[must_use]
+  pub fn with_style(mut self, style: Style) -> Self {
+    self.style = Some(style);
+    self
+  }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum Geometry<C: Coordinate> {
   GeometryCollection(Vec<Geometry<C>>, Metadata),
@@ -83,7 +97,7 @@ pub enum Geometry<C: Coordinate> {
   Polygon(Vec<C>, Metadata),
 }
 
-impl From<Geometry<WGS84Coordinate>> for Geometry<PixelPosition> {
+impl From<Geometry<WGS84Coordinate>> for Geometry<PixelCoordinate> {
   fn from(value: Geometry<WGS84Coordinate>) -> Self {
     match value {
       Geometry::GeometryCollection(geometries, metadata) => Geometry::GeometryCollection(
@@ -92,11 +106,17 @@ impl From<Geometry<WGS84Coordinate>> for Geometry<PixelPosition> {
       ),
       Geometry::Point(coord, metadata) => Geometry::Point(coord.into(), metadata),
       Geometry::LineString(coords, metadata) => Geometry::LineString(
-        coords.into_iter().map(|c| c.as_pixel_position()).collect(),
+        coords
+          .into_iter()
+          .map(|c| c.as_pixel_coordinate())
+          .collect(),
         metadata,
       ),
       Geometry::Polygon(coords, metadata) => Geometry::Polygon(
-        coords.into_iter().map(|c| c.as_pixel_position()).collect(),
+        coords
+          .into_iter()
+          .map(|c| c.as_pixel_coordinate())
+          .collect(),
         metadata,
       ),
     }
@@ -176,7 +196,7 @@ impl<C: Coordinate> Geometry<C> {
 #[cfg(test)]
 mod tests {
 
-  use crate::map::coordinates::PixelPosition;
+  use crate::map::coordinates::PixelCoordinate;
 
   use super::*;
 
@@ -209,13 +229,13 @@ mod tests {
 
     let geom_coll = Geometry::GeometryCollection(
       vec![
-        Geometry::Point(PixelPosition::new(1., 2.), red.clone()),
+        Geometry::Point(PixelCoordinate::new(1., 2.), red.clone()),
         Geometry::LineString(
-          vec![PixelPosition::new(3., 4.), PixelPosition::new(5., 6.)],
+          vec![PixelCoordinate::new(3., 4.), PixelCoordinate::new(5., 6.)],
           blue.clone(),
         ),
         Geometry::GeometryCollection(
-          vec![Geometry::Point(PixelPosition::new(3., 4.), red.clone())],
+          vec![Geometry::Point(PixelCoordinate::new(3., 4.), red.clone())],
           Metadata::default(),
         ),
       ],
@@ -228,7 +248,7 @@ mod tests {
 
     let expected = vec![
       Geometry::Point(
-        PixelPosition::new(1., 2.),
+        PixelCoordinate::new(1., 2.),
         Metadata {
           label: None,
           style: Some(Style {
@@ -239,7 +259,7 @@ mod tests {
         },
       ),
       Geometry::LineString(
-        vec![PixelPosition::new(3., 4.), PixelPosition::new(5., 6.)],
+        vec![PixelCoordinate::new(3., 4.), PixelCoordinate::new(5., 6.)],
         Metadata {
           label: None,
           style: Some(Style {
@@ -250,7 +270,7 @@ mod tests {
         },
       ),
       Geometry::Point(
-        PixelPosition::new(3., 4.),
+        PixelCoordinate::new(3., 4.),
         Metadata {
           label: None,
           style: Some(Style {

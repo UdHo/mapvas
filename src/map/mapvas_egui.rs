@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-  map::coordinates::{PixelPosition, Transform},
+  map::coordinates::{Coordinate, PixelCoordinate, Transform},
   parser::FileParser,
   parser::GrepParser,
   parser::Parser,
@@ -12,15 +12,21 @@ use crate::{
 };
 use arboard::Clipboard;
 use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
-use helpers::{MAX_ZOOM, MIN_ZOOM, fit_to_screen, set_coordinate_to_pixel, show_box};
+use helpers::{
+  MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
+};
 use layer::Layer;
 use log::{debug, info};
 
-use super::{coordinates::BoundingBox, map_event::MapEvent};
+use super::{
+  coordinates::{BoundingBox, PixelPosition},
+  map_event::MapEvent,
+};
 
 mod helpers;
 
 mod layer;
+pub use layer::ParameterUpdate;
 
 pub struct Map {
   transform: Transform,
@@ -28,6 +34,8 @@ pub struct Map {
   recv: Rc<Receiver<MapEvent>>,
   ctx: egui::Context,
   remote: Remote,
+  right_click: Option<PixelCoordinate>,
+  keys: Vec<String>,
 }
 
 impl Map {
@@ -37,13 +45,23 @@ impl Map {
     let shape_layer = layer::ShapeLayer::new();
     let shape_layer_sender = shape_layer.get_sender();
 
+    let (command, command_sender) = layer::CommandLayer::new();
+
     let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
     let screenshot_layer_sender = screenshot_layer.get_sender();
     let (send, recv) = std::sync::mpsc::channel();
 
+    let keys = command.register_keys().fold(Vec::new(), |mut acc, key| {
+      if !acc.contains(&key.to_string()) {
+        acc.push(key.to_string());
+      }
+      acc
+    });
+
     let layers: Rc<Mutex<Vec<Box<dyn Layer>>>> = Rc::new(Mutex::new(vec![
       Box::new(tile_layer),
       Box::new(shape_layer),
+      Box::new(command),
       Box::new(screenshot_layer),
     ]));
 
@@ -56,6 +74,7 @@ impl Map {
       shutdown: shape_layer_sender,
       screenshot: screenshot_layer_sender,
       update: ctx.clone(),
+      command: command_sender,
     };
     (
       Self {
@@ -64,6 +83,8 @@ impl Map {
         recv: recv.into(),
         ctx,
         remote: remote.clone(),
+        right_click: None,
+        keys,
       },
       remote,
       map_data_holder,
@@ -96,12 +117,10 @@ impl Map {
           }
 
           egui::Key::Minus => {
-            let middle = self.transform.invert().apply(rect.center().into());
-            self.zoom_center(0.9, middle);
+            self.zoom_with_center(0.9, rect.center().into());
           }
           egui::Key::Plus | egui::Key::Equals => {
-            let middle = self.transform.invert().apply(rect.center().into());
-            self.zoom_center(1. / 0.9, middle);
+            self.zoom_with_center(1. / 0.9, rect.center().into());
           }
 
           egui::Key::F => {
@@ -130,7 +149,9 @@ impl Map {
       .iter()
       .filter_map(|l| l.bounding_box())
       .fold(BoundingBox::get_invalid(), |acc, bb| acc.extend(&bb));
-    show_box(&mut self.transform, &bb, rect);
+    if bb.is_valid() {
+      show_box(&mut self.transform, &bb, rect);
+    }
   }
 
   fn paste(&self) {
@@ -164,18 +185,18 @@ impl Map {
         .map(|d| (d.y / 1. + 1.).clamp(0.8, 1.4).sqrt());
       if let Some(delta) = delta {
         let cursor = response.hover_pos().unwrap_or_default().into();
-        self.zoom_center(delta, cursor);
+        self.zoom_with_center(delta, cursor);
       }
     }
   }
 
-  fn zoom_center(&mut self, delta: f32, center: PixelPosition) {
+  fn zoom_with_center(&mut self, delta: f32, center: PixelPosition) {
     if self.transform.zoom * delta < MIN_ZOOM || self.transform.zoom * delta > MAX_ZOOM {
       return;
     }
-    let hover_pos: PixelPosition = self.transform.invert().apply(center);
+    let hover_coord: PixelCoordinate = self.transform.invert().apply(center);
     self.transform.zoom(delta);
-    set_coordinate_to_pixel(hover_pos, center, &mut self.transform);
+    set_coordinate_to_pixel(hover_coord, center, &mut self.transform);
   }
 
   fn handle_map_events(&mut self, rect: Rect) {
@@ -194,7 +215,11 @@ impl Map {
 
   fn clear(&mut self) {
     let mut layer_guard = self.layers.try_lock();
-    layer_guard.iter_mut().for_each(|l| l.clear());
+    if let Ok(layers) = layer_guard.as_mut() {
+      for layer in layers.iter_mut() {
+        layer.clear();
+      }
+    }
   }
 
   fn handle_dropped_files(&self, ctx: &egui::Context) {
@@ -233,7 +258,7 @@ impl Widget for &mut Map {
     if self.transform.is_invalid() {
       fit_to_screen(&mut self.transform, &rect);
       set_coordinate_to_pixel(
-        PixelPosition { x: 500., y: 500. },
+        PixelCoordinate { x: 500., y: 500. },
         rect.center().into(),
         &mut self.transform,
       );
@@ -259,6 +284,50 @@ impl Widget for &mut Map {
 
     if response.clicked() {
       info!("Clicked at: {:?}", response.hover_pos());
+    }
+
+    if !response.context_menu_opened() {
+      self.right_click = None;
+    }
+    if response.secondary_clicked() {
+      self.right_click = response
+        .hover_pos()
+        .map(|p| point_to_coordinate(p.into(), &self.transform));
+    }
+
+    if let Some(right_click) = self.right_click {
+      response.context_menu(|ui| {
+        ui.set_min_width(140.);
+        let wgs84 = right_click.as_wgs84();
+        ui.label(format!("{:.6},{:.6}", wgs84.lat, wgs84.lon));
+        for key in &self.keys {
+          if ui.button(key).clicked() {
+            let _ = self
+              .remote
+              .command
+              .send(ParameterUpdate::Update(key.clone(), Some(right_click)))
+              .inspect_err(|e| {
+                log::error!("Failed to send {key}: {e:?}");
+              });
+            ui.close_menu();
+          }
+        }
+      });
+    }
+
+    if response.dragged() && response.dragged_by(PointerButton::Secondary) {
+      if let Some(hover_pos) = response.hover_pos() {
+        let delta = PixelPosition {
+          x: response.drag_delta().x,
+          y: response.drag_delta().y,
+        };
+
+        let _ = self.remote.command.send(ParameterUpdate::DragUpdate(
+          hover_pos.into(),
+          delta,
+          self.transform,
+        ));
+      }
     }
 
     if response.dragged() && response.dragged_by(PointerButton::Primary) {
@@ -288,7 +357,6 @@ impl Widget for &mut Map {
 
 pub trait MapLayerReader {
   fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn Layer>> + '_>;
-  fn get_layer_contents(&self);
 }
 
 pub trait MapLayerHolder {
@@ -313,9 +381,5 @@ struct MapLayerReaderImpl<'a>(MutexGuard<'a, Vec<Box<dyn Layer>>>);
 impl MapLayerReader for MapLayerReaderImpl<'_> {
   fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn Layer>> + '_> {
     Box::new(self.0.iter_mut())
-  }
-
-  fn get_layer_contents(&self) {
-    // TODO
   }
 }
