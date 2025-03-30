@@ -1,12 +1,7 @@
-use std::sync::mpsc::Receiver;
-
-use arboard::Clipboard;
-use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
-use helpers::{MAX_ZOOM, MIN_ZOOM, fit_to_screen, set_coordinate_to_pixel, show_box};
-use log::{debug, info};
-use screenshot::ScreenshotLayer;
-use shape_layer::ShapeLayer;
-use tile_layer::TileLayer;
+use std::{
+  rc::Rc,
+  sync::{Mutex, MutexGuard, mpsc::Receiver},
+};
 
 use crate::{
   map::coordinates::{PixelPosition, Transform},
@@ -15,64 +10,63 @@ use crate::{
   parser::Parser,
   remote::Remote,
 };
+use arboard::Clipboard;
+use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
+use helpers::{MAX_ZOOM, MIN_ZOOM, fit_to_screen, set_coordinate_to_pixel, show_box};
+use layer::Layer;
+use log::{debug, info};
 
 use super::{coordinates::BoundingBox, map_event::MapEvent};
 
 mod helpers;
 
-/// Handles screenshot functionality.
-mod screenshot;
-/// Draws and holds the shapes on the map.
-mod shape_layer;
-/// Draws the map.
-mod tile_layer;
-
-/// A layer that can be drawn on the map.
-trait Layer {
-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
-  fn clear(&mut self) {}
-  fn bounding_box(&self) -> Option<BoundingBox> {
-    None
-  }
-}
+mod layer;
 
 pub struct Map {
   transform: Transform,
-  layers: Vec<Box<dyn Layer>>,
-  recv: Receiver<MapEvent>,
+  layers: Rc<Mutex<Vec<Box<dyn Layer>>>>,
+  recv: Rc<Receiver<MapEvent>>,
   ctx: egui::Context,
   remote: Remote,
 }
 
 impl Map {
   #[must_use]
-  pub fn new(ctx: egui::Context) -> (Self, Remote) {
-    let tile_layer = TileLayer::new(ctx.clone());
-    let shape_layer = ShapeLayer::new();
-    let screenshot_layer = ScreenshotLayer::new(ctx.clone());
+  pub fn new(ctx: egui::Context) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+    let tile_layer = layer::TileLayer::new(ctx.clone());
+    let shape_layer = layer::ShapeLayer::new();
+    let shape_layer_sender = shape_layer.get_sender();
+
+    let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
+    let screenshot_layer_sender = screenshot_layer.get_sender();
     let (send, recv) = std::sync::mpsc::channel();
 
+    let layers: Rc<Mutex<Vec<Box<dyn Layer>>>> = Rc::new(Mutex::new(vec![
+      Box::new(tile_layer),
+      Box::new(shape_layer),
+      Box::new(screenshot_layer),
+    ]));
+
+    let map_data_holder = Rc::new(MapLayerHolderImpl::new(layers.clone()));
+
     let remote = Remote {
-      layer: shape_layer.get_sender(),
+      layer: shape_layer_sender.clone(),
       focus: send.clone(),
       clear: send.clone(),
-      shutdown: shape_layer.get_sender(),
-      screenshot: screenshot_layer.get_sender(),
+      shutdown: shape_layer_sender,
+      screenshot: screenshot_layer_sender,
       update: ctx.clone(),
     };
     (
       Self {
         transform: Transform::invalid(),
-        layers: vec![
-          Box::new(tile_layer),
-          Box::new(shape_layer),
-          Box::new(screenshot_layer),
-        ],
-        recv,
+        layers,
+        recv: recv.into(),
         ctx,
         remote: remote.clone(),
       },
       remote,
+      map_data_holder,
     )
   }
 
@@ -131,8 +125,8 @@ impl Map {
   }
 
   fn show_bounding_box(&mut self, rect: Rect) {
-    let bb = self
-      .layers
+    let layer_guard = self.layers.try_lock().expect("Failed to lock layers");
+    let bb = layer_guard
       .iter()
       .filter_map(|l| l.bounding_box())
       .fold(BoundingBox::get_invalid(), |acc, bb| acc.extend(&bb));
@@ -199,7 +193,8 @@ impl Map {
   }
 
   fn clear(&mut self) {
-    self.layers.iter_mut().for_each(|l| l.clear());
+    let mut layer_guard = self.layers.try_lock();
+    layer_guard.iter_mut().for_each(|l| l.clear());
   }
 
   fn handle_dropped_files(&self, ctx: &egui::Context) {
@@ -276,14 +271,51 @@ impl Widget for &mut Map {
     fit_to_screen(&mut self.transform, &rect);
 
     if ui.is_rect_visible(rect) {
-      for layer in &mut self.layers {
-        layer.draw(ui, &self.transform, rect);
+      if let Ok(mut layer_guard) = self.layers.try_lock().inspect_err(|e| {
+        log::error!("Failed to lock layers: {e:?}");
+      }) {
+        for layer in layer_guard.iter_mut() {
+          layer.draw(ui, &self.transform, rect);
+        }
       }
     }
-
     // Handle map events last (and request repaint if there were any) to have all the other input
     // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
     response
+  }
+}
+
+pub trait MapLayerReader {
+  fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn Layer>> + '_>;
+  fn get_layer_contents(&self);
+}
+
+pub trait MapLayerHolder {
+  fn get_reader(&self) -> Box<dyn MapLayerReader + '_>;
+}
+
+struct MapLayerHolderImpl(Rc<Mutex<Vec<Box<dyn Layer>>>>);
+impl MapLayerHolderImpl {
+  fn new(layers: Rc<Mutex<Vec<Box<dyn Layer>>>>) -> Self {
+    Self(layers)
+  }
+}
+
+impl MapLayerHolder for MapLayerHolderImpl {
+  fn get_reader(&self) -> Box<dyn MapLayerReader + '_> {
+    Box::new(MapLayerReaderImpl(self.0.lock().unwrap()))
+  }
+}
+
+struct MapLayerReaderImpl<'a>(MutexGuard<'a, Vec<Box<dyn Layer>>>);
+
+impl MapLayerReader for MapLayerReaderImpl<'_> {
+  fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn Layer>> + '_> {
+    Box::new(self.0.iter_mut())
+  }
+
+  fn get_layer_contents(&self) {
+    // TODO
   }
 }

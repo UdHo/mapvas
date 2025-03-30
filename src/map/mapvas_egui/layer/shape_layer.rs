@@ -1,4 +1,4 @@
-use super::Layer;
+use super::{Layer, LayerProperties};
 use crate::map::{
   coordinates::{BoundingBox, Coordinate, PixelPosition, Transform},
   geometry_collection::{DEFAULT_STYLE, Geometry, Style},
@@ -10,13 +10,18 @@ use egui::{
 };
 use std::{
   collections::HashMap,
-  sync::mpsc::{Receiver, Sender},
+  sync::{
+    Arc,
+    mpsc::{Receiver, Sender},
+  },
 };
 
+/// A layer that draws shapes on the map.
 pub struct ShapeLayer {
   shape_map: HashMap<String, Vec<Geometry<PixelPosition>>>,
-  recv: Receiver<MapEvent>,
+  recv: Arc<Receiver<MapEvent>>,
   send: Sender<MapEvent>,
+  layer_properties: LayerProperties,
 }
 
 impl ShapeLayer {
@@ -26,8 +31,9 @@ impl ShapeLayer {
 
     Self {
       shape_map: HashMap::new(),
-      recv,
+      recv: recv.into(),
       send,
+      layer_properties: LayerProperties::default(),
     }
   }
 
@@ -46,9 +52,16 @@ impl ShapeLayer {
   }
 }
 
+const NAME: &str = "Shape Layer";
+
 impl Layer for ShapeLayer {
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     self.handle_new_shapes();
+
+    if !self.visible() {
+      return;
+    }
+
     for shape in self.shape_map.values().flatten() {
       shape.draw(ui.painter(), transform);
     }
@@ -66,6 +79,18 @@ impl Layer for ShapeLayer {
 
   fn clear(&mut self) {
     self.shape_map.clear();
+  }
+
+  fn name(&self) -> &str {
+    NAME
+  }
+
+  fn visible(&self) -> bool {
+    self.layer_properties.visible
+  }
+
+  fn visible_mut(&mut self) -> &mut bool {
+    &mut self.layer_properties.visible
   }
 }
 

@@ -57,6 +57,7 @@ impl WGS84Coordinate {
   }
 }
 
+/// A helper coordinate format to position tiles.
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct TileCoordinate {
   pub x: f32,
@@ -108,6 +109,7 @@ impl std::ops::Mul<f32> for PixelPosition {
   }
 }
 
+/// A function to create a tile iterator for a given bounding box.
 pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
@@ -205,12 +207,14 @@ pub struct Tile {
 }
 
 impl Tile {
+  /// Checks existence of the tile.
   #[must_use]
   pub fn exists(&self) -> bool {
     let max_tile = 2u32.pow(self.zoom.into()) - 1;
     self.x <= max_tile && self.y <= max_tile
   }
 
+  /// The parent one zoom level lower.
   #[must_use]
   pub fn parent(&self) -> Option<Self> {
     match self.zoom {
