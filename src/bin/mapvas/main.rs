@@ -1,20 +1,7 @@
 use std::sync::Arc;
 
-use egui::{IconData, Widget as _};
-use mapvas::{map::mapvas_egui::Map, remote::spawn_remote_runner};
-
-struct MapApp {
-  map: Map,
-}
-impl eframe::App for MapApp {
-  fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-    egui::CentralPanel::default()
-      .frame(egui::Frame::NONE)
-      .show(ctx, |ui| {
-        (&mut self.map).ui(ui);
-      });
-  }
-}
+use egui::IconData;
+use mapvas::{map::mapvas_egui::Map, mapvas_ui::MapApp, remote::spawn_remote_runner};
 
 fn load_icon() -> Option<Arc<IconData>> {
   Some(Arc::new(
@@ -44,12 +31,12 @@ fn main() -> eframe::Result {
     "mapvas",
     options,
     Box::new(|cc| {
-      // This gives us image support:
+      // Image support
       egui_extras::install_image_loaders(&cc.egui_ctx);
-      let (mapapp, remote) = Map::new(cc.egui_ctx.clone());
-      spawn_remote_runner(rt, remote);
 
-      Ok(Box::new(MapApp { map: mapapp }))
+      let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
+      spawn_remote_runner(rt, remote.clone());
+      Ok(Box::new(MapApp::new(map, remote, data_holder)))
     }),
   )
 }

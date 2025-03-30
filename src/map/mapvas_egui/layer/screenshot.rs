@@ -4,10 +4,11 @@ use egui::{
   Color32, ColorImage, Context, Rect, TextureHandle, TextureOptions, UserData, ViewportCommand,
 };
 
-use crate::map::map_event::MapEvent;
+use crate::map::{map_event::MapEvent, mapvas_egui::helpers::current_time_screenshot_name};
 
-use super::Layer;
+use super::{Layer, LayerProperties};
 
+/// A layer that takes screenshots of the map, saves the image, and displays it on the map.
 pub struct ScreenshotLayer {
   last_screenshot: Option<TextureHandle>,
   last_screenshot_time: std::time::Instant,
@@ -15,6 +16,7 @@ pub struct ScreenshotLayer {
   receiver: std::sync::mpsc::Receiver<MapEvent>,
   ctx: Context,
   screenshot_base_path: PathBuf,
+  layer_properties: LayerProperties,
 }
 
 impl ScreenshotLayer {
@@ -29,6 +31,7 @@ impl ScreenshotLayer {
       screenshot_base_path: std::env::vars()
         .find(|(k, _)| k == "MAPVAS_SCREENSHOT_PATH")
         .map_or_else(|| PathBuf::from("."), |(_, v)| PathBuf::from(v)),
+      layer_properties: LayerProperties::default(),
     }
   }
 
@@ -62,7 +65,7 @@ impl ScreenshotLayer {
                 .data
                 .clone()
                 .and_then(|d| d.downcast_ref::<PathBuf>().cloned())
-                .unwrap_or_else(super::helpers::current_time_screenshot_name),
+                .unwrap_or_else(current_time_screenshot_name),
             ))
           } else {
             None
@@ -102,6 +105,8 @@ impl ScreenshotLayer {
   }
 }
 
+const NAME: &str = "Screenshot Layer";
+
 impl Layer for ScreenshotLayer {
   fn draw(
     &mut self,
@@ -115,6 +120,10 @@ impl Layer for ScreenshotLayer {
       }
     }
     self.handle_screenshots();
+
+    if !self.visible() {
+      return;
+    }
 
     if let Some(texture) = &self.last_screenshot {
       let screenshot_rect = rect
@@ -139,5 +148,17 @@ impl Layer for ScreenshotLayer {
       );
       self.ctx.request_repaint_after_secs(0.2);
     }
+  }
+
+  fn name(&self) -> &str {
+    NAME
+  }
+
+  fn visible(&self) -> bool {
+    self.layer_properties.visible
+  }
+
+  fn visible_mut(&mut self) -> &mut bool {
+    &mut self.layer_properties.visible
   }
 }

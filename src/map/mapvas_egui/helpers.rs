@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 
 use egui::Rect;
-use tracing::instrument;
 
 use crate::map::coordinates::{BoundingBox, PixelPosition, Transform};
 
 pub const MAX_ZOOM: f32 = 524_288.;
 pub const MIN_ZOOM: f32 = 1.;
 
-#[instrument]
+/// Sets a coordinate to the position in the map.
 pub(crate) fn set_coordinate_to_pixel(
   coord: PixelPosition,
   cursor: PixelPosition,
@@ -18,6 +17,7 @@ pub(crate) fn set_coordinate_to_pixel(
   transform.translate(current_pos_in_gui * (-1.) + cursor);
 }
 
+/// Sets reasonable zoom defaults.
 pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
@@ -46,6 +46,7 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   }
 }
 
+/// Shows a given bounding box on the map.
 pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect) {
   if bb.is_valid() {
     let width_zoom: f32 = 1. / (bb.width() * transform.zoom / rect.width());
@@ -56,7 +57,8 @@ pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect) 
   }
 }
 
-pub fn current_time_screenshot_name() -> PathBuf {
+/// Creating screenshot file names.
+pub(crate) fn current_time_screenshot_name() -> PathBuf {
   format!(
     "mapvas_screenshot_{}.png",
     chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")

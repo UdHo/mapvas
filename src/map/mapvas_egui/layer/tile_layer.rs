@@ -8,15 +8,19 @@ use crate::map::{
   tile_loader::{CachedTileLoader, TileLoader},
 };
 
-use super::Layer;
+use super::{Layer, LayerProperties};
 
+/// A layer that loads and displays the map tiles.
 pub struct TileLayer {
   receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
   sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
   tile_loader: Arc<CachedTileLoader>,
   loaded_tiles: HashMap<Tile, egui::TextureHandle>,
   ctx: egui::Context,
+  layer_properties: LayerProperties,
 }
+
+const NAME: &str = "Tile Layer";
 
 impl TileLayer {
   pub fn new(ctx: egui::Context) -> Self {
@@ -28,6 +32,7 @@ impl TileLayer {
       tile_loader,
       loaded_tiles: HashMap::new(),
       ctx,
+      layer_properties: LayerProperties::default(),
     }
   }
 
@@ -97,6 +102,10 @@ impl Layer for TileLayer {
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
     self.collect_new_tile_data(ui);
 
+    if !self.visible() {
+      return;
+    }
+
     let (width, height) = (rect.width(), rect.height());
     let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as u8 + 2;
     let inv = transform.invert();
@@ -128,5 +137,17 @@ impl Layer for TileLayer {
         self.get_tile(tile);
       }
     }
+  }
+
+  fn name(&self) -> &str {
+    NAME
+  }
+
+  fn visible(&self) -> bool {
+    self.layer_properties.visible
+  }
+
+  fn visible_mut(&mut self) -> &mut bool {
+    &mut self.layer_properties.visible
   }
 }
