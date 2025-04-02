@@ -3,7 +3,7 @@ use std::{
   sync::mpsc::{Receiver, Sender},
 };
 
-use curl::CurlCommand;
+use external_cmd::ExternalCommand;
 use log::error;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use crate::map::coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Trans
 
 use super::{Layer, LayerProperties, drawable::Drawable};
 
-mod curl;
+mod external_cmd;
 mod ruler;
 
 pub struct CommandLayer {
@@ -66,23 +66,23 @@ impl CommandLayer {
           if let Ok(s) = s {
             let p = std::path::Path::new(&s);
             p.extension()
-              .is_some_and(|ext| ext.eq_ignore_ascii_case("yaml"))
+              .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
               .then(|| mapvas_dir.clone().join(p))
           } else {
             None
           }
         })
-        .filter_map(Self::file_to_command);
+        .filter_map(|file| Self::file_to_command(&file));
       return Some(Box::new(x));
     }
     None
   }
 
-  fn file_to_command(file: std::path::PathBuf) -> Option<Box<dyn Command>> {
+  fn file_to_command(file: &std::path::PathBuf) -> Option<Box<dyn Command>> {
     let content = std::fs::read_to_string(file);
     if let Ok(content) = content {
-      let command: CurlCommand = serde_yaml::from_str(&content)
-        .inspect_err(|e| error!("Cannot parse command: {e}."))
+      let command: ExternalCommand = serde_json::from_str(&content)
+        .inspect_err(|e| error!("Cannot parse command {file:?}: {e}."))
         .ok()?;
       return Some(Box::new(command));
     }
@@ -194,7 +194,7 @@ pub fn update_closest(
   trans: Transform,
   delta: PixelPosition,
   coords: &mut Vec<&mut PixelCoordinate>,
-) {
+) -> bool {
   let mut closest = None;
   let mut min_dist = f32::MAX;
   for (i, coord) in coords.iter().enumerate() {
@@ -207,11 +207,13 @@ pub fn update_closest(
     }
   }
   if min_dist > 30. {
-    return;
+    return false;
   }
   if let Some(closest) = closest {
     *coords[closest] = trans.invert().apply(pos);
+    return true;
   }
+  false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

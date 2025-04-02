@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Coordinate;
 
 /// The fixed canvas size for ``PixelPosition``s.
-pub const CANVAS_SIZE: f32 = 1000.;
+const CANVAS_SIZE: f32 = 1024. * 2.;
 pub const TILE_SIZE: f32 = 512.;
 
 pub trait XY:
@@ -219,6 +219,11 @@ impl PixelCoordinate {
   #[must_use]
   pub fn invalid() -> Self {
     Self { x: -1., y: -1. }
+  }
+
+  #[must_use]
+  pub fn is_valid(&self) -> bool {
+    self.x >= 0. && self.y >= 0. && self.x <= 2. * CANVAS_SIZE && self.y <= 2. * CANVAS_SIZE
   }
 }
 
