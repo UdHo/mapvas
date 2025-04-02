@@ -41,7 +41,6 @@ flexpolyline = "1.0.0"
 polyline = "0.11.0"
 lazy_static = "1.5.0"
 dirs = "6.0.0"
-serde_yaml = "0.9.34"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}

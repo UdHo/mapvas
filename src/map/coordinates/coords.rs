@@ -220,6 +220,11 @@ impl PixelCoordinate {
   pub fn invalid() -> Self {
     Self { x: -1., y: -1. }
   }
+
+  #[must_use]
+  pub fn is_valid(&self) -> bool {
+    self.x >= 0. && self.y >= 0. && self.x <= 2. * CANVAS_SIZE && self.y <= 2. * CANVAS_SIZE
+  }
 }
 
 impl std::ops::AddAssign for PixelCoordinate {
