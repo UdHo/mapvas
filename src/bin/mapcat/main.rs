@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{FileParser, GrepParser, TTJsonParser};
+use mapvas::parser::{FileParser, GrepParser, JsonParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use tokio::time::sleep;
@@ -80,6 +80,7 @@ async fn main() {
   let parser = || -> Box<dyn FileParser> {
     match args.parser.as_str() {
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
+      "json" => Box::new(JsonParser::new()),
       "grep" => Box::new(
         GrepParser::new(args.invert_coordinates)
           .with_color(color)

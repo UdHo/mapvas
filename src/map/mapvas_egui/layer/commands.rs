@@ -175,6 +175,7 @@ impl Layer for CommandLayer {
       .iter()
       .filter(|command| command.is_visible())
       .map(|command| command.bounding_box())
+      .filter(BoundingBox::is_valid)
       .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
 
     bb.is_valid().then_some(bb)

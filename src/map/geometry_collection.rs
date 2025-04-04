@@ -124,6 +124,15 @@ impl From<Geometry<WGS84Coordinate>> for Geometry<PixelCoordinate> {
 }
 
 impl<C: Coordinate> Geometry<C> {
+  #[must_use]
+  pub fn from_coords(coords: Vec<C>) -> Option<Self> {
+    match coords.len() {
+      0 => None,
+      1 => Some(Geometry::Point(coords[0], Metadata::default())),
+      _ => Some(Geometry::LineString(coords, Metadata::default())),
+    }
+  }
+
   pub fn bounding_box(&self) -> BoundingBox {
     match self {
       Geometry::GeometryCollection(geometries, _) => geometries

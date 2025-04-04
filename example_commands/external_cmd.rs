@@ -247,7 +247,7 @@ impl CurlCfg {
         .recv_string()
         .await
         .inspect_err(|e| error!("Could not fetch data: {e}"));
-      if let Ok(response) = response {
+      if let Ok(response) = dbg!(response) {
         let cursor = std::io::Cursor::new(response.into_bytes());
         let buf_read: Box<dyn BufRead> = Box::new(cursor);
         let parsed = parser.parse(buf_read);

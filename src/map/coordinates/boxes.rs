@@ -131,7 +131,19 @@ impl BoundingBox {
 
   #[must_use]
   pub fn is_valid(&self) -> bool {
-    self.min_y < self.max_y && self.min_x < self.max_x
+    self.min_y <= self.max_y && self.min_x <= self.max_x
+  }
+
+  #[must_use]
+  pub fn is_box(&self) -> bool {
+    self.is_valid() && self.width() > 0. && self.height() > 0.
+  }
+
+  pub fn frame(&mut self, frame: f32) {
+    self.min_x -= frame;
+    self.min_y -= frame;
+    self.max_x += frame;
+    self.max_y += frame;
   }
 
   pub fn add_coordinate(&mut self, pp: PixelCoordinate) {
@@ -142,16 +154,21 @@ impl BoundingBox {
   }
 
   #[must_use]
-  pub fn extend(mut self, bb: &Self) -> Self {
-    self.add_coordinate(PixelCoordinate {
-      x: bb.min_x,
-      y: bb.min_y,
-    });
-    self.add_coordinate(PixelCoordinate {
-      x: bb.max_x,
-      y: bb.max_y,
-    });
-    self
+  pub fn extend(self, bb: &Self) -> Self {
+    if !self.is_valid() {
+      return *bb;
+    }
+
+    if !bb.is_valid() {
+      return self;
+    }
+
+    Self {
+      min_x: self.min_x.min(bb.min_x),
+      min_y: self.min_y.min(bb.min_y),
+      max_x: self.max_x.max(bb.max_x),
+      max_y: self.max_y.max(bb.max_y),
+    }
   }
 
   #[must_use]

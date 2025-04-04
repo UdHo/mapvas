@@ -145,11 +145,14 @@ impl Map {
 
   fn show_bounding_box(&mut self, rect: Rect) {
     let layer_guard = self.layers.try_lock().expect("Failed to lock layers");
-    let bb = layer_guard
+    let mut bb = layer_guard
       .iter()
       .filter_map(|l| l.bounding_box())
       .fold(BoundingBox::get_invalid(), |acc, bb| acc.extend(&bb));
     if bb.is_valid() {
+      if !bb.is_box() {
+        bb.frame(0.02);
+      }
       show_box(&mut self.transform, &bb, rect);
     }
   }

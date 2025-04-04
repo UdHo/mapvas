@@ -144,7 +144,7 @@ impl Parser for TTJsonParser {
     self.data += line;
     None
   }
-  fn finalize(&self) -> Option<MapEvent> {
+  fn finalize(&mut self) -> Option<MapEvent> {
     let routes: Result<JsonResponse, _> = serde_json::from_str(&self.data);
     match routes {
       Err(e) => {

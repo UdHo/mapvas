@@ -1,0 +1,41 @@
+{
+  "cmd": {
+    "Curl": {
+      "name": "TomTom Route",
+      "url_template": "https://api.tomtom.com/routing/1/calculateRoute/{origin}:{via}{destination}/json?key=YOINSCLWKwGM1KdlYm3CJjmfZxPkthVe",
+      "coordinates": [
+        [
+          "origin",
+          {
+            "Coordinate": {
+              "x": 3.4028235e38,
+              "y": 3.4028235e38
+            }
+          }
+        ],
+        [
+          "destination",
+          {
+            "Coordinate": {
+              "x": 3.4028235e38,
+              "y": 3.4028235e38
+            }
+          }
+        ],
+        [
+          "via",
+          {
+            "Coordinates": []
+          }
+        ]
+      ],
+      "parser": {
+        "TTJson": {
+          "color": [0, 100, 0, 255]
+        }
+      },
+      "coordinate_template": "{lat},{lon}",
+      "coordinates_template": "{lat},{lon}:"
+    }
+  }
+}

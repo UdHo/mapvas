@@ -30,6 +30,7 @@ lazy_static! {
   static ref FLEXPOLY_RE: Regex = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
   static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
         .expect("Invalid regex pattern");
+
 }
 
 #[allow(clippy::module_name_repetitions)]
