@@ -1,3 +1,4 @@
+use crate::config::TileProvider;
 use crate::map::coordinates::Tile;
 use anyhow::Result;
 use log::{debug, error, info, trace};
@@ -73,12 +74,31 @@ impl TileLoader for TileCache {
 
 #[derive(Debug)]
 struct TileDownloader {
+  name: String,
   url_template: String,
   tiles_in_download: Arc<Mutex<HashSet<Tile>>>,
   client: surf::Client,
 }
 
 impl TileDownloader {
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn from_url(url: &str, name: String) -> Self {
+    let url_template = url.to_string();
+    let client: surf::Client = Config::new()
+      .set_timeout(Some(Duration::from_secs(5)))
+      .try_into()
+      .expect("client");
+    Self {
+      name,
+      url_template,
+      tiles_in_download: Arc::default(),
+      client: client.with(GovernorMiddleware::per_second(20).unwrap()),
+    }
+  }
+
   pub fn from_env() -> Self {
     let url_template = std::env::var("MAPVAS_TILE_URL").unwrap_or(String::from(
       "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
@@ -88,6 +108,7 @@ impl TileDownloader {
       .try_into()
       .expect("client");
     Self {
+      name: "OSM".to_string(),
       url_template,
       tiles_in_download: Arc::default(),
       client: client.with(GovernorMiddleware::per_second(20).unwrap()),
@@ -152,6 +173,38 @@ pub struct CachedTileLoader {
 }
 
 impl CachedTileLoader {
+  pub fn name(&self) -> &str {
+    self.tile_loader.name()
+  }
+
+  pub fn from_config(config: &crate::config::Config) -> impl Iterator<Item = Self> {
+    config
+      .tile_provider
+      .iter()
+      .map(|url| CachedTileLoader::from_url(url, config.tile_cache_dir.clone()))
+  }
+
+  fn from_url(url: &TileProvider, cache: Option<PathBuf>) -> Self {
+    let tile_loader = TileDownloader::from_url(&url.url, url.name.clone());
+    let cache_path = cache.map(|mut p| {
+      let key_re = Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("re did not compile");
+      let haystack = &tile_loader.url_template;
+      let res = key_re.replace(haystack, "*");
+      let mut hasher = DefaultHasher::new();
+      res.hash(&mut hasher);
+      p.push(hasher.finish().to_string());
+      p
+    });
+
+    let tile_cache = TileCache {
+      base_path: cache_path,
+    };
+    CachedTileLoader {
+      tile_cache,
+      tile_loader,
+    }
+  }
+
   async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
     self.tile_cache.tile_data(tile).await
   }

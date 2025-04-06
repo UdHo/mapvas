@@ -1,3 +1,5 @@
+/// Contains the configuration for the application.
+pub mod config;
 /// Contains the main map logic, including drawing, zooming,...
 pub mod map;
 /// Contains the UI around the map.
