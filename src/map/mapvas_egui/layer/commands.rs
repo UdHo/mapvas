@@ -54,7 +54,7 @@ impl CommandLayer {
   fn from_config() -> Option<impl Iterator<Item = Box<dyn Command>>> {
     let config_dir = dirs::home_dir().map(|d| d.join(".config"));
     if let Some(config_dir) = config_dir {
-      let mapvas_dir = config_dir.join("mapvas").join("curl_commands");
+      let mapvas_dir = config_dir.join("mapvas").join("commands");
       let x = mapvas_dir
         .read_dir()
         .ok()

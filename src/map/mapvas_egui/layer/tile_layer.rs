@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use egui::{Color32, ColorImage, Rect, Ui};
+use egui::{Color32, ColorImage, Rect, Ui, Widget};
 use log::{error, info};
 
 use crate::map::{
@@ -14,7 +14,9 @@ use super::{Layer, LayerProperties};
 pub struct TileLayer {
   receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
   sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
-  tile_loader: Arc<CachedTileLoader>,
+  tile_loader_index: usize,
+  tile_loader_old_index: usize,
+  all_tile_loader: Vec<Arc<CachedTileLoader>>,
   loaded_tiles: HashMap<Tile, egui::TextureHandle>,
   ctx: egui::Context,
   layer_properties: LayerProperties,
@@ -23,15 +25,19 @@ pub struct TileLayer {
 const NAME: &str = "Tile Layer";
 
 impl TileLayer {
-  pub fn new(ctx: egui::Context) -> Self {
+  pub fn from_config(clone: egui::Context, config: &crate::config::Config) -> TileLayer {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let tile_loader = Arc::new(CachedTileLoader::default());
-    Self {
+    let all_tile_loader = CachedTileLoader::from_config(config)
+      .map(Arc::new)
+      .collect();
+    TileLayer {
       receiver,
       sender,
-      tile_loader,
+      tile_loader_index: 0,
+      tile_loader_old_index: 0,
+      all_tile_loader,
       loaded_tiles: HashMap::new(),
-      ctx,
+      ctx: clone,
       layer_properties: LayerProperties::default(),
     }
   }
@@ -51,9 +57,13 @@ impl TileLayer {
     false
   }
 
+  fn tile_loader(&self) -> Arc<CachedTileLoader> {
+    self.all_tile_loader[self.tile_loader_index].clone()
+  }
+
   fn get_tile(&self, tile: Tile) {
     let sender = self.sender.clone();
-    let tile_loader = self.tile_loader.clone();
+    let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
     if !self.loaded_tiles.contains_key(&tile) {
       tokio::spawn(async move {
@@ -101,13 +111,17 @@ impl Layer for TileLayer {
   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
     self.collect_new_tile_data(ui);
+    if self.tile_loader_index != self.tile_loader_old_index {
+      self.loaded_tiles.clear();
+      self.tile_loader_old_index = self.tile_loader_index;
+    }
 
     if !self.visible() {
       return;
     }
 
     let (width, height) = (rect.width(), rect.height());
-    let zoom = (transform.zoom * (width.min(height) / TILE_SIZE)).log2() as u8 + 2;
+    let zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 1;
     let inv = transform.invert();
     let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
     let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
@@ -152,6 +166,20 @@ impl Layer for TileLayer {
   }
 
   fn ui_content(&mut self, ui: &mut Ui) {
-    ui.label("Loading tiles...");
+    egui::ComboBox::from_label("tile source")
+      .selected_text(format!(
+        "{}",
+        self.all_tile_loader[self.tile_loader_index].name()
+      ))
+      .show_ui(ui, |ui| {
+        for (i, tile_loader) in self.all_tile_loader.iter().enumerate() {
+          ui.selectable_value(
+            &mut self.tile_loader_index,
+            i,
+            format!("{}", tile_loader.name()),
+          );
+        }
+      });
+    egui::Label::new(format!("{} tile loaded", self.loaded_tiles.len())).ui(ui);
   }
 }
