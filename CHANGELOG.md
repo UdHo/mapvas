@@ -3,7 +3,7 @@
 ## 0.2.x
 
 - Sidebar
-- Commands: Ruler will measure distance, curl allows to query a GET routing endpoint.
+- Commands: Ruler will measure distance, curl allows to query a GET routing endpoint, arbitrary external commands.
 
 ## 0.2.1
 
