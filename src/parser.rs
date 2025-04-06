@@ -1,4 +1,3 @@
-mod grep;
 use std::{
   fs::File,
   io::{BufRead, BufReader},
@@ -6,9 +5,13 @@ use std::{
   path::{Path, PathBuf},
 };
 
+mod grep;
 pub use grep::GrepParser;
 mod tt_json;
+use serde::{Deserialize, Serialize};
 pub use tt_json::TTJsonParser;
+mod json;
+pub use json::JsonParser;
 
 use crate::map::map_event::MapEvent;
 
@@ -19,8 +22,33 @@ pub trait Parser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent>;
   /// Is called when the complete input has been parsed.
   /// For parses that parse a complete document, e.g. a json parser it returns the result.
-  fn finalize(&self) -> Option<MapEvent> {
+  fn finalize(&mut self) -> Option<MapEvent> {
     None
+  }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Parsers {
+  Grep(GrepParser),
+  TTJson(TTJsonParser),
+  Json(JsonParser),
+}
+
+impl Parser for Parsers {
+  fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    match self {
+      Parsers::Grep(parser) => parser.parse_line(line),
+      Parsers::TTJson(parser) => parser.parse_line(line),
+      Parsers::Json(parser) => parser.parse_line(line),
+    }
+  }
+
+  fn finalize(&mut self) -> Option<MapEvent> {
+    match self {
+      Parsers::Grep(parser) => parser.finalize(),
+      Parsers::TTJson(parser) => parser.finalize(),
+      Parsers::Json(parser) => parser.finalize(),
+    }
   }
 }
 

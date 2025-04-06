@@ -161,4 +161,6 @@ impl Layer for ScreenshotLayer {
   fn visible_mut(&mut self) -> &mut bool {
     &mut self.layer_properties.visible
   }
+
+  fn ui_content(&mut self, _ui: &mut egui::Ui) {}
 }

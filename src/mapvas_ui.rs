@@ -48,8 +48,7 @@ impl eframe::App for MapApp {
           // If dragging, update width
           if response.dragged() {
             self.sidebar.width += response.drag_delta().x;
-            eprint!("Width: {}", self.sidebar.width);
-            self.sidebar.width = self.sidebar.width.clamp(100.0, 400.0); // Min/Max limits
+            self.sidebar.width = self.sidebar.width.clamp(100.0, 600.0); // Min/Max limits
           }
 
           ui.painter()
@@ -76,8 +75,8 @@ struct Sidebar {
 impl Sidebar {
   fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>) -> Self {
     Self {
-      show: false,
-      width: 200.0,
+      show: true,
+      width: 300.0,
       remote,
       map_content,
     }
@@ -89,17 +88,16 @@ impl Sidebar {
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-      ui.collapsing("Layers", |ui| {
-        let mut layer_reader = self.map_content.get_reader();
-        ui.vertical(|ui| {
-          for layer in layer_reader.get_layers() {
-            let name = layer.name().to_owned();
-            ui.collapsing(name, |ui| {
-              ui.checkbox(layer.visible_mut(), "visible");
-            });
-          }
+      egui::CollapsingHeader::new("Layer")
+        .default_open(true)
+        .show(ui, |ui| {
+          let mut layer_reader = self.map_content.get_reader();
+          ui.vertical(|ui| {
+            for layer in layer_reader.get_layers() {
+              layer.ui(ui);
+            }
+          });
         });
-      });
     });
   }
 }

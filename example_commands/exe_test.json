@@ -1,0 +1,44 @@
+{
+  "cmd": {
+    "Exe": {
+      "name": "Echo",
+      "executable": "echo",
+      "args_templates": ["{origin} {via} {destination}"],
+      "coordinates": [
+        [
+          "origin",
+          {
+            "Coordinate": {
+              "x": 3.4028235e38,
+              "y": 3.4028235e38
+            }
+          }
+        ],
+        [
+          "destination",
+          {
+            "Coordinate": {
+              "x": 3.4028235e38,
+              "y": 3.4028235e38
+            }
+          }
+        ],
+        [
+          "via",
+          {
+            "Coordinates": []
+          }
+        ]
+      ],
+      "parser": {
+        "Grep": {
+          "invert_coordinates": false,
+          "color": [0, 100, 0, 255],
+          "fill": "NoFill"
+        }
+      },
+      "coordinate_template": "{lat},{lon}",
+      "coordinates_template": " {lat},{lon} "
+    }
+  }
+}

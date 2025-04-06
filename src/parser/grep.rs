@@ -3,6 +3,7 @@ use std::str::FromStr;
 use egui::Color32;
 use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 
 use super::Parser;
 use crate::map::{
@@ -29,14 +30,16 @@ lazy_static! {
   static ref FLEXPOLY_RE: Regex = Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap();
   static ref GOOGLEPOLY_RE: Regex =  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
         .expect("Invalid regex pattern");
+
 }
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GrepParser {
   invert_coordinates: bool,
   color: Color,
   fill: FillStyle,
+  #[serde(skip, default)]
   label_re: Option<Regex>,
 }
 

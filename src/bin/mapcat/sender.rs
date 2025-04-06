@@ -1,5 +1,5 @@
 use log::debug;
-use mapvas::map::coordinates::PixelPosition;
+use mapvas::map::coordinates::PixelCoordinate;
 use mapvas::map::geometry_collection::Geometry;
 use mapvas::map::map_event::{Layer, MapEvent};
 use mapvas::remote::DEFAULT_PORT;
@@ -83,7 +83,7 @@ impl SenderInner {
   }
 
   async fn compact_and_send(queue: VecDeque<MapEvent>) {
-    let mut layers: BTreeMap<String, Vec<Geometry<PixelPosition>>> = BTreeMap::new();
+    let mut layers: BTreeMap<String, Vec<Geometry<PixelCoordinate>>> = BTreeMap::new();
 
     for event in queue {
       match event {

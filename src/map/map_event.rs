@@ -1,4 +1,4 @@
-use super::{coordinates::PixelPosition, geometry_collection::Geometry};
+use super::{coordinates::PixelCoordinate, geometry_collection::Geometry};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
@@ -75,7 +75,7 @@ impl FromStr for FillStyle {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
   pub id: String,
-  pub geometries: Vec<Geometry<PixelPosition>>,
+  pub geometries: Vec<Geometry<PixelCoordinate>>,
 }
 
 impl Layer {

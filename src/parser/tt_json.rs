@@ -1,6 +1,6 @@
 use egui::Color32;
 use log::error;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::map::{
   coordinates::{Coordinate, WGS84Coordinate},
@@ -10,9 +10,11 @@ use crate::map::{
 
 use super::Parser;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TTJsonParser {
+  #[serde(skip_serializing, default)]
   data: String,
+  #[serde(default)]
   color: Color,
 }
 
@@ -48,7 +50,7 @@ impl TTJsonParser {
             leg
               .points
               .iter()
-              .map(Coordinate::as_pixel_position)
+              .map(Coordinate::as_pixel_coordinate)
               .collect()
           })
           .enumerate()
@@ -77,7 +79,10 @@ impl TTJsonParser {
     boundary: &[WGS84Coordinate],
   ) -> MapEvent {
     let mut geometries = vec![Geometry::Polygon(
-      boundary.iter().map(Coordinate::as_pixel_position).collect(),
+      boundary
+        .iter()
+        .map(Coordinate::as_pixel_coordinate)
+        .collect(),
       Metadata {
         label: Some("Range boundary".into()),
         style: Some(
@@ -89,7 +94,7 @@ impl TTJsonParser {
     )];
     if let Some(c) = center {
       geometries.push(Geometry::Polygon(
-        vec![c.as_pixel_position()],
+        vec![c.as_pixel_coordinate()],
         Metadata {
           label: Some("Range center".into()),
           style: Some(
@@ -139,7 +144,7 @@ impl Parser for TTJsonParser {
     self.data += line;
     None
   }
-  fn finalize(&self) -> Option<MapEvent> {
+  fn finalize(&mut self) -> Option<MapEvent> {
     let routes: Result<JsonResponse, _> = serde_json::from_str(&self.data);
     match routes {
       Err(e) => {

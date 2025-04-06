@@ -6,7 +6,7 @@ use axum::{
 use std::{net::SocketAddr, sync::mpsc::Sender};
 use tower_http::trace::{self, TraceLayer};
 
-use crate::map::map_event::MapEvent;
+use crate::map::{map_event::MapEvent, mapvas_egui::ParameterUpdate};
 
 pub const DEFAULT_PORT: u16 = 12345;
 
@@ -65,6 +65,7 @@ pub struct Remote {
   pub clear: Sender<MapEvent>,
   pub shutdown: Sender<MapEvent>,
   pub screenshot: Sender<MapEvent>,
+  pub command: Sender<ParameterUpdate>,
   /// TODO: keep egui out of here.
   pub update: egui::Context,
 }
