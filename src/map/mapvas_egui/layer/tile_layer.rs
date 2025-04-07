@@ -167,16 +167,17 @@ impl Layer for TileLayer {
 
   fn ui_content(&mut self, ui: &mut Ui) {
     egui::ComboBox::from_label("tile source")
-      .selected_text(format!(
-        "{}",
-        self.all_tile_loader[self.tile_loader_index].name()
-      ))
+      .selected_text(
+        self.all_tile_loader[self.tile_loader_index]
+          .name()
+          .to_string(),
+      )
       .show_ui(ui, |ui| {
         for (i, tile_loader) in self.all_tile_loader.iter().enumerate() {
           ui.selectable_value(
             &mut self.tile_loader_index,
             i,
-            format!("{}", tile_loader.name()),
+            tile_loader.name().to_string(),
           );
         }
       });

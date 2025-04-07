@@ -155,6 +155,7 @@ impl Map {
       if !bb.is_box() {
         bb.frame(0.02);
       }
+
       show_box(&mut self.transform, &bb, rect);
     }
   }

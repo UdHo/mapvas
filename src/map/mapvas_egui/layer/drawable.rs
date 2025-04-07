@@ -4,7 +4,7 @@ use egui::{
 };
 
 use crate::map::{
-  coordinates::{Coordinate, Transform},
+  coordinates::{BoundingBox, Coordinate, Transform},
   geometry_collection::{DEFAULT_STYLE, Geometry, Style},
 };
 
@@ -14,6 +14,9 @@ type Painter = egui::Painter;
 /// transformation.
 pub trait Drawable {
   fn draw(&self, painter: &Painter, transform: &Transform);
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    None
+  }
 }
 
 impl Drawable for egui::Shape {
@@ -68,5 +71,9 @@ impl<C: Coordinate> Drawable for Geometry<C> {
       };
       painter.add(shape);
     }
+  }
+
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    Some(Geometry::bounding_box(self))
   }
 }

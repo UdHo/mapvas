@@ -131,7 +131,12 @@ impl BoundingBox {
 
   #[must_use]
   pub fn is_valid(&self) -> bool {
-    self.min_y <= self.max_y && self.min_x <= self.max_x
+    self.min_y <= self.max_y
+      && self.min_x <= self.max_x
+      && self.min_x.abs() < 2048.
+      && self.min_y.abs() < 2048.
+      && self.max_x.abs() < 2048.
+      && self.max_x.abs() < 2048.
   }
 
   #[must_use]

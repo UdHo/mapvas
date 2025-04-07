@@ -116,12 +116,9 @@ impl Config {
       }
     }
 
-    println!("1");
     if let Some(path) = &self.config_path {
-      println!("1");
       let path = path.join("config.json");
       if !path.exists() {
-        println!("1");
         let config = serde_json::to_string_pretty(self);
         if let Ok(config) = config {
           let _ = std::fs::write(path, config).inspect_err(|e| {

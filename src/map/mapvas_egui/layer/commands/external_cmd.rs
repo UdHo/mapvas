@@ -366,6 +366,14 @@ impl ExternalCommandCommon {
       result: None,
     }
   }
+
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    self
+      .result
+      .as_ref()
+      .map(|r| r.bounding_box())
+      .unwrap_or_default()
+  }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -450,7 +458,10 @@ impl Command for ExternalCommand {
   }
 
   fn bounding_box(&self) -> BoundingBox {
-    self.cmd.bounding_box()
+    self
+      .cmd
+      .bounding_box()
+      .extend(&self.common.bounding_box().unwrap_or_default())
   }
 }
 
@@ -505,7 +516,6 @@ mod tests {
     let cmd = ExternalCommand::new(ExCommand::Curl(curl));
 
     let serialized = serde_json::to_string_pretty(&cmd).unwrap();
-    println!("{serialized}");
     let exp = r#"{
   "cmd": {
     "Curl": {
@@ -589,7 +599,6 @@ mod tests {
     let cmd = ExternalCommand::new(ExCommand::Exe(executable));
 
     let serialized = serde_json::to_string_pretty(&cmd).unwrap();
-    println!("{serialized}");
     let exp = r#"{
   "cmd": {
     "Exe": {
