@@ -41,7 +41,9 @@ pub struct Map {
 impl Map {
   #[must_use]
   pub fn new(ctx: egui::Context) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
-    let tile_layer = layer::TileLayer::new(ctx.clone());
+    let cfg = crate::config::Config::new();
+
+    let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
     let shape_layer = layer::ShapeLayer::new();
     let shape_layer_sender = shape_layer.get_sender();
 
