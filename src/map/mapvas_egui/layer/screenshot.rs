@@ -40,10 +40,11 @@ impl ScreenshotLayer {
   }
 
   fn take_screenshot(&self, path: PathBuf) {
-    let abs_path = path
-      .is_relative()
-      .then(|| self.screenshot_base_path.join(&path))
-      .unwrap_or(path);
+    let abs_path = if path.is_relative() {
+      self.screenshot_base_path.join(&path)
+    } else {
+      path
+    };
     self
       .ctx
       .send_viewport_cmd(ViewportCommand::Screenshot(UserData::new(abs_path)));
@@ -71,7 +72,7 @@ impl ScreenshotLayer {
             None
           }
         })
-        .last()
+        .next_back()
     });
 
     if let Some((image, path)) = image_path {

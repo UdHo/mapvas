@@ -63,13 +63,13 @@ impl Command for Ruler {
         origin,
         Metadata::default().with_style(Style::default().with_color(egui::Color32::GREEN)),
       ));
-    };
+    }
     if let Some(destination) = self.destination {
       geom.push(Geometry::Point(
         destination,
         Metadata::default().with_style(Style::default().with_color(egui::Color32::RED)),
       ));
-    };
+    }
     if let (Some(origin), Some(destination)) = (self.origin, self.destination) {
       let dist = distance_in_meters(origin.as_wgs84(), destination.as_wgs84());
       geom.push(Geometry::LineString(

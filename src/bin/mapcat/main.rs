@@ -58,7 +58,7 @@ fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
         File::open(f).expect("File exists"),
       )));
     }
-  };
+  }
   res
 }
 
