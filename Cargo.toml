@@ -31,7 +31,7 @@ rand = "0.9.1"
 clap = {version ="4.5.37", features=["derive"]}
 arboard = "3.5.0"
 surf-governor = "0.2.0"
-chrono = "0.4.40"
+chrono = "0.4.41"
 egui ={version =  "0.31.1", features = ["serde"]}
 eframe = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
