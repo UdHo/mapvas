@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.98"
-axum = "0.8.3"
+axum = "0.8.4"
 image = "0.25.6"
 itertools = "0.14.0"
 log = "0.4.27"
@@ -20,7 +20,7 @@ rayon = "1.8.0"
 serde = "1.0.219"
 surf = "2.3.2"
 thiserror = "2.0.12"
-tokio = {version = "1.44.2", features = ["full"]}
+tokio = {version = "1.45.0", features = ["full"]}
 tracing-subscriber = {version = "0.3.19", features = ["env-filter"]}
 tower-http = {version = "0.6.2", features = ["trace"]}
 tracing = "0.1.41"
