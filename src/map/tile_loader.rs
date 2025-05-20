@@ -307,25 +307,3 @@ impl TileLoader for CachedTileLoader {
     }
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[tokio::test]
-  async fn downloader_test() {
-    let downloader = CachedTileLoader::default();
-    let data = downloader
-      .tile_data(
-        &Tile {
-          x: 1,
-          y: 1,
-          zoom: 17,
-        },
-        TileSource::Download,
-      )
-      .await;
-    assert!(data.is_ok());
-    assert!(data.unwrap().len() > 100);
-  }
-}

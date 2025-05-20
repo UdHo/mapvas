@@ -126,7 +126,7 @@ impl Layer for TileLayer {
     }
 
     let (width, height) = (rect.width(), rect.height());
-    let zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 1;
+    let zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 2;
     let inv = transform.invert();
     let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
     let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
