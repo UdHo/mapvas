@@ -166,12 +166,12 @@ impl<C: Coordinate> Geometry<C> {
   ) -> impl Iterator<Item = Geometry<C>> + use<'_, C> {
     if let Geometry::GeometryCollection(geometries, metadata) = self {
       let style = base_style.optional_overwrite_with(metadata.style.as_ref());
-      let res = Either::Left(geometries.iter().cloned().flat_map(move |geometry| {
+      
+      Either::Left(geometries.iter().cloned().flat_map(move |geometry| {
         geometry
           .flat_iterate_with_merged_style(&style)
           .collect::<Vec<_>>()
-      }));
-      res
+      }))
     } else {
       let style = base_style.optional_overwrite_with(self.get_style().as_ref());
       Either::Right(std::iter::once(self.clone().with_style(&style)))

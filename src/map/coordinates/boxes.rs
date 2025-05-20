@@ -116,8 +116,8 @@ impl BoundingBox {
   #[must_use]
   pub fn center(&self) -> PixelCoordinate {
     PixelCoordinate {
-      x: (self.max_x + self.min_x) / 2.,
-      y: (self.max_y + self.min_y) / 2.,
+      x: f32::midpoint(self.max_x, self.min_x),
+      y: f32::midpoint(self.max_y, self.min_y),
     }
   }
 

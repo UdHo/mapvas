@@ -82,7 +82,7 @@ impl CommandLayer {
     let content = std::fs::read_to_string(file);
     if let Ok(content) = content {
       let command: ExternalCommand = serde_json::from_str(&content)
-        .inspect_err(|e| error!("Cannot parse command {file:?}: {e}."))
+        .inspect_err(|e| error!("Cannot parse command {}: {e}.", file.display()))
         .ok()?;
       return Some(Box::new(command));
     }
