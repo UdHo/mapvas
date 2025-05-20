@@ -101,7 +101,7 @@ const NAME: &str = "Command Layer";
 trait Command {
   fn update_paramters(&mut self, parameters: ParameterUpdate);
   fn run(&mut self);
-  fn result(&self) -> Option<Rc<dyn Drawable>>;
+  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>>;
   fn is_locked(&self) -> bool;
   fn is_visible(&self) -> bool;
   fn locked(&mut self) -> &mut bool;
@@ -139,8 +139,8 @@ impl Layer for CommandLayer {
     if self.visible() {
       for command in self.commands.iter().filter(|command| command.is_visible()) {
         let drawable = command.result();
-        if let Some(drawable) = drawable {
-          drawable.draw(ui.painter(), transform);
+        for d in drawable {
+          d.draw(ui.painter(), transform);
         }
       }
     }

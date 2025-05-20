@@ -56,7 +56,7 @@ impl Command for Ruler {
 
   fn run(&mut self) {}
 
-  fn result(&self) -> Option<Rc<dyn Drawable>> {
+  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>> {
     let mut geom = vec![];
     if let Some(origin) = self.origin {
       geom.push(Geometry::Point(
@@ -77,10 +77,9 @@ impl Command for Ruler {
         Metadata::default().with_label(format!("Dist: {dist:.2}m")),
       ));
     }
-    Some(Rc::new(Geometry::GeometryCollection(
-      geom,
-      Metadata::default(),
-    )))
+    let drawable: Rc<dyn Drawable> =
+      Rc::new(Geometry::GeometryCollection(geom, Metadata::default()));
+    Box::new(once(drawable))
   }
 
   fn locked(&mut self) -> &mut bool {

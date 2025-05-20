@@ -425,8 +425,29 @@ impl Command for ExternalCommand {
     }
   }
 
-  fn result(&self) -> Option<Rc<dyn Drawable>> {
-    self.common.result.clone()
+  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>> {
+    Box::new(
+      self
+        .common
+        .result
+        .clone()
+        .into_iter()
+        .chain(self.cmd.coordinates().iter().map(|(_, coord)| {
+          let drawable: Rc<dyn Drawable> = match coord {
+            OoMCoordinates::Coordinate(c) => Rc::new(Geometry::Point(*c, Metadata::default())),
+            OoMCoordinates::Coordinates(coords) => Rc::new(Geometry::GeometryCollection(
+              coords
+                .iter()
+                .map(|c| Geometry::Point(*c, Metadata::default()))
+                .collect(),
+              Metadata::default(),
+            )),
+          };
+          drawable
+        }))
+        .collect::<Vec<_>>()
+        .into_iter(),
+    )
   }
 
   fn is_locked(&self) -> bool {
