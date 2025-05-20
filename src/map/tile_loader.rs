@@ -4,7 +4,7 @@ use anyhow::Result;
 use log::{debug, error, info, trace};
 use regex::Regex;
 use std::collections::HashSet;
-use std::fs::File;
+use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
@@ -61,7 +61,7 @@ impl TileLoader for TileCache {
     match self.path(tile) {
       Some(p) => {
         if p.exists() {
-          Ok(std::fs::read(p)?)
+          Ok(fs::read(p)?)
         } else {
           Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
         }
@@ -95,7 +95,7 @@ impl TileDownloader {
       name,
       url_template,
       tiles_in_download: Arc::default(),
-      client: client.with(GovernorMiddleware::per_second(20).unwrap()),
+      client: client.with(GovernorMiddleware::per_second(10).unwrap()),
     }
   }
 
@@ -143,6 +143,7 @@ impl TileLoader for TileDownloader {
       .client
       .send(request)
       .await
+      .inspect_err(|e| error!("Error when downloading tile: {e}"))
       .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile });
     let result = if let Ok(mut result) = result {
       if result.status() == 200 {
@@ -151,6 +152,11 @@ impl TileLoader for TileDownloader {
           .await
           .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile })
       } else {
+        error!(
+          "Error when downloading tile: {}, {:?}",
+          result.status(),
+          result.body_string().await
+        );
         Err(TileLoaderError::TileNotAvailableError { tile: *tile })
       }
     } else {
@@ -196,6 +202,8 @@ impl CachedTileLoader {
       p
     });
 
+    Self::create_cache(cache_path.as_ref());
+
     let tile_cache = TileCache {
       base_path: cache_path,
     };
@@ -205,8 +213,18 @@ impl CachedTileLoader {
     }
   }
 
-  async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
+  pub async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
     self.tile_cache.tile_data(tile).await
+  }
+
+  fn create_cache(cache_path: Option<&PathBuf>) {
+    let Some(cache_path) = cache_path else { return };
+    if cache_path.exists() {
+      return;
+    }
+    let _ = fs::create_dir_all(cache_path).inspect_err(|e| {
+      error!("Failed to create cache directory: {e}");
+    });
   }
 
   async fn download(&self, tile: &Tile) -> Result<TileData> {
@@ -240,12 +258,7 @@ impl Default for CachedTileLoader {
       p
     });
 
-    if let Some(ref cache_path) = cache_path {
-      if !cache_path.exists() {
-        let _ = std::fs::create_dir_all(cache_path);
-      }
-    }
-
+    Self::create_cache(cache_path.as_ref());
     let tile_cache = TileCache {
       base_path: cache_path,
     };
@@ -260,9 +273,12 @@ impl Default for CachedTileLoader {
 impl TileLoader for CachedTileLoader {
   async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
     trace!("Loading tile from file {:?}", &tile);
-    match self.get_from_cache(tile).await {
-      Ok(data) => Ok(data),
-      Err(_) => self.download(tile).await,
+    if let Ok(data) = self.get_from_cache(tile).await {
+      info!("cache_hit: {tile:?}");
+      Ok(data)
+    } else {
+      info!("cache_miss: {tile:?}");
+      self.download(tile).await
     }
   }
 }
