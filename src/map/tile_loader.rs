@@ -1,9 +1,10 @@
 use crate::config::TileProvider;
 use crate::map::coordinates::Tile;
 use anyhow::Result;
-use log::{debug, error, info, trace};
+use log::{debug, error, trace};
 use regex::Regex;
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
@@ -26,10 +27,28 @@ pub enum TileLoaderError {
 /// The png data of a tile.
 pub type TileData = Vec<u8>;
 
+/// Determines if a tile should be downloaded or loaded from the cache.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum TileSource {
+  All,
+  Download,
+  Cache,
+}
+
+impl Display for TileSource {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      TileSource::All => write!(f, "all"),
+      TileSource::Download => write!(f, "download"),
+      TileSource::Cache => write!(f, "cache"),
+    }
+  }
+}
+
 /// The interface the cached and non-cached tile loader.
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
-  async fn tile_data(&self, tile: &Tile) -> Result<TileData>;
+  async fn tile_data(&self, tile: &Tile, source: TileSource) -> Result<TileData>;
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +76,10 @@ impl TileCache {
 }
 
 impl TileLoader for TileCache {
-  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
+  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    if tile_source == TileSource::Download {
+      return Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into());
+    }
     match self.path(tile) {
       Some(p) => {
         if p.exists() {
@@ -111,7 +133,7 @@ impl TileDownloader {
       name: "OSM".to_string(),
       url_template,
       tiles_in_download: Arc::default(),
-      client: client.with(GovernorMiddleware::per_second(20).unwrap()),
+      client: client.with(GovernorMiddleware::per_second(10).unwrap()),
     }
   }
 
@@ -125,10 +147,14 @@ impl TileDownloader {
 }
 
 impl TileLoader for TileDownloader {
-  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
+  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    if tile_source == TileSource::Cache {
+      return Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into());
+    }
+
     {
       let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
-      info!("Tiles in download: {tiles_in_download:?}");
+      debug!("Tiles in download: {tiles_in_download:?}");
       let is_in_progress = tiles_in_download.get(tile);
       if is_in_progress.is_some() {
         return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
@@ -137,7 +163,6 @@ impl TileLoader for TileDownloader {
     }
 
     let url = self.get_path_for_tile(tile);
-    info!("Downloading {url}.");
     let request = Request::new(Method::Get, Url::parse(&url).unwrap());
     let result = self
       .client
@@ -163,7 +188,7 @@ impl TileLoader for TileDownloader {
       debug!("{result:?}");
       Err(TileLoaderError::TileNotAvailableError { tile: *tile })
     };
-    info!("Downloaded {tile:?}.");
+    debug!("Downloaded {tile:?}.");
 
     let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
     tiles_in_download.remove(tile);
@@ -213,8 +238,8 @@ impl CachedTileLoader {
     }
   }
 
-  pub async fn get_from_cache(&self, tile: &Tile) -> Result<TileData> {
-    self.tile_cache.tile_data(tile).await
+  pub async fn get_from_cache(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    self.tile_cache.tile_data(tile, tile_source).await
   }
 
   fn create_cache(cache_path: Option<&PathBuf>) {
@@ -227,8 +252,8 @@ impl CachedTileLoader {
     });
   }
 
-  async fn download(&self, tile: &Tile) -> Result<TileData> {
-    match self.tile_loader.tile_data(tile).await {
+  async fn download(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    match self.tile_loader.tile_data(tile, tile_source).await {
       Ok(data) => {
         self.tile_cache.cache_tile(tile, &data);
         match data.len() {
@@ -271,14 +296,14 @@ impl Default for CachedTileLoader {
 }
 
 impl TileLoader for CachedTileLoader {
-  async fn tile_data(&self, tile: &Tile) -> Result<TileData> {
+  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
     trace!("Loading tile from file {:?}", &tile);
-    if let Ok(data) = self.get_from_cache(tile).await {
-      info!("cache_hit: {tile:?}");
+    if let Ok(data) = self.get_from_cache(tile, tile_source).await {
+      debug!("cache_hit: {tile:?}");
       Ok(data)
     } else {
-      info!("cache_miss: {tile:?}");
-      self.download(tile).await
+      debug!("cache_miss: {tile:?}");
+      self.download(tile, tile_source).await
     }
   }
 }
@@ -291,11 +316,14 @@ mod tests {
   async fn downloader_test() {
     let downloader = CachedTileLoader::default();
     let data = downloader
-      .tile_data(&Tile {
-        x: 1,
-        y: 1,
-        zoom: 17,
-      })
+      .tile_data(
+        &Tile {
+          x: 1,
+          y: 1,
+          zoom: 17,
+        },
+        TileSource::Download,
+      )
       .await;
     assert!(data.is_ok());
     assert!(data.unwrap().len() > 100);

@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use egui::{Color32, ColorImage, Rect, Ui, Widget};
-use log::{error, info};
+use log::{debug, error};
 
 use crate::map::{
   coordinates::{TILE_SIZE, Tile, TileCoordinate, Transform, tiles_in_box},
-  tile_loader::{CachedTileLoader, TileLoader},
+  tile_loader::{CachedTileLoader, TileLoader, TileSource},
 };
 
 use super::{Layer, LayerProperties};
@@ -20,6 +20,7 @@ pub struct TileLayer {
   loaded_tiles: HashMap<Tile, egui::TextureHandle>,
   ctx: egui::Context,
   layer_properties: LayerProperties,
+  tile_source: TileSource,
 }
 
 const NAME: &str = "Tile Layer";
@@ -39,6 +40,7 @@ impl TileLayer {
       loaded_tiles: HashMap::new(),
       ctx: clone,
       layer_properties: LayerProperties::default(),
+      tile_source: TileSource::All,
     }
   }
 
@@ -65,9 +67,10 @@ impl TileLayer {
     let sender = self.sender.clone();
     let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
+    let tile_source = self.tile_source;
     if !self.loaded_tiles.contains_key(&tile) {
       tokio::spawn(async move {
-        let image_data = tile_loader.tile_data(&tile).await;
+        let image_data = tile_loader.tile_data(&tile, tile_source).await;
         if let Ok(image_data) = image_data {
           let img = image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format();
           if img.is_err() {
@@ -98,7 +101,7 @@ impl TileLayer {
 
   fn collect_new_tile_data(&mut self, ui: &Ui) {
     for (tile, egui_image) in self.receiver.try_iter() {
-      info!("Received tile from loader: {tile:?}");
+      debug!("Received tile from loader: {tile:?}");
       let handle = ui.ctx().load_texture(
         format!("{}-{}-{}", tile.zoom, tile.x, tile.y),
         egui_image,
@@ -168,7 +171,7 @@ impl Layer for TileLayer {
   }
 
   fn ui_content(&mut self, ui: &mut Ui) {
-    egui::ComboBox::from_label("tile source")
+    egui::ComboBox::from_label("tile provider")
       .selected_text(
         self.all_tile_loader[self.tile_loader_index]
           .name()
@@ -183,6 +186,14 @@ impl Layer for TileLayer {
           );
         }
       });
+    egui::ComboBox::from_label("tile source")
+      .selected_text(self.tile_source.to_string())
+      .show_ui(ui, |ui| {
+        for s in [TileSource::All, TileSource::Cache, TileSource::Download] {
+          ui.selectable_value(&mut self.tile_source, s, s.to_string());
+        }
+      });
+
     egui::Label::new(format!("{} tile loaded", self.loaded_tiles.len())).ui(ui);
   }
 }
