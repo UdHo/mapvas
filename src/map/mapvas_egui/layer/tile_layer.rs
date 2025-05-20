@@ -84,10 +84,12 @@ impl TileLayer {
           let image_buffer = img.to_rgba8();
           let pixel = image_buffer.as_flat_samples();
           let egui_image = egui::ColorImage::from_rgba_unmultiplied(size, pixel.as_slice());
-          sender.send((tile, egui_image)).unwrap();
-
+          let _ = sender
+            .send((tile, egui_image))
+            .inspect_err(|e| error!("Failed to send tile: {e}"));
           // tokio sleep for 100ms
-          tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+          tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
           ctx.request_repaint();
         }
       });
