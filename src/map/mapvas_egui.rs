@@ -5,9 +5,7 @@ use std::{
 
 use crate::{
   map::coordinates::{Coordinate, PixelCoordinate, Transform},
-  parser::FileParser,
-  parser::GrepParser,
-  parser::Parser,
+  parser::{FileParser, GrepParser, JsonParser, Parser},
   remote::Remote,
 };
 use arboard::Clipboard;
@@ -164,6 +162,14 @@ impl Map {
     let sender = self.remote.layer.clone();
     rayon::spawn(move || {
       if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
+        let mut json = JsonParser::new();
+        let _ = json.parse_line(&text);
+        JsonParser::new().parse_line(&text);
+        if let Some(map_event) = json.finalize() {
+          let _ = sender.send(map_event);
+          return;
+        }
+
         if let Some(map_event) = GrepParser::new(false).parse_line(&text) {
           let _ = sender.send(map_event);
         }

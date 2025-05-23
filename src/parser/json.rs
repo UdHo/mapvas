@@ -23,9 +23,17 @@ impl JsonParser {
     Self::default()
   }
 
+  #[expect(clippy::cast_possible_truncation)]
   fn find_coordinates(&mut self, v: &Value) -> Option<PixelCoordinate> {
     match v {
       Value::Array(vec) => {
+        if vec.len() == 2 {
+          if let (Some(lon), Some(lat)) = (vec[0].as_f64(), vec[1].as_f64()) {
+            return Some(PixelCoordinate::from(WGS84Coordinate::new(
+              lat as f32, lon as f32,
+            )));
+          }
+        }
         let coords = vec
           .iter()
           .filter_map(|v| self.find_coordinates(v))
@@ -123,6 +131,16 @@ mod tests {
     ]
   }
 }"#
+      .to_string();
+    let mut parser = super::JsonParser::default();
+    assert_eq!(parser.parse_line(&data), None);
+    assert!(parser.finalize().is_some());
+  }
+
+  #[test]
+  fn test_geojson_parser() {
+    let data = r#"
+{"type":"LineString","coordinates":[[10.0,53.0],[10.0,54.0],[10.0,53.5],[10.0,50.0]]}"#
       .to_string();
     let mut parser = super::JsonParser::default();
     assert_eq!(parser.parse_line(&data), None);
