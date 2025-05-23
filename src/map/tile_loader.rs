@@ -3,17 +3,16 @@ use crate::map::coordinates::Tile;
 use anyhow::Result;
 use log::{debug, error, trace};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use surf::http::Method;
 use surf::{Config, Request, Url};
-use surf_governor::GovernorMiddleware;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -95,10 +94,82 @@ impl TileLoader for TileCache {
 }
 
 #[derive(Debug)]
+struct DownloadManager<T: Hash + Eq + Clone> {
+  tiles_in_download: Arc<Mutex<HashSet<T>>>,
+  last_failed_attempt: Arc<Mutex<HashMap<T, Instant>>>,
+}
+
+impl<T> Default for DownloadManager<T>
+where
+  T: Hash + Eq + Clone,
+{
+  fn default() -> Self {
+    Self {
+      tiles_in_download: Arc::new(Mutex::new(HashSet::new())),
+      last_failed_attempt: Arc::new(Mutex::new(HashMap::new())),
+    }
+  }
+}
+
+impl<T: Hash + Eq + Clone> DownloadManager<T> {
+  fn download(dm: &Arc<Self>, tile: T) -> Option<DownloadToken<T>> {
+    let mut lock = dm.tiles_in_download.lock().expect("lock");
+
+    if lock.contains(&tile) || lock.len() >= 10 {
+      return None;
+    }
+    lock.insert(tile.clone());
+    drop(lock);
+
+    if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&tile) {
+      let now = Instant::now();
+      if now.duration_since(*ts).as_secs() < 5 {
+        return None;
+      }
+    }
+
+    Some(DownloadToken::new(tile, dm.clone()))
+  }
+}
+
+struct DownloadToken<T: Hash + Eq + Clone> {
+  tile: T,
+  download_manager: Arc<DownloadManager<T>>,
+}
+
+impl<T: Hash + Eq + Clone> DownloadToken<T> {
+  fn new(tile: T, download_manager: Arc<DownloadManager<T>>) -> Self {
+    Self {
+      tile,
+      download_manager,
+    }
+  }
+}
+
+impl<T: Hash + Eq + Clone> Drop for DownloadToken<T> {
+  fn drop(&mut self) {
+    let mut tiles_in_download = self
+      .download_manager
+      .tiles_in_download
+      .lock()
+      .expect("lock");
+    tiles_in_download.remove(&self.tile);
+    self
+      .download_manager
+      .last_failed_attempt
+      .lock()
+      .unwrap()
+      .insert(self.tile.clone(), Instant::now());
+  }
+}
+
+impl<T: Hash + Eq + Clone> DownloadManager<T> {}
+
+#[derive(Debug)]
 struct TileDownloader {
   name: String,
   url_template: String,
-  tiles_in_download: Arc<Mutex<HashSet<Tile>>>,
+  download_manager: Arc<DownloadManager<Tile>>,
   client: surf::Client,
 }
 
@@ -116,8 +187,8 @@ impl TileDownloader {
     Self {
       name,
       url_template,
-      tiles_in_download: Arc::default(),
-      client: client.with(GovernorMiddleware::per_second(10).unwrap()),
+      download_manager: Arc::default(),
+      client,
     }
   }
 
@@ -132,8 +203,8 @@ impl TileDownloader {
     Self {
       name: "OSM".to_string(),
       url_template,
-      tiles_in_download: Arc::default(),
-      client: client.with(GovernorMiddleware::per_second(10).unwrap()),
+      download_manager: Arc::default(),
+      client,
     }
   }
 
@@ -152,14 +223,9 @@ impl TileLoader for TileDownloader {
       return Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into());
     }
 
-    {
-      let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
-      debug!("Tiles in download: {tiles_in_download:?}");
-      let is_in_progress = tiles_in_download.get(tile);
-      if is_in_progress.is_some() {
-        return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
-      }
-      tiles_in_download.insert(*tile);
+    let download_token = DownloadManager::download(&self.download_manager, *tile);
+    if download_token.is_none() {
+      return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
     }
 
     let url = self.get_path_for_tile(tile);
@@ -177,6 +243,12 @@ impl TileLoader for TileDownloader {
           .await
           .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile })
       } else {
+        self
+          .download_manager
+          .last_failed_attempt
+          .lock()
+          .unwrap()
+          .insert(*tile, Instant::now());
         error!(
           "Error when downloading tile: {}, {:?}",
           result.status(),
@@ -189,9 +261,6 @@ impl TileLoader for TileDownloader {
       Err(TileLoaderError::TileNotAvailableError { tile: *tile })
     };
     debug!("Downloaded {tile:?}.");
-
-    let mut tiles_in_download = self.tiles_in_download.lock().unwrap();
-    tiles_in_download.remove(tile);
 
     Ok(result?)
   }
