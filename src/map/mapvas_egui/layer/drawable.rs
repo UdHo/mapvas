@@ -10,6 +10,9 @@ use crate::map::{
 
 type Painter = egui::Painter;
 
+const DEFAULT_STROKE_WIDTH: f32 = 4.0;
+const DEFAULT_POINT_RADIUS: f32 = 4.0;
+
 /// An abstraction for anything that can be drawn on the map that is dependent on coordinates/the
 /// transformation.
 pub trait Drawable {
@@ -39,7 +42,7 @@ impl<C: Coordinate> Drawable for Geometry<C> {
           let color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
           egui::Shape::Circle(CircleShape {
             center: transform.apply(coord.as_pixel_coordinate()).into(),
-            radius: 3.0,
+            radius: DEFAULT_POINT_RADIUS,
             fill: color,
             stroke: Stroke::new(0.0, color),
           })
@@ -53,7 +56,7 @@ impl<C: Coordinate> Drawable for Geometry<C> {
               .collect(),
             closed: false,
             fill: style.fill_color(),
-            stroke: PathStroke::new(2.0, style.color()),
+            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color()),
           })
         }
         Geometry::Polygon(vec, metadata) => {
@@ -65,7 +68,7 @@ impl<C: Coordinate> Drawable for Geometry<C> {
               .collect(),
             closed: true,
             fill: style.fill_color(),
-            stroke: PathStroke::new(2.0, style.color()),
+            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color()),
           })
         }
       };
