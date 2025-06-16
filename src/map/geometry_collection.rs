@@ -166,7 +166,7 @@ impl<C: Coordinate> Geometry<C> {
   ) -> impl Iterator<Item = Geometry<C>> + use<'_, C> {
     if let Geometry::GeometryCollection(geometries, metadata) = self {
       let style = base_style.optional_overwrite_with(metadata.style.as_ref());
-      
+
       Either::Left(geometries.iter().cloned().flat_map(move |geometry| {
         geometry
           .flat_iterate_with_merged_style(&style)
