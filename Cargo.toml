@@ -32,8 +32,8 @@ clap = {version ="4.5.41", features=["derive"]}
 arboard = "3.6.0"
 surf-governor = "0.2.0"
 chrono = "0.4.41"
-egui ={version =  "0.32.0", features = ["serde"]}
-eframe = "0.31.1"
+egui ={version =  "0.32.0", features = ["serde","bytemuck"]}
+eframe = "0.32.0"
 egui_extras = { version = "0.32.0", features = ["all_loaders"] }
 assert_approx_eq = "1.1.0"
 async-std = "1.13.1"

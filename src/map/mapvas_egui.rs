@@ -321,7 +321,7 @@ impl Widget for &mut Map {
               .inspect_err(|e| {
                 log::error!("Failed to send {key}: {e:?}");
               });
-            ui.close_menu();
+            ui.close();
           }
         }
       });
