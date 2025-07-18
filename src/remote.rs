@@ -19,10 +19,6 @@ pub async fn mapvas_remote_handler(
 }
 
 pub fn spawn_remote_runner(runtime: tokio::runtime::Runtime, remote: Remote) {
-  // start tokio on another thread.
-  let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-  let _enter = rt.enter();
-
   std::thread::spawn(move || {
     runtime.block_on(async {
       remote_runner(remote).await;
@@ -35,7 +31,7 @@ async fn healthcheck() {}
 pub async fn remote_runner(remote: Remote) {
   let app = Router::new()
     .route("/", post(mapvas_remote_handler))
-    .route("/healtcheck", get(healthcheck))
+    .route("/healthcheck", get(healthcheck))
     .with_state(remote)
     .layer(DefaultBodyLimit::max(10_000_000_000_000))
     .layer(

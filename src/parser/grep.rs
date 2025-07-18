@@ -16,26 +16,26 @@ static COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new(r"\b(?:)?(darkBlue|blue|darkRed|red|darkGreen|green|darkYellow|yellow|Black|White|darkGrey|dark|Brown)\b")
         .case_insensitive(true)
         .build()
-        .unwrap()
+        .expect("Color regex must compile")
 });
 static FILL_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new(r"(solid|transparent|nofill)")
     .case_insensitive(true)
     .build()
-    .unwrap()
+    .expect("Fill regex must compile")
 });
 static COORD_RE: std::sync::LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").unwrap());
+  LazyLock::new(|| Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").expect("Coordinate regex must compile"));
 static CLEAR_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new("clear")
     .case_insensitive(true)
     .build()
-    .unwrap()
+    .expect("Clear regex must compile")
 });
 static FLEXPOLY_RE: std::sync::LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").unwrap());
+  LazyLock::new(|| Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").expect("Flexpolyline regex must compile"));
 static GOOGLEPOLY_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$").expect("Invalid regex pattern")
+  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$").expect("Google polyline regex must compile")
 });
 
 #[allow(clippy::module_name_repetitions)]
@@ -146,11 +146,9 @@ impl GrepParser {
     self
   }
 
-  /// # Panics
-  /// If the given regex is invalid.
   #[must_use]
   pub fn with_label_pattern(mut self, label_pattern: &str) -> Self {
-    self.label_re = Some(Regex::new(label_pattern).expect("Cannot build label regex."));
+    self.label_re = Some(Regex::new(label_pattern).expect("Label pattern regex must compile"));
     self
   }
 
