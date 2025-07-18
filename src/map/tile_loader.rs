@@ -17,10 +17,16 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TileLoaderError {
-  #[error("Tile not availble.")]
+  #[error("Tile not available.")]
   TileNotAvailableError { tile: Tile },
   #[error("Download already in progress.")]
   TileDownloadInProgressError { tile: Tile },
+  #[error("URL parsing failed: {0}")]
+  UrlParseError(#[from] surf::http::url::ParseError),
+  #[error("Regex compilation failed: {0}")]
+  RegexError(#[from] regex::Error),
+  #[error("I/O error: {0}")]
+  IoError(#[from] std::io::Error),
 }
 
 /// The png data of a tile.
@@ -67,9 +73,12 @@ impl TileCache {
     if self.base_path.is_none() {
       return;
     }
-    let succ = File::create(self.path(tile).unwrap()).map(|mut f| f.write_all(data));
-    if succ.is_err() {
-      debug!("Error when writing file: {}", succ.unwrap_err());
+    if let Some(path) = self.path(tile) {
+      if let Err(e) = File::create(&path).and_then(|mut f| f.write_all(data)) {
+        debug!("Error when writing file to {}: {}", path.display(), e);
+      }
+    } else {
+      debug!("No valid path for caching tile: {:?}", tile);
     }
   }
 }
@@ -82,7 +91,7 @@ impl TileLoader for TileCache {
     match self.path(tile) {
       Some(p) => {
         if p.exists() {
-          Ok(fs::read(p)?)
+          Ok(tokio::fs::read(p).await?)
         } else {
           Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
         }

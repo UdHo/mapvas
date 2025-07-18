@@ -72,17 +72,20 @@ impl TileLayer {
       tokio::spawn(async move {
         let image_data = tile_loader.tile_data(&tile, tile_source).await;
         if let Ok(image_data) = image_data {
-          let img = image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format();
-          if img.is_err() {
-            error!("Failed to load image: {:?}", img.err());
-            return;
-          }
-          let img = img.unwrap().decode();
-          if img.is_err() {
-            error!("Failed to decode image for {tile:?}: {:?}", img.err());
-            return;
-          }
-          let img = img.unwrap();
+          let img_reader = match image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format() {
+            Ok(reader) => reader,
+            Err(e) => {
+              error!("Failed to create image reader for {tile:?}: {e}");
+              return;
+            }
+          };
+          let img = match img_reader.decode() {
+            Ok(image) => image,
+            Err(e) => {
+              error!("Failed to decode image for {tile:?}: {e}");
+              return;
+            }
+          };
           let size = [img.width() as _, img.height() as _];
           let image_buffer = img.to_rgba8();
           let pixel = image_buffer.as_flat_samples();
