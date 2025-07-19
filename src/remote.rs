@@ -82,7 +82,8 @@ impl Remote {
         let _ = self.shutdown.send(MapEvent::Shutdown);
       }
       e @ MapEvent::Screenshot(_) => {
-        let _ = self.screenshot.send(e);
+        // Send screenshot events through the main event channel for proper ordering
+        let _ = self.focus.send(e);
       }
     }
     self.update.request_repaint();

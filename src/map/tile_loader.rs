@@ -18,15 +18,15 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum TileLoaderError {
   #[error("Tile not available.")]
-  TileNotAvailableError { tile: Tile },
+  TileNotAvailable { tile: Tile },
   #[error("Download already in progress.")]
-  TileDownloadInProgressError { tile: Tile },
+  TileDownloadInProgress { tile: Tile },
   #[error("URL parsing failed: {0}")]
-  UrlParseError(#[from] surf::http::url::ParseError),
+  UrlParse(#[from] surf::http::url::ParseError),
   #[error("Regex compilation failed: {0}")]
-  RegexError(#[from] regex::Error),
+  Regex(#[from] regex::Error),
   #[error("I/O error: {0}")]
-  IoError(#[from] std::io::Error),
+  Io(#[from] std::io::Error),
 }
 
 /// The png data of a tile.
@@ -78,7 +78,7 @@ impl TileCache {
         debug!("Error when writing file to {}: {}", path.display(), e);
       }
     } else {
-      debug!("No valid path for caching tile: {:?}", tile);
+      debug!("No valid path for caching tile: {tile:?}");
     }
   }
 }
@@ -86,18 +86,18 @@ impl TileCache {
 impl TileLoader for TileCache {
   async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
     if tile_source == TileSource::Download {
-      return Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into());
+      return Err(TileLoaderError::TileNotAvailable { tile: *tile }.into());
     }
     match self.path(tile) {
       Some(p) => {
         if p.exists() {
           Ok(tokio::fs::read(p).await?)
         } else {
-          Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into())
+          Err(TileLoaderError::TileNotAvailable { tile: *tile }.into())
         }
       }
 
-      None => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
+      None => Err(TileLoaderError::TileNotAvailable { tile: *tile }.into()),
     }
   }
 }
@@ -229,12 +229,12 @@ impl TileDownloader {
 impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
     if tile_source == TileSource::Cache {
-      return Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into());
+      return Err(TileLoaderError::TileNotAvailable { tile: *tile }.into());
     }
 
     let download_token = DownloadManager::download(&self.download_manager, *tile);
     if download_token.is_none() {
-      return Err(TileLoaderError::TileDownloadInProgressError { tile: *tile }.into());
+      return Err(TileLoaderError::TileDownloadInProgress { tile: *tile }.into());
     }
 
     let url = self.get_path_for_tile(tile);
@@ -244,13 +244,13 @@ impl TileLoader for TileDownloader {
       .send(request)
       .await
       .inspect_err(|e| error!("Error when downloading tile: {e}"))
-      .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile });
+      .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile });
     let result = if let Ok(mut result) = result {
       if result.status() == 200 {
         result
           .body_bytes()
           .await
-          .map_err(|_| TileLoaderError::TileNotAvailableError { tile: *tile })
+          .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })
       } else {
         self
           .download_manager
@@ -263,11 +263,11 @@ impl TileLoader for TileDownloader {
           result.status(),
           result.body_string().await
         );
-        Err(TileLoaderError::TileNotAvailableError { tile: *tile })
+        Err(TileLoaderError::TileNotAvailable { tile: *tile })
       }
     } else {
       debug!("{result:?}");
-      Err(TileLoaderError::TileNotAvailableError { tile: *tile })
+      Err(TileLoaderError::TileNotAvailable { tile: *tile })
     };
     debug!("Downloaded {tile:?}.");
 
@@ -335,7 +335,7 @@ impl CachedTileLoader {
       Ok(data) => {
         self.tile_cache.cache_tile(tile, &data);
         match data.len() {
-          0..=100 => Err(TileLoaderError::TileNotAvailableError { tile: *tile }.into()),
+          0..=100 => Err(TileLoaderError::TileNotAvailable { tile: *tile }.into()),
           _ => Ok(data),
         }
       }
