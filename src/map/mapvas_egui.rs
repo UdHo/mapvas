@@ -213,6 +213,13 @@ impl Map {
 
   fn handle_map_events(&mut self, rect: Rect) {
     let events = self.recv.try_iter().collect::<Vec<_>>();
+    
+    // Check if we have a focus event - if so, process all pending layer data first
+    let has_focus_event = events.iter().any(|e| matches!(e, MapEvent::Focus));
+    if has_focus_event {
+      self.process_pending_layer_data();
+    }
+    
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
@@ -222,6 +229,17 @@ impl Map {
     }
     if !events.is_empty() {
       self.ctx.request_repaint();
+    }
+  }
+
+  fn process_pending_layer_data(&mut self) {
+    // Force all layers to process any pending data immediately
+    if let Ok(mut layer_guard) = self.layers.try_lock() {
+      for layer in layer_guard.iter_mut() {
+        // For shape layers, this will process any pending MapEvent::Layer events
+        // For other layers, this is typically a no-op
+        layer.process_pending_events();
+      }
     }
   }
 

@@ -52,6 +52,11 @@ impl ShapeLayer {
 const NAME: &str = "Shape Layer";
 
 impl Layer for ShapeLayer {
+  fn process_pending_events(&mut self) {
+    // Process any pending layer data immediately
+    self.handle_new_shapes();
+  }
+
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     self.handle_new_shapes();
 
