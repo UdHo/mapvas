@@ -24,18 +24,21 @@ static FILL_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
     .build()
     .expect("Fill regex must compile")
 });
-static COORD_RE: std::sync::LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").expect("Coordinate regex must compile"));
+static COORD_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"(-?\d*\.\d*), ?(-?\d*\.\d*)").expect("Coordinate regex must compile")
+});
 static CLEAR_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new("clear")
     .case_insensitive(true)
     .build()
     .expect("Clear regex must compile")
 });
-static FLEXPOLY_RE: std::sync::LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").expect("Flexpolyline regex must compile"));
+static FLEXPOLY_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").expect("Flexpolyline regex must compile")
+});
 static GOOGLEPOLY_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$").expect("Google polyline regex must compile")
+  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
+    .expect("Google polyline regex must compile")
 });
 
 #[allow(clippy::module_name_repetitions)]
