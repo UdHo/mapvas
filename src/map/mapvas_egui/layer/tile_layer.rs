@@ -10,6 +10,13 @@ use crate::map::{
 
 use super::{Layer, LayerProperties};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoordinateDisplayMode {
+  Off,
+  Overlay,
+  GridOnly,
+}
+
 /// A layer that loads and displays the map tiles.
 pub struct TileLayer {
   receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
@@ -21,6 +28,7 @@ pub struct TileLayer {
   ctx: egui::Context,
   layer_properties: LayerProperties,
   tile_source: TileSource,
+  coordinate_display_mode: CoordinateDisplayMode,
 }
 
 const NAME: &str = "Tile Layer";
@@ -41,6 +49,7 @@ impl TileLayer {
       ctx: clone,
       layer_properties: LayerProperties::default(),
       tile_source: TileSource::All,
+      coordinate_display_mode: CoordinateDisplayMode::Off,
     }
   }
 
@@ -48,15 +57,170 @@ impl TileLayer {
     if let Some(image_data) = self.loaded_tiles.get(tile) {
       let (nw, se) = tile.position();
       let (nw, se) = (transform.apply(nw), transform.apply(se));
+      let tile_rect = Rect::from_min_max(nw.into(), se.into());
+      
+      // Apply checkboard tinting if coordinate overlay is enabled
+      let tint_color = if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
+        // Create checkboard tint based on tile coordinates
+        let is_even_tile = (tile.x + tile.y) % 2 == 0;
+        if is_even_tile {
+          Color32::from_rgba_unmultiplied(255, 240, 240, 255) // Light red tint
+        } else {
+          Color32::from_rgba_unmultiplied(240, 240, 255, 255) // Light blue tint
+        }
+      } else {
+        Color32::WHITE // No tint
+      };
+      
+      // Draw the tile image with tinting
       ui.painter_at(rect).image(
         image_data.id(),
-        Rect::from_min_max(nw.into(), se.into()),
+        tile_rect,
         Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        Color32::WHITE,
+        tint_color,
       );
+      
+      // Draw coordinate text overlay if enabled
+      if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
+        self.draw_coordinate_text_overlay(ui, rect, tile, &tile_rect);
+      }
+      
       return true;
     }
     false
+  }
+  
+  fn draw_coordinate_text_overlay(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
+    let painter = ui.painter_at(clip_rect);
+    
+    // Center the text background in the tile
+    let bg_width = 100.0;
+    let bg_height = 60.0;
+    let bg_rect = Rect::from_center_size(
+      tile_rect.center(),
+      egui::vec2(bg_width, bg_height)
+    );
+    
+    // Draw semi-transparent background rectangle for text
+    painter.rect_filled(bg_rect, egui::CornerRadius::same(5), Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+    
+    // Draw coordinate text
+    let font_id = egui::FontId::monospace(11.0);
+    let text_color = Color32::WHITE;
+    
+    let lines = [
+      format!("Z:{}", tile.zoom),
+      format!("X:{}", tile.x),
+      format!("Y:{}", tile.y),
+    ];
+    
+    for (i, line) in lines.iter().enumerate() {
+      let text_pos = bg_rect.min + egui::vec2(8.0, 8.0 + i as f32 * 14.0);
+      painter.text(
+        text_pos,
+        egui::Align2::LEFT_TOP,
+        line,
+        font_id.clone(),
+        text_color,
+      );
+    }
+    
+    // Draw tile border
+    painter.rect_stroke(
+      *tile_rect,
+      egui::CornerRadius::ZERO,
+      egui::Stroke::new(2.0, Color32::from_rgb(100, 100, 100)),
+      egui::epaint::StrokeKind::Outside
+    );
+  }
+  
+  fn draw_coordinate_grid(&self, ui: &mut Ui, clip_rect: Rect, transform: &Transform, min_pos: TileCoordinate, max_pos: TileCoordinate) {
+    use crate::map::coordinates::tiles_in_box;
+    
+    let painter = ui.painter_at(clip_rect);
+    
+    // Note: zoom calculation available if needed for future enhancements
+    // let (width, height) = (clip_rect.width(), clip_rect.height());
+    // let _zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 2;
+    
+    // Iterate through all tile positions in the viewport
+    for tile in tiles_in_box(min_pos, max_pos) {
+      let (nw, se) = tile.position();
+      let (nw, se) = (transform.apply(nw), transform.apply(se));
+      let tile_rect = Rect::from_min_max(nw.into(), se.into());
+      
+      // Skip if tile is not visible in the clip rect
+      if !tile_rect.intersects(clip_rect) {
+        continue;
+      }
+      
+      // In grid-only mode, draw background tinting
+      if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+        let is_even_tile = (tile.x + tile.y) % 2 == 0;
+        let bg_color = if is_even_tile {
+          Color32::from_rgba_unmultiplied(255, 240, 240, 120) // Light red tint
+        } else {
+          Color32::from_rgba_unmultiplied(240, 240, 255, 120) // Light blue tint
+        };
+        painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
+      }
+      
+      // Draw coordinate text and border for all modes
+      self.draw_tile_info(ui, clip_rect, &tile, &tile_rect);
+    }
+  }
+  
+  fn draw_tile_info(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
+    let painter = ui.painter_at(clip_rect);
+    
+    // Center the text background in the tile
+    let bg_width = 100.0;
+    let bg_height = 60.0;
+    let bg_rect = Rect::from_center_size(
+      tile_rect.center(),
+      egui::vec2(bg_width, bg_height)
+    );
+    
+    // Only draw text background if tile is large enough
+    if tile_rect.width() > bg_width && tile_rect.height() > bg_height {
+      // Draw semi-transparent background rectangle for text
+      painter.rect_filled(bg_rect, egui::CornerRadius::same(5), Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+      
+      // Draw coordinate text
+      let font_id = egui::FontId::monospace(11.0);
+      let text_color = Color32::WHITE;
+      
+      let lines = [
+        format!("Z:{}", tile.zoom),
+        format!("X:{}", tile.x),
+        format!("Y:{}", tile.y),
+      ];
+      
+      for (i, line) in lines.iter().enumerate() {
+        let text_pos = bg_rect.min + egui::vec2(8.0, 8.0 + i as f32 * 14.0);
+        painter.text(
+          text_pos,
+          egui::Align2::LEFT_TOP,
+          line,
+          font_id.clone(),
+          text_color,
+        );
+      }
+    }
+    
+    // Draw tile border
+    let border_color = if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+      Color32::from_rgb(80, 80, 80) // Darker border for grid-only mode
+    } else {
+      Color32::from_rgb(100, 100, 100) // Lighter border for overlay mode
+    };
+    
+    painter.rect_stroke(
+      *tile_rect,
+      egui::CornerRadius::ZERO,
+      egui::Stroke::new(1.0, border_color),
+      egui::epaint::StrokeKind::Outside
+    );
   }
 
   fn tile_loader(&self) -> Arc<CachedTileLoader> {
@@ -154,10 +318,18 @@ impl Layer for TileLayer {
     tiles_to_draw.dedup();
     tiles_to_draw.reverse();
 
-    for tile in tiles_to_draw {
-      if !self.draw_tile(ui, rect, &tile, transform) {
-        self.get_tile(tile);
+    // Draw loaded tiles (unless in grid-only mode)
+    if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly {
+      for tile in tiles_to_draw {
+        if !self.draw_tile(ui, rect, &tile, transform) {
+          self.get_tile(tile);
+        }
       }
+    }
+    
+    // Draw coordinate grid for all tile positions if enabled
+    if self.coordinate_display_mode != CoordinateDisplayMode::Off {
+      self.draw_coordinate_grid(ui, rect, transform, min_pos, max_pos);
     }
   }
 
@@ -198,5 +370,15 @@ impl Layer for TileLayer {
       });
 
     egui::Label::new(format!("{} tile loaded", self.loaded_tiles.len())).ui(ui);
+    
+    ui.separator();
+    ui.label("Tile Coordinate Display:");
+    
+    // Create radio buttons for the display modes
+    ui.horizontal(|ui| {
+      ui.radio_value(&mut self.coordinate_display_mode, CoordinateDisplayMode::Off, "Off");
+      ui.radio_value(&mut self.coordinate_display_mode, CoordinateDisplayMode::Overlay, "Overlay");
+      ui.radio_value(&mut self.coordinate_display_mode, CoordinateDisplayMode::GridOnly, "Grid Only");
+    });
   }
 }
