@@ -28,6 +28,9 @@ pub trait Layer {
   fn bounding_box(&self) -> Option<BoundingBox> {
     None
   }
+  /// Process any pending events immediately (e.g., layer data updates)
+  /// This is called before focus operations to ensure data is up-to-date
+  fn process_pending_events(&mut self) {}
   fn ui(&mut self, ui: &mut Ui) {
     ui.collapsing(self.name().to_owned(), |ui| {
       ui.checkbox(self.visible_mut(), "visible");
