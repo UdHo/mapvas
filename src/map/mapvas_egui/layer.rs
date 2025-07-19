@@ -31,6 +31,9 @@ pub trait Layer {
   /// Process any pending events immediately (e.g., layer data updates)
   /// This is called before focus operations to ensure data is up-to-date
   fn process_pending_events(&mut self) {}
+  /// Discard any pending events without processing them
+  /// This is called before clear operations to avoid processing data that will be cleared
+  fn discard_pending_events(&mut self) {}
   fn ui(&mut self, ui: &mut Ui) {
     ui.collapsing(self.name().to_owned(), |ui| {
       ui.checkbox(self.visible_mut(), "visible");

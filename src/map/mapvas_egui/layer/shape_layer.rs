@@ -57,6 +57,13 @@ impl Layer for ShapeLayer {
     self.handle_new_shapes();
   }
 
+  fn discard_pending_events(&mut self) {
+    // Drain and discard any pending events without processing them
+    for _event in self.recv.try_iter() {
+      // Just drain the channel, don't process the events
+    }
+  }
+
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     self.handle_new_shapes();
 

@@ -67,15 +67,16 @@ async fn main() {
 
   env_logger::init();
 
-  // Use a single sender for all operations to ensure proper ordering
-  let sender = sender::MapSender::new().await;
-
-  // Step 1: Clear map if requested
+  // Step 1: Clear map if requested - use separate sender for immediate execution
   if args.reset {
+    let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Clear);
+    sender.finalize().await;
   }
 
-  // Step 2: Parse and send data
+  // Step 2: Parse and send data - use separate sender
+  let sender = sender::MapSender::new().await;
+
   let parser = || -> Box<dyn FileParser> {
     match args.parser.as_str() {
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
@@ -97,19 +98,21 @@ async fn main() {
     let mut parser = parser();
     parser.parse(reader).for_each(|e| sender.send_event(e));
   }
+  sender.finalize().await;
 
-  // Step 3: Focus if requested (after data is queued)
+  // Step 3: Focus if requested - use separate sender after data is sent
   if args.focus {
+    let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Focus);
+    sender.finalize().await;
   }
 
-  // Step 4: Screenshot if requested (after focus is queued)
+  // Step 4: Screenshot if requested - use separate sender after focus
   if !args.screenshot.is_empty() {
+    let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Screenshot(
       std::path::absolute(Path::new(&args.screenshot.trim())).unwrap(),
     ));
+    sender.finalize().await;
   }
-
-  // Step 5: Finalize everything at once - this ensures proper ordering
-  sender.finalize().await;
 }
