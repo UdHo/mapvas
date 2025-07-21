@@ -81,58 +81,6 @@ impl MapApp {
       });
   }
 
-  /// Show the resize handle for the sidebar
-  fn show_resize_handle(&mut self, ui: &mut egui::Ui) {
-    let panel_rect = ui.max_rect();
-
-    // Define a draggable area (8-pixel wide strip for better usability)
-    let drag_rect = egui::Rect::from_min_max(
-      panel_rect.right_top() + egui::vec2(-4.0, 0.0),
-      panel_rect.right_bottom() + egui::vec2(4.0, 0.0),
-    );
-
-    let response = ui.interact(
-      drag_rect,
-      ui.id().with("resize_handle"),
-      egui::Sense::drag(),
-    );
-
-    // Change cursor when hovering
-    if response.hovered() {
-      ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
-
-    // Handle dragging
-    if response.dragged() {
-      self.sidebar.width += response.drag_delta().x;
-      self.sidebar.width = self.sidebar.width.clamp(200.0, 600.0);
-    }
-
-    // Draw resize handle with hover effect
-    let handle_color = if response.hovered() {
-      egui::Color32::from_gray(180)
-    } else {
-      egui::Color32::from_gray(120)
-    };
-    
-    ui.painter().rect_filled(
-      drag_rect,
-      2.0,
-      handle_color,
-    );
-
-    // Draw resize grip pattern
-    let center_y = drag_rect.center().y;
-    for i in 0..3 {
-      #[allow(clippy::cast_precision_loss)]
-      let y = center_y + (i as f32 - 1.0) * 4.0;
-      ui.painter().circle_filled(
-        egui::pos2(drag_rect.center().x, y),
-        1.0,
-        egui::Color32::from_gray(80),
-      );
-    }
-  }
 }
 
 impl eframe::App for MapApp {
@@ -309,12 +257,12 @@ impl Sidebar {
               .rect_filled(close_rect, 4.0, egui::Color32::from_gray(200));
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
           }
-
+          // Draw X symbol with better styling
           let center = close_rect.center();
           let size = 8.0;
           let color = egui::Color32::from_gray(100);
           let stroke_width = 1.5;
-
+          // Draw the X
           ui.painter().line_segment(
             [
               center + egui::vec2(-size / 2.0, -size / 2.0),
@@ -333,7 +281,7 @@ impl Sidebar {
           if close_response.clicked() {
             self.hide();
           }
-
+          // Add tooltip
           if close_response.hovered() {
             close_response.on_hover_text("Hide sidebar (F1 or Ctrl+B)");
           }

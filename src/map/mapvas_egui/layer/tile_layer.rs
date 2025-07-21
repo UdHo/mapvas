@@ -214,7 +214,7 @@ impl TileLayer {
           let _ = sender
             .send((tile, egui_image))
             .inspect_err(|e| error!("Failed to send tile: {e}"));
-
+          // Shorter delay for higher priority tiles
           let delay = match priority {
             TilePriority::Current => 100,
             TilePriority::Adjacent => 200,
@@ -229,16 +229,18 @@ impl TileLayer {
   }
 
   fn preload_tiles(&self, visible_tiles: &[Tile]) {
+    // Generate preload candidates
     let preload_candidates = generate_preload_tiles(visible_tiles);
-
+    
+    // Limit preloading to avoid overwhelming the system
     let max_preload = 20;
     for (tile, priority) in preload_candidates.into_iter().take(max_preload) {
+      // Only preload if not already loaded or loading
       if !self.loaded_tiles.contains_key(&tile) {
         self.get_tile_with_priority(tile, priority);
       }
     }
   }
-
   fn collect_new_tile_data(&mut self, ui: &Ui) {
     for (tile, egui_image) in self.receiver.try_iter() {
       let handle = ui.ctx().load_texture(
@@ -272,14 +274,18 @@ impl Layer for TileLayer {
 
     let visible_tiles: Vec<Tile> = tiles_in_box(min_pos, max_pos).collect();
 
+    // Load current visible tiles with highest priority
     for tile in &visible_tiles {
       if !self.loaded_tiles.contains_key(tile) {
         self.get_tile(*tile);
       }
     }
 
+    // Start preloading adjacent and zoom level tiles
     self.preload_tiles(&visible_tiles);
 
+    // Draw parent tiles if detailed tiles are not available yet. Coarser tiles are drawn first to
+    // have detailed textures visible on top.
     let mut tiles_to_draw = tiles_in_box(min_pos, max_pos)
       .filter_map(|mut tile| {
         while !self.loaded_tiles.contains_key(&tile) {
