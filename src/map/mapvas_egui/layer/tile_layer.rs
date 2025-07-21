@@ -4,7 +4,9 @@ use egui::{Color32, ColorImage, Rect, Ui, Widget};
 use log::{debug, error};
 
 use crate::map::{
-  coordinates::{TILE_SIZE, Tile, TileCoordinate, Transform, tiles_in_box},
+  coordinates::{
+    TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles, tiles_in_box,
+  },
   tile_loader::{CachedTileLoader, TileLoader, TileSource},
 };
 
@@ -193,13 +195,19 @@ impl TileLayer {
   }
 
   fn get_tile(&self, tile: Tile) {
+    self.get_tile_with_priority(tile, TilePriority::Current);
+  }
+
+  fn get_tile_with_priority(&self, tile: Tile, priority: TilePriority) {
     let sender = self.sender.clone();
     let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
     let tile_source = self.tile_source;
     if !self.loaded_tiles.contains_key(&tile) {
       tokio::spawn(async move {
-        let image_data = tile_loader.tile_data(&tile, tile_source).await;
+        let image_data = tile_loader
+          .tile_data_with_priority(&tile, tile_source, priority)
+          .await;
         if let Ok(image_data) = image_data {
           let img_reader =
             match image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format() {
@@ -223,12 +231,32 @@ impl TileLayer {
           let _ = sender
             .send((tile, egui_image))
             .inspect_err(|e| error!("Failed to send tile: {e}"));
-          // tokio sleep for 100ms
-          tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+          // Shorter delay for higher priority tiles
+          let delay = match priority {
+            TilePriority::Current => 100,
+            TilePriority::Adjacent => 200,
+            TilePriority::ZoomLevel => 300,
+          };
+          tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
 
           ctx.request_repaint();
         }
       });
+    }
+  }
+
+  fn preload_tiles(&self, visible_tiles: &[Tile]) {
+    // Generate preload candidates
+    let preload_candidates = generate_preload_tiles(visible_tiles);
+    
+    // Limit preloading to avoid overwhelming the system
+    let max_preload = 20;
+    for (tile, priority) in preload_candidates.into_iter().take(max_preload) {
+      // Only preload if not already loaded or loading
+      if !self.loaded_tiles.contains_key(&tile) {
+        self.get_tile_with_priority(tile, priority);
+      }
     }
   }
 
@@ -264,11 +292,17 @@ impl Layer for TileLayer {
     let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
     let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
 
-    for tile in tiles_in_box(min_pos, max_pos) {
-      if !self.loaded_tiles.contains_key(&tile) {
-        self.get_tile(tile);
+    let visible_tiles: Vec<Tile> = tiles_in_box(min_pos, max_pos).collect();
+
+    // Load current visible tiles with highest priority
+    for tile in &visible_tiles {
+      if !self.loaded_tiles.contains_key(tile) {
+        self.get_tile(*tile);
       }
     }
+
+    // Start preloading adjacent and zoom level tiles
+    self.preload_tiles(&visible_tiles);
 
     // Draw parent tiles if detailed tiles are not available yet. Coarser tiles are drawn first to
     // have detailed textures visible on top.
@@ -335,7 +369,8 @@ impl Layer for TileLayer {
         }
       });
 
-    egui::Label::new(format!("{} tile loaded", self.loaded_tiles.len())).ui(ui);
+    egui::Label::new(format!("{} tiles loaded", self.loaded_tiles.len())).ui(ui);
+
 
     ui.separator();
     ui.label("Tile Coordinate Display:");

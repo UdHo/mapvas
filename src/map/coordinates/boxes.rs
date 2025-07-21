@@ -2,6 +2,17 @@ use serde::{Deserialize, Serialize};
 
 use super::{Coordinate, PixelCoordinate, TileCoordinate};
 
+/// Priority levels for tile loading
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub enum TilePriority {
+  /// Currently visible tiles - highest priority
+  Current = 0,
+  /// Tiles adjacent to current view - medium priority
+  Adjacent = 1,
+  /// Tiles at different zoom levels - lower priority
+  ZoomLevel = 2,
+}
+
 /// A tile in the Web Mercator projection.
 #[derive(Debug, PartialEq, Copy, Clone, Hash, Eq, Serialize, Deserialize)]
 pub struct Tile {
@@ -29,6 +40,72 @@ impl Tile {
         zoom: self.zoom - 1,
       }),
     }
+  }
+
+  /// Get the four child tiles at the next zoom level.
+  #[must_use]
+  pub fn children(&self) -> Vec<Self> {
+    let child_zoom = self.zoom + 1;
+    let base_x = self.x << 1;
+    let base_y = self.y << 1;
+
+    vec![
+      Self {
+        x: base_x,
+        y: base_y,
+        zoom: child_zoom,
+      },
+      Self {
+        x: base_x + 1,
+        y: base_y,
+        zoom: child_zoom,
+      },
+      Self {
+        x: base_x,
+        y: base_y + 1,
+        zoom: child_zoom,
+      },
+      Self {
+        x: base_x + 1,
+        y: base_y + 1,
+        zoom: child_zoom,
+      },
+    ]
+    .into_iter()
+    .filter(Tile::exists)
+    .collect()
+  }
+
+  /// Get surrounding tiles (8 adjacent tiles around this one).
+  #[must_use]
+  #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+  pub fn surrounding_tiles(&self) -> Vec<Self> {
+    let mut tiles = Vec::with_capacity(8);
+
+    for dx in -1_i32..=1_i32 {
+      for dy in -1_i32..=1_i32 {
+        if dx == 0 && dy == 0 {
+          continue; // Skip the center tile (self)
+        }
+
+        let new_x = (self.x as i32).saturating_add(dx);
+        let new_y = (self.y as i32).saturating_add(dy);
+
+        if new_x >= 0 && new_y >= 0 {
+          let tile = Self {
+            x: new_x as u32,
+            y: new_y as u32,
+            zoom: self.zoom,
+          };
+
+          if tile.exists() {
+            tiles.push(tile);
+          }
+        }
+      }
+    }
+
+    tiles
   }
 
   #[must_use]
@@ -81,6 +158,35 @@ pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Ite
       })
     })
     .filter(Tile::exists)
+}
+
+/// Generate preload tiles for a given set of visible tiles.
+#[must_use]
+pub fn generate_preload_tiles(visible_tiles: &[Tile]) -> Vec<(Tile, TilePriority)> {
+  let mut preload_tiles = Vec::new();
+
+  for tile in visible_tiles {
+    // Add surrounding tiles at same zoom level
+    for surrounding in tile.surrounding_tiles() {
+      preload_tiles.push((surrounding, TilePriority::Adjacent));
+    }
+
+    // Add parent tile (one zoom level lower)
+    if let Some(parent) = tile.parent() {
+      preload_tiles.push((parent, TilePriority::ZoomLevel));
+    }
+
+    // Add child tiles (one zoom level higher)
+    for child in tile.children() {
+      preload_tiles.push((child, TilePriority::ZoomLevel));
+    }
+  }
+
+  // Remove duplicates and sort by priority
+  preload_tiles.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.zoom.cmp(&b.0.zoom)));
+  preload_tiles.dedup_by(|a, b| a.0 == b.0);
+
+  preload_tiles
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,5 +350,131 @@ mod tests {
 
     let tiles: Vec<_> = tiles_in_box(nw, se).collect();
     assert_eq!(tiles.len(), 200);
+  }
+
+  #[test]
+  fn test_tile_children() {
+    let tile = Tile {
+      x: 1,
+      y: 1,
+      zoom: 5,
+    };
+    let children = tile.children();
+
+    assert_eq!(children.len(), 4);
+    assert_eq!(
+      children[0],
+      Tile {
+        x: 2,
+        y: 2,
+        zoom: 6
+      }
+    );
+    assert_eq!(
+      children[1],
+      Tile {
+        x: 3,
+        y: 2,
+        zoom: 6
+      }
+    );
+    assert_eq!(
+      children[2],
+      Tile {
+        x: 2,
+        y: 3,
+        zoom: 6
+      }
+    );
+    assert_eq!(
+      children[3],
+      Tile {
+        x: 3,
+        y: 3,
+        zoom: 6
+      }
+    );
+  }
+
+  #[test]
+  fn test_tile_parent() {
+    let tile = Tile {
+      x: 4,
+      y: 6,
+      zoom: 10,
+    };
+    let parent = tile.parent().unwrap();
+
+    assert_eq!(
+      parent,
+      Tile {
+        x: 2,
+        y: 3,
+        zoom: 9
+      }
+    );
+  }
+
+  #[test]
+  fn test_surrounding_tiles() {
+    let tile = Tile {
+      x: 5,
+      y: 5,
+      zoom: 10,
+    };
+    let surrounding = tile.surrounding_tiles();
+
+    assert_eq!(surrounding.len(), 8);
+    // Check some expected surrounding tiles
+    assert!(surrounding.contains(&Tile {
+      x: 4,
+      y: 4,
+      zoom: 10
+    })); // NW
+    assert!(surrounding.contains(&Tile {
+      x: 5,
+      y: 4,
+      zoom: 10
+    })); // N
+    assert!(surrounding.contains(&Tile {
+      x: 6,
+      y: 4,
+      zoom: 10
+    })); // NE
+    assert!(surrounding.contains(&Tile {
+      x: 4,
+      y: 5,
+      zoom: 10
+    })); // W
+    assert!(surrounding.contains(&Tile {
+      x: 6,
+      y: 5,
+      zoom: 10
+    })); // E
+  }
+
+  #[test]
+  fn test_generate_preload_tiles() {
+    let visible_tiles = vec![Tile {
+      x: 5,
+      y: 5,
+      zoom: 10,
+    }];
+
+    let preload = generate_preload_tiles(&visible_tiles);
+
+    // Should have surrounding tiles, parent, and children
+    assert!(!preload.is_empty());
+
+    // Check that we have different priorities
+    let priorities: std::collections::HashSet<_> = preload.iter().map(|(_, p)| *p).collect();
+    assert!(priorities.contains(&TilePriority::Adjacent)); // Surrounding tiles
+    assert!(priorities.contains(&TilePriority::ZoomLevel)); // Parent and children
+  }
+
+  #[test]
+  fn test_tile_priority_ordering() {
+    assert!(TilePriority::Current < TilePriority::Adjacent);
+    assert!(TilePriority::Adjacent < TilePriority::ZoomLevel);
   }
 }

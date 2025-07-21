@@ -52,12 +52,8 @@ impl MapApp {
     } else {
       egui::Color32::from_gray(120)
     };
-    
-    ui.painter().rect_filled(
-      drag_rect,
-      2.0,
-      handle_color,
-    );
+
+    ui.painter().rect_filled(drag_rect, 2.0, handle_color);
 
     // Draw resize grip pattern
     let center_y = drag_rect.center().y;
@@ -82,33 +78,36 @@ impl MapApp {
           [36.0, 36.0],
           egui::Button::new("")
             .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60)))
+            .stroke(egui::Stroke::new(
+              1.0,
+              egui::Color32::from_rgba_unmultiplied(0, 0, 0, 60),
+            )),
         );
 
         // Draw the hamburger menu icon on top of the button
         let center = button_response.rect.center();
         let icon_color = egui::Color32::from_gray(80);
-        
+
         // Draw three horizontal lines to represent sidebar/menu
         let line_width = 16.0;
         let line_height = 2.0;
         let line_spacing = 4.0;
-        
+
         for i in 0..3 {
           #[allow(clippy::cast_precision_loss)]
           let y_offset = (i as f32 - 1.0) * line_spacing;
           let line_rect = egui::Rect::from_center_size(
             egui::pos2(center.x, center.y + y_offset),
-            egui::vec2(line_width, line_height)
+            egui::vec2(line_width, line_height),
           );
           ui.painter().rect_filled(line_rect, 1.0, icon_color);
         }
-        
+
         // Handle click
         if button_response.clicked() {
           self.sidebar.show();
         }
-        
+
         // Set cursor and show tooltip
         if button_response.hovered() {
           ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -122,8 +121,7 @@ impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     // Handle keyboard shortcut for sidebar toggle
     ctx.input(|i| {
-      if i.key_pressed(egui::Key::F1) || 
-         (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
+      if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
         self.sidebar.toggle();
       }
     });
@@ -133,7 +131,7 @@ impl eframe::App for MapApp {
 
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
-    
+
     if effective_width > 1.0 {
       egui::SidePanel::left("sidebar")
         .exact_width(effective_width)
@@ -142,7 +140,7 @@ impl eframe::App for MapApp {
           // Add sidebar content with fade effect
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
-          
+
           self.sidebar.ui(ui);
 
           // Only show resize handle when sidebar is fully visible
@@ -260,37 +258,45 @@ impl Sidebar {
       // Sidebar header with close button
       ui.horizontal(|ui| {
         ui.heading("Layers");
-        
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
           // Custom close button with better styling
           let close_button_size = egui::vec2(24.0, 24.0);
-          let (close_rect, close_response) = ui.allocate_exact_size(close_button_size, egui::Sense::click());
-          
+          let (close_rect, close_response) =
+            ui.allocate_exact_size(close_button_size, egui::Sense::click());
+
           if close_response.hovered() {
-            ui.painter().rect_filled(close_rect, 4.0, egui::Color32::from_gray(200));
+            ui.painter()
+              .rect_filled(close_rect, 4.0, egui::Color32::from_gray(200));
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
           }
-          
+
           // Draw X symbol with better styling
           let center = close_rect.center();
           let size = 8.0;
           let color = egui::Color32::from_gray(100);
           let stroke_width = 1.5;
-          
+
           // Draw the X
           ui.painter().line_segment(
-            [center + egui::vec2(-size/2.0, -size/2.0), center + egui::vec2(size/2.0, size/2.0)],
-            egui::Stroke::new(stroke_width, color)
+            [
+              center + egui::vec2(-size / 2.0, -size / 2.0),
+              center + egui::vec2(size / 2.0, size / 2.0),
+            ],
+            egui::Stroke::new(stroke_width, color),
           );
           ui.painter().line_segment(
-            [center + egui::vec2(-size/2.0, size/2.0), center + egui::vec2(size/2.0, -size/2.0)],
-            egui::Stroke::new(stroke_width, color)
+            [
+              center + egui::vec2(-size / 2.0, size / 2.0),
+              center + egui::vec2(size / 2.0, -size / 2.0),
+            ],
+            egui::Stroke::new(stroke_width, color),
           );
-          
+
           if close_response.clicked() {
             self.hide();
           }
-          
+
           // Add tooltip
           if close_response.hovered() {
             close_response.on_hover_text("Hide sidebar (F1 or Ctrl+B)");
@@ -313,15 +319,6 @@ impl Sidebar {
                   layer.ui(ui);
                 }
               });
-            });
-
-          ui.separator();
-
-          // Additional sidebar content can be added here
-          egui::CollapsingHeader::new("Settings")
-            .default_open(false)
-            .show(ui, |ui| {
-              ui.label("Map settings and controls will appear here");
             });
         });
     });
