@@ -23,19 +23,19 @@ impl MapApp {
   fn show_resize_handle(&mut self, ui: &mut egui::Ui) {
     let panel_rect = ui.max_rect();
 
-    // Define a draggable area (8-pixel wide strip for better usability)
-    let drag_rect = egui::Rect::from_min_max(
-      panel_rect.right_top() + egui::vec2(-4.0, 0.0),
-      panel_rect.right_bottom() + egui::vec2(4.0, 0.0),
+    // Wider interaction area for better UX (12px)
+    let interaction_rect = egui::Rect::from_min_max(
+      panel_rect.right_top() + egui::vec2(-6.0, 0.0),
+      panel_rect.right_bottom() + egui::vec2(6.0, 0.0),
     );
 
     let response = ui.interact(
-      drag_rect,
+      interaction_rect,
       ui.id().with("resize_handle"),
       egui::Sense::drag(),
     );
 
-    // Change cursor when hovering
+    // Change cursor when hovering the interaction area
     if response.hovered() {
       ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
@@ -46,25 +46,43 @@ impl MapApp {
       self.sidebar.width = self.sidebar.width.clamp(200.0, 600.0);
     }
 
-    // Draw resize handle with hover effect
-    let handle_color = if response.hovered() {
-      egui::Color32::from_gray(180)
-    } else {
-      egui::Color32::from_gray(120)
-    };
-
-    ui.painter().rect_filled(drag_rect, 2.0, handle_color);
-
-    // Draw resize grip pattern
-    let center_y = drag_rect.center().y;
-    for i in 0..3 {
-      #[allow(clippy::cast_precision_loss)]
-      let y = center_y + (i as f32 - 1.0) * 4.0;
-      ui.painter().circle_filled(
-        egui::pos2(drag_rect.center().x, y),
-        1.0,
-        egui::Color32::from_gray(80),
+    // Only show visual handle when hovered or being dragged
+    if response.hovered() || response.dragged() {
+      // Thin visual handle (2px wide) centered in the interaction area
+      let visual_rect = egui::Rect::from_min_max(
+        panel_rect.right_top() + egui::vec2(-1.0, 0.0),
+        panel_rect.right_bottom() + egui::vec2(1.0, 0.0),
       );
+
+      // Use theme-aware colors for modern look
+      let handle_color = if response.dragged() {
+        ui.style().visuals.selection.bg_fill // Theme's accent color when dragging
+      } else if response.hovered() {
+        ui.style().visuals.widgets.hovered.bg_fill // Theme's hover color
+      } else {
+        egui::Color32::from_rgba_unmultiplied(128, 128, 128, 100) // Subtle fallback
+      };
+
+      // Draw the handle with subtle rounded corners
+      ui.painter().rect_filled(visual_rect, 1.0, handle_color);
+
+      // Add grip dots only when hovered (not when dragging for cleaner look)
+      if response.hovered() && !response.dragged() {
+        let center_x = visual_rect.center().x;
+        let center_y = visual_rect.center().y;
+        let dot_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);
+        
+        // Three subtle dots
+        for i in 0..3 {
+          #[allow(clippy::cast_precision_loss)]
+          let y = center_y + (i as f32 - 1.0) * 8.0;
+          ui.painter().circle_filled(
+            egui::pos2(center_x, y),
+            1.0,
+            dot_color,
+          );
+        }
+      }
     }
   }
 
@@ -135,7 +153,7 @@ impl eframe::App for MapApp {
     if effective_width > 1.0 {
       egui::SidePanel::left("sidebar")
         .exact_width(effective_width)
-        .resizable(self.sidebar.is_fully_visible())
+        .resizable(false) // Use our custom resize handle instead
         .show(ctx, |ui| {
           // Add sidebar content with fade effect
           let alpha = self.sidebar.get_content_alpha();
