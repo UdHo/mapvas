@@ -2898,6 +2898,7 @@ dependencies = [
  "surf",
  "surf-governor",
  "thiserror 2.0.12",
+ "tiny-skia",
  "tokio",
  "tower-http",
  "tracing",

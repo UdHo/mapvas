@@ -124,6 +124,7 @@ impl MapApp {
     // Draw resize grip pattern
     let center_y = drag_rect.center().y;
     for i in 0..3 {
+      #[allow(clippy::cast_precision_loss)]
       let y = center_y + (i as f32 - 1.0) * 4.0;
       ui.painter().circle_filled(
         egui::pos2(drag_rect.center().x, y),
