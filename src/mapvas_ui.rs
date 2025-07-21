@@ -62,6 +62,7 @@ impl MapApp {
     // Draw resize grip pattern
     let center_y = drag_rect.center().y;
     for i in 0..3 {
+      #[allow(clippy::cast_precision_loss)]
       let y = center_y + (i as f32 - 1.0) * 4.0;
       ui.painter().circle_filled(
         egui::pos2(drag_rect.center().x, y),
@@ -94,6 +95,7 @@ impl MapApp {
         let line_spacing = 4.0;
         
         for i in 0..3 {
+          #[allow(clippy::cast_precision_loss)]
           let y_offset = (i as f32 - 1.0) * line_spacing;
           let line_rect = egui::Rect::from_center_size(
             egui::pos2(center.x, center.y + y_offset),
@@ -214,7 +216,8 @@ impl Sidebar {
 
     // Animation speed (duration in seconds)
     let animation_speed = 4.0; // Complete animation in 0.25 seconds
-    let delta_per_second = animation_speed * dt as f32;
+    #[allow(clippy::cast_possible_truncation)]
+    let delta_per_second = animation_speed * (dt as f32);
 
     if self.target_visible && self.animation_progress < 1.0 {
       self.animation_progress = (self.animation_progress + delta_per_second).min(1.0);
