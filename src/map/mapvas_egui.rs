@@ -213,10 +213,34 @@ impl Map {
 
   fn handle_map_events(&mut self, rect: Rect) {
     let events = self.recv.try_iter().collect::<Vec<_>>();
+
+    // Process Clear events first (they should happen before new data)
+    for event in &events {
+      if matches!(event, MapEvent::Clear) {
+        self.clear();
+      }
+    }
+
+    // Check if we have focus or screenshot events - process pending layer data before these
+    let has_focus_event = events.iter().any(|e| matches!(e, MapEvent::Focus));
+    let has_screenshot_event = events.iter().any(|e| matches!(e, MapEvent::Screenshot(_)));
+
+    if has_focus_event || has_screenshot_event {
+      self.process_pending_layer_data();
+    }
+
+    // Process remaining events (Focus and Screenshot)
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
-        MapEvent::Clear => self.clear(),
+        MapEvent::Screenshot(_) => {
+          // Screenshots are handled by their dedicated layer, but we forward them
+          // here to ensure proper timing after focus events
+          let _ = self.remote.screenshot.send(event.clone());
+        }
+        MapEvent::Clear => {
+          // Already processed above
+        }
         _ => (),
       }
     }
@@ -225,7 +249,26 @@ impl Map {
     }
   }
 
+  fn process_pending_layer_data(&mut self) {
+    // Force all layers to process any pending data immediately
+    if let Ok(mut layer_guard) = self.layers.try_lock() {
+      for layer in layer_guard.iter_mut() {
+        // For shape layers, this will process any pending MapEvent::Layer events
+        // For other layers, this is typically a no-op
+        layer.process_pending_events();
+      }
+    }
+  }
+
   fn clear(&mut self) {
+    // First, discard any pending layer events to prevent them from being processed later
+    if let Ok(mut layer_guard) = self.layers.try_lock() {
+      for layer in layer_guard.iter_mut() {
+        layer.discard_pending_events();
+      }
+    }
+
+    // Then clear the actual layer data
     let mut layer_guard = self.layers.try_lock();
     if let Ok(layers) = layer_guard.as_mut() {
       for layer in layers.iter_mut() {

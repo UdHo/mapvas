@@ -84,7 +84,10 @@ impl SenderInner {
 
   async fn compact_and_send(queue: VecDeque<MapEvent>) {
     let mut layers: BTreeMap<String, Vec<Geometry<PixelCoordinate>>> = BTreeMap::new();
+    let mut non_layer_events = Vec::new();
+    let mut has_layer_events = false;
 
+    // First pass: collect and compact layer events, record non-layer events
     for event in queue {
       match event {
         MapEvent::Layer(Layer { id, mut geometries }) => {
@@ -92,13 +95,32 @@ impl SenderInner {
             .entry(id)
             .and_modify(|e| e.append(&mut geometries))
             .or_insert(geometries);
+          has_layer_events = true;
         }
-        e => Self::send_event(&e).await,
+        e => non_layer_events.push(e),
       }
     }
 
-    for (id, geometries) in layers {
-      Self::send_event(&MapEvent::Layer(Layer { id, geometries })).await;
+    // Send non-layer events first (Clear, etc.)
+    for event in &non_layer_events {
+      // Skip Focus and Screenshot events - they should come after layer data
+      if !matches!(event, MapEvent::Focus | MapEvent::Screenshot(_)) {
+        Self::send_event(event).await;
+      }
+    }
+
+    // Send compacted layer data
+    if has_layer_events {
+      for (id, geometries) in layers {
+        Self::send_event(&MapEvent::Layer(Layer { id, geometries })).await;
+      }
+    }
+
+    // Send Focus and Screenshot events last, after data is processed
+    for event in &non_layer_events {
+      if matches!(event, MapEvent::Focus | MapEvent::Screenshot(_)) {
+        Self::send_event(event).await;
+      }
     }
   }
 

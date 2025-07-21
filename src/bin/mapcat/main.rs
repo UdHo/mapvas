@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::str::FromStr;
-use std::time::Duration;
 
 use clap::Parser as CliParser;
 use log::error;
@@ -8,7 +7,6 @@ use mapvas::map::map_event::{Color, MapEvent};
 use mapvas::parser::{FileParser, GrepParser, JsonParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use tokio::time::sleep;
 
 mod sender;
 
@@ -69,12 +67,14 @@ async fn main() {
 
   env_logger::init();
 
-  let sender = sender::MapSender::new().await;
+  // Step 1: Clear map if requested - use separate sender for immediate execution
   if args.reset {
+    let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Clear);
+    sender.finalize().await;
   }
-  sender.finalize().await;
 
+  // Step 2: Parse and send data - use separate sender
   let sender = sender::MapSender::new().await;
 
   let parser = || -> Box<dyn FileParser> {
@@ -97,18 +97,18 @@ async fn main() {
   for reader in readers {
     let mut parser = parser();
     parser.parse(reader).for_each(|e| sender.send_event(e));
-    // Waiting for all tasks to finish.
   }
   sender.finalize().await;
 
+  // Step 3: Focus if requested - use separate sender after data is sent
   if args.focus {
     let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Focus);
     sender.finalize().await;
   }
 
+  // Step 4: Screenshot if requested - use separate sender after focus
   if !args.screenshot.is_empty() {
-    sleep(Duration::from_millis(300)).await;
     let sender = sender::MapSender::new().await;
     sender.send_event(MapEvent::Screenshot(
       std::path::absolute(Path::new(&args.screenshot.trim())).unwrap(),
