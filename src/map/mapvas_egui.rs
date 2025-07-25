@@ -9,7 +9,7 @@ use crate::{
   remote::Remote,
 };
 use arboard::Clipboard;
-use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
+use egui::{InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
@@ -91,9 +91,9 @@ impl Map {
     )
   }
 
-  fn handle_keys(&mut self, events: impl Iterator<Item = Event>, rect: Rect) {
+  fn handle_keys(&mut self, events: impl Iterator<Item = egui::Event>, rect: Rect) {
     for event in events {
-      if let Event::Key {
+      if let egui::Event::Key {
         key,
         pressed: true,
         modifiers,

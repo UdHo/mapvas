@@ -89,7 +89,12 @@ impl Remote {
         let _ = self.focus.send(e);
       }
     }
-    self.update.request_repaint();
+    // Delay repaint request to avoid deadlock during UI event processing
+    let ctx = self.update.clone();
+    std::thread::spawn(move || {
+      std::thread::sleep(std::time::Duration::from_millis(1));
+      ctx.request_repaint();
+    });
   }
   
   /// Get a sender that properly routes all event types

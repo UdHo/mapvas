@@ -1,9 +1,11 @@
 use super::{SearchManager, SearchResult};
-use crate::map::{
-    map_event::{MapEvent, Layer},
-    geometry_collection::{Geometry, Metadata, Style},
+use crate::{
+    map::{
+        map_event::{MapEvent, Layer},
+        geometry_collection::{Geometry, Metadata, Style},
+    },
+    remote::RoutingSender,
 };
-use crate::remote::RoutingSender;
 use std::sync::{mpsc::{Sender, Receiver, channel}, Arc};
 
 /// UI state for the location search component
@@ -16,18 +18,14 @@ pub struct SearchUI {
     show_results: bool,
     last_search_query: String,
     input_has_focus: bool,
-    // Channel for receiving search results asynchronously
     search_result_receiver: Receiver<Result<Vec<SearchResult>, String>>,
     search_result_sender: Sender<Result<Vec<SearchResult>, String>>,
-    // Track active async tasks to prevent multiple concurrent searches
     active_search_query: Option<String>,
-    // Debouncing for search input
     last_input_time: f64,
-    debounce_delay: f64, // seconds
+    debounce_delay: f64,
 }
 
 impl SearchUI {
-    /// Create a new search UI component
     pub fn new(search_manager: SearchManager) -> Self {
         let (search_result_sender, search_result_receiver) = channel();
         Self {
@@ -100,7 +98,10 @@ impl SearchUI {
                     self.last_input_time = current_time;
                 }
                 let should_search = if enter_pressed {
-                    !self.query.trim().is_empty() && self.query != self.last_search_query
+                    // Only search on Enter if no search result is selected
+                    !self.query.trim().is_empty() 
+                        && self.query != self.last_search_query
+                        && self.selected_index.is_none()
                 } else if !self.query.trim().is_empty() 
                     && self.query != self.last_search_query 
                     && (current_time - self.last_input_time) >= self.debounce_delay {
@@ -137,9 +138,18 @@ impl SearchUI {
                                 self.selected_index
                                     .map_or(self.results.len() - 1, |i| i.saturating_sub(1))
                             );
-                        } else if i.key_pressed(egui::Key::Enter) && self.selected_index.is_some() {
+                        } else if i.key_pressed(egui::Key::Enter) {
+                            log::debug!("Enter pressed in search results, selected_index: {:?}", self.selected_index);
                             if let Some(index) = self.selected_index {
-                                self.select_result(index, map_sender);
+                                if index < self.results.len() {
+                                    log::debug!("Calling select_result for index: {}", index);
+                                    self.select_result(index, map_sender);
+                                    log::debug!("Returned from select_result");
+                                } else {
+                                    log::warn!("Selected index {} out of bounds (results len: {})", index, self.results.len());
+                                }
+                            } else {
+                                log::debug!("No result selected when Enter pressed");
                             }
                         } else if i.key_pressed(egui::Key::Escape) {
                             self.show_results = false;
@@ -239,7 +249,9 @@ impl SearchUI {
     }
     
     fn select_result(&mut self, index: usize, map_sender: &RoutingSender) {
+        log::debug!("select_result called with index: {}, results len: {}", index, self.results.len());
         if let Some(result) = self.results.get(index) {
+            log::debug!("Found result: {} at {:.4}, {:.4}", result.name, result.coordinate.lat, result.coordinate.lon);
             let style = Style::default()
                 .with_color(egui::Color32::RED)
                 .with_fill_color(egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100));
@@ -255,14 +267,18 @@ impl SearchUI {
                 geometries: vec![marker_geometry.into()],
             };
             
-            let _ = map_sender.send(MapEvent::Layer(search_layer));
+            if let Err(e) = map_sender.send(MapEvent::Layer(search_layer)) {
+                log::error!("Failed to send Layer event: {}", e);
+            }
             
             log::info!("Sending FocusOn event for: {:.4}, {:.4}", 
                 result.coordinate.lat, result.coordinate.lon);
-            let _ = map_sender.send(MapEvent::FocusOn {
+            if let Err(e) = map_sender.send(MapEvent::FocusOn {
                 coordinate: result.coordinate,
                 zoom_level: Some(16),
-            });
+            }) {
+                log::error!("Failed to send FocusOn event: {}", e);
+            }
             self.show_results = false;
             self.selected_index = None;
             
