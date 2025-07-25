@@ -3,22 +3,24 @@ use std::rc::Rc;
 use egui::Widget as _;
 
 use crate::{
-  config::Config,
+  config::{Config, TileProvider},
   map::mapvas_egui::{Map, MapLayerHolder},
   remote::Remote,
-  search::{SearchManager, ui::SearchUI},
+  search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
   map: Map,
   sidebar: Sidebar,
+  settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
 }
 
 impl MapApp {
   pub fn new(map: Map, remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config) -> Self {
-    let sidebar = Sidebar::new(remote, map_content, config);
-    Self { map, sidebar }
+    let settings_dialog = std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
+    let sidebar = Sidebar::new(remote, map_content, config, settings_dialog.clone());
+    Self { map, sidebar, settings_dialog }
   }
 
   /// Show the resize handle for the sidebar
@@ -150,6 +152,9 @@ impl eframe::App for MapApp {
     // Update sidebar animation
     self.sidebar.update_animation(ctx);
 
+    // Show settings dialog if open
+    self.settings_dialog.borrow_mut().ui(ctx);
+
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
 
@@ -194,10 +199,11 @@ struct Sidebar {
   remote: Remote,
   map_content: Rc<dyn MapLayerHolder>,
   search_ui: SearchUI,
+  settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
 }
 
 impl Sidebar {
-  fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config) -> Self {
+  fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config, settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>) -> Self {
     let search_manager = if config.search_providers.is_empty() {
       SearchManager::new()
     } else {
@@ -216,6 +222,7 @@ impl Sidebar {
       remote,
       map_content,
       search_ui: SearchUI::new(search_manager),
+      settings_dialog,
     }
   }
 
@@ -288,6 +295,7 @@ impl Sidebar {
   
 
   fn ui(&mut self, ui: &mut egui::Ui) {
+    // Use vertical layout with justified content
     ui.vertical(|ui| {
       // Sidebar header with close button
       ui.horizontal(|ui| {
@@ -340,12 +348,16 @@ impl Sidebar {
 
       ui.separator();
 
-      // Layer content
+      // Layer content (takes most of the space)
+      let available_height = ui.available_height();
+      let settings_button_height = 32.0; // Approximate button height + padding
+      
       egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
+        .max_height(available_height - settings_button_height)
         .show(ui, |ui| {
           // Add search functionality
-          egui::CollapsingHeader::new("🔍 Location Search")
+          egui::CollapsingHeader::new("🔍Location Search")
             .default_open(true)
             .show(ui, |ui| {
               self.search_ui.ui(ui, &self.remote.sender());
@@ -363,5 +375,402 @@ impl Sidebar {
             });
         });
     });
+    
+    // Add settings button at the very bottom, outside the main vertical layout
+    ui.separator();
+    if ui.button("Settings").clicked() {
+      self.settings_dialog.borrow_mut().open();
+    }
+  }
+}
+
+#[derive(Clone)]
+struct SettingsDialog {
+  open: bool,
+  config: Config,
+  tile_providers: Vec<TileProvider>,
+  selected_tab: SettingsTab,
+  new_provider_name: String,
+  new_provider_url: String,
+  cache_directory: String,
+  screenshot_path: String,
+  settings_changed: bool,
+  search_providers: Vec<SearchProviderConfig>,
+  new_search_provider_name: String,
+  new_search_provider_url: String,
+  new_search_provider_headers: String,
+  nominatim_base_url: String,
+}
+
+#[derive(Clone, PartialEq)]
+enum SettingsTab {
+  TileProviders,
+  SearchProviders,
+  General,
+}
+
+impl SettingsDialog {
+  fn new(config: Config) -> Self {
+    let cache_directory = config.tile_cache_dir
+      .as_ref().map_or_else(|| "Default".to_string(), |p| p.display().to_string());
+      
+    let screenshot_path = std::env::var("MAPVAS_SCREENSHOT_PATH")
+      .unwrap_or_else(|_| "Desktop".to_string());
+    
+    Self {
+      open: false,
+      tile_providers: config.tile_provider.clone(),
+      search_providers: config.search_providers.clone(),
+      config,
+      selected_tab: SettingsTab::General,
+      new_provider_name: String::new(),
+      new_provider_url: String::new(),
+      cache_directory,
+      screenshot_path,
+      settings_changed: false,
+      new_search_provider_name: String::new(),
+      new_search_provider_url: String::new(),
+      new_search_provider_headers: String::new(),
+      nominatim_base_url: String::new(),
+    }
+  }
+
+  fn open(&mut self) {
+    self.open = true;
+  }
+
+  fn ui(&mut self, ctx: &egui::Context) {
+    if !self.open {
+      return;
+    }
+
+    let mut open = self.open;
+    egui::Window::new("Settings")
+      .collapsible(false)
+      .resizable(true)
+      .default_size([600.0, 400.0])
+      .open(&mut open)
+      .show(ctx, |ui| {
+        ui.horizontal(|ui| {
+          // Tab buttons
+          ui.selectable_value(&mut self.selected_tab, SettingsTab::General, "General");
+          ui.selectable_value(&mut self.selected_tab, SettingsTab::TileProviders, "Tile Providers");
+          ui.selectable_value(&mut self.selected_tab, SettingsTab::SearchProviders, "Search Providers");
+        });
+        
+        ui.separator();
+        
+        egui::ScrollArea::vertical()
+          .auto_shrink([false; 2])
+          .show(ui, |ui| {
+            match self.selected_tab {
+              SettingsTab::General => self.general_settings_ui(ui),
+              SettingsTab::TileProviders => self.tile_providers_ui(ui),
+              SettingsTab::SearchProviders => self.search_providers_ui(ui),
+            }
+          });
+      });
+    self.open = open;
+  }
+
+  fn general_settings_ui(&mut self, ui: &mut egui::Ui) {
+    ui.heading("General Settings");
+    ui.separator();
+    
+    ui.group(|ui| {
+      ui.label("Cache Settings:");
+      ui.horizontal(|ui| {
+        ui.label("Tile cache directory:");
+        if ui.text_edit_singleline(&mut self.cache_directory).changed() {
+          self.settings_changed = true;
+        }
+      });
+      ui.small("Leave as 'Default' to use the default cache location");
+    });
+    
+    ui.group(|ui| {
+      ui.label("Screenshot Settings:");
+      ui.horizontal(|ui| {
+        ui.label("Default screenshot path:");
+        if ui.text_edit_singleline(&mut self.screenshot_path).changed() {
+          self.settings_changed = true;
+        }
+      });
+      ui.small("Path where screenshots will be saved (use 'Desktop' for default)");
+    });
+    
+    ui.group(|ui| {
+      ui.label("Config Location:");
+      if let Some(config_path) = &self.config.config_path {
+        ui.label(format!("Config directory: {}", config_path.display()));
+      } else {
+        ui.label("Config directory: Using default");
+      }
+      ui.small("Config file location (read-only)");
+    });
+    
+    ui.separator();
+    
+    // Save button
+    ui.horizontal(|ui| {
+      if self.settings_changed {
+        if ui.button("Save Settings").clicked() {
+          self.save_settings();
+        }
+        ui.label("Settings have been modified");
+      } else {
+        ui.label("No changes to save");
+      }
+    });
+  }
+
+  fn tile_providers_ui(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Tile Providers");
+    ui.separator();
+    
+    ui.label("Configure tile servers for map rendering:");
+    
+    // List existing providers
+    ui.group(|ui| {
+      ui.label("Current Providers:");
+      let mut to_remove = None;
+      for (i, provider) in self.tile_providers.iter().enumerate() {
+        ui.horizontal(|ui| {
+          ui.label(&provider.name);
+          ui.label("-");
+          ui.small(&provider.url);
+          if ui.small_button("🗑").clicked() && self.tile_providers.len() > 1 {
+            to_remove = Some(i);
+          }
+        });
+      }
+      if let Some(i) = to_remove {
+        self.tile_providers.remove(i);
+        self.settings_changed = true;
+      }
+    });
+    
+    ui.separator();
+    
+    // Add new provider
+    ui.group(|ui| {
+      ui.label("Add New Provider:");
+      ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut self.new_provider_name);
+      });
+      ui.horizontal(|ui| {
+        ui.label("URL:");
+        ui.text_edit_singleline(&mut self.new_provider_url);
+      });
+      ui.small("Use {x}, {y}, {zoom} as placeholders (e.g., https://tile.openstreetmap.org/{zoom}/{x}/{y}.png)");
+      
+      if ui.button("Add Provider").clicked() && !self.new_provider_name.is_empty() && !self.new_provider_url.is_empty() {
+        self.tile_providers.push(TileProvider {
+          name: self.new_provider_name.clone(),
+          url: self.new_provider_url.clone(),
+        });
+        self.new_provider_name.clear();
+        self.new_provider_url.clear();
+        self.settings_changed = true;
+      }
+    });
+    
+    ui.separator();
+    
+    // Save button for tile providers
+    ui.horizontal(|ui| {
+      if self.settings_changed {
+        if ui.button("Save Tile Providers").clicked() {
+          self.save_settings();
+        }
+        ui.label("Tile provider changes need to be saved");
+      }
+    });
+  }
+
+  #[allow(clippy::too_many_lines)]
+  fn search_providers_ui(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Search Providers");
+    ui.separator();
+    
+    ui.label("Configure location search services:");
+    
+    // List current providers with ability to remove
+    ui.group(|ui| {
+      ui.label("Current Providers:");
+      let mut to_remove = None;
+      for (i, provider) in self.search_providers.iter().enumerate() {
+        ui.horizontal(|ui| {
+          match provider {
+            SearchProviderConfig::Coordinate => {
+              ui.label("🧭 Coordinate Parser");
+              ui.label("(built-in - parses lat/lng from text)");
+            }
+            SearchProviderConfig::Nominatim { base_url } => {
+              ui.label("🌍 Nominatim");
+              if let Some(url) = base_url {
+                ui.small(url);
+              } else {
+                ui.small("(default OpenStreetMap geocoding)");
+              }
+              // Don't allow removing if it's the only non-coordinate provider
+              if self.search_providers.len() > 2
+                && ui.small_button("🗑").clicked() {
+                  to_remove = Some(i);
+                }
+            }
+            SearchProviderConfig::Custom { name, url_template, .. } => {
+              ui.label(format!("🔧 {name}"));
+              ui.small(url_template);
+              if ui.small_button("🗑").clicked() {
+                to_remove = Some(i);
+              }
+            }
+          }
+        });
+      }
+      if let Some(i) = to_remove {
+        self.search_providers.remove(i);
+        self.settings_changed = true;
+      }
+    });
+    
+    ui.separator();
+    
+    // Nominatim configuration
+    ui.group(|ui| {
+      ui.label("Nominatim Configuration:");
+      ui.horizontal(|ui| {
+        ui.label("Custom base URL (optional):");
+        if ui.text_edit_singleline(&mut self.nominatim_base_url).changed() {
+          self.settings_changed = true;
+        }
+      });
+      ui.small("Leave empty for default OpenStreetMap Nominatim");
+      
+      if ui.button("Update Nominatim").clicked() {
+        // Update existing Nominatim provider or add new one
+        let base_url = if self.nominatim_base_url.trim().is_empty() {
+          None
+        } else {
+          Some(self.nominatim_base_url.trim().to_string())
+        };
+        
+        // Find and update existing Nominatim provider
+        let mut found = false;
+        for provider in &mut self.search_providers {
+          if matches!(provider, SearchProviderConfig::Nominatim { .. }) {
+            *provider = SearchProviderConfig::Nominatim { base_url: base_url.clone() };
+            found = true;
+            break;
+          }
+        }
+        
+        // If no Nominatim provider exists, add one
+        if !found {
+          self.search_providers.push(SearchProviderConfig::Nominatim { base_url });
+        }
+        
+        self.settings_changed = true;
+      }
+    });
+    
+    ui.separator();
+    
+    // Add custom provider
+    ui.group(|ui| {
+      ui.label("Add Custom Search Provider:");
+      ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut self.new_search_provider_name);
+      });
+      ui.horizontal(|ui| {
+        ui.label("URL Template:");
+        ui.text_edit_singleline(&mut self.new_search_provider_url);
+      });
+      ui.horizontal(|ui| {
+        ui.label("Headers (JSON, optional):");
+        ui.text_edit_singleline(&mut self.new_search_provider_headers);
+      });
+      ui.small("URL should use {query} placeholder (e.g., https://api.example.com/search?q={query})");
+      ui.small("Headers example: {\"Authorization\": \"Bearer YOUR_API_KEY\"}");
+      
+      if ui.button("Add Custom Provider").clicked() 
+        && !self.new_search_provider_name.is_empty() 
+        && !self.new_search_provider_url.is_empty() {
+        
+        // Parse headers if provided
+        let headers = if self.new_search_provider_headers.trim().is_empty() {
+          None
+        } else if let Ok(h) = serde_json::from_str(&self.new_search_provider_headers) { Some(h) } else {
+          log::warn!("Invalid JSON headers, ignoring");
+          None
+        };
+        
+        self.search_providers.push(SearchProviderConfig::Custom {
+          name: self.new_search_provider_name.clone(),
+          url_template: self.new_search_provider_url.clone(),
+          headers,
+        });
+        
+        self.new_search_provider_name.clear();
+        self.new_search_provider_url.clear();
+        self.new_search_provider_headers.clear();
+        self.settings_changed = true;
+      }
+    });
+    
+    ui.separator();
+    
+    // Save button for search providers
+    ui.horizontal(|ui| {
+      if self.settings_changed {
+        if ui.button("Save Search Providers").clicked() {
+          self.save_settings();
+        }
+        ui.label("Search provider changes need to be saved");
+      }
+    });
+  }
+  
+  fn save_settings(&mut self) {
+    use std::path::PathBuf;
+    
+    // Update config with current settings
+    self.config.tile_provider = self.tile_providers.clone();
+    self.config.search_providers = self.search_providers.clone();
+    
+    // Update cache directory if changed
+    if self.cache_directory != "Default" {
+      self.config.tile_cache_dir = Some(PathBuf::from(&self.cache_directory));
+    }
+    
+    // Note: Screenshot path is handled by the application at runtime
+    // We'll store it in the config for future reference
+    if self.screenshot_path != "Desktop" {
+      // In a real application, you'd want to handle screenshot path differently
+      log::info!("Screenshot path set to: {}", self.screenshot_path);
+    }
+    
+    // Save to config file
+    if let Some(config_path) = &self.config.config_path {
+      let config_file = config_path.join("config.json");
+      match serde_json::to_string_pretty(&self.config) {
+        Ok(config_json) => {
+          if let Err(e) = std::fs::write(&config_file, config_json) {
+            log::error!("Failed to save config file: {e}");
+          } else {
+            log::info!("Settings saved to {}", config_file.display());
+            self.settings_changed = false;
+          }
+        }
+        Err(e) => {
+          log::error!("Failed to serialize config: {e}");
+        }
+      }
+    } else {
+      log::warn!("No config path available, settings not saved");
+    }
   }
 }
