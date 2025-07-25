@@ -3,8 +3,10 @@ use std::rc::Rc;
 use egui::Widget as _;
 
 use crate::{
+  config::Config,
   map::mapvas_egui::{Map, MapLayerHolder},
   remote::Remote,
+  search::{SearchManager, ui::SearchUI},
 };
 
 /// Holds the UI data of mapvas.
@@ -14,8 +16,8 @@ pub struct MapApp {
 }
 
 impl MapApp {
-  pub fn new(map: Map, remote: Remote, map_content: Rc<dyn MapLayerHolder>) -> Self {
-    let sidebar = Sidebar::new(remote, map_content);
+  pub fn new(map: Map, remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config) -> Self {
+    let sidebar = Sidebar::new(remote, map_content, config);
     Self { map, sidebar }
   }
 
@@ -143,6 +145,7 @@ impl eframe::App for MapApp {
         self.sidebar.toggle();
       }
     });
+    
 
     // Update sidebar animation
     self.sidebar.update_animation(ctx);
@@ -190,10 +193,20 @@ struct Sidebar {
   #[allow(dead_code)]
   remote: Remote,
   map_content: Rc<dyn MapLayerHolder>,
+  search_ui: SearchUI,
 }
 
 impl Sidebar {
-  fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>) -> Self {
+  fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config) -> Self {
+    let search_manager = if config.search_providers.is_empty() {
+      SearchManager::new()
+    } else {
+      SearchManager::with_config(config.search_providers).unwrap_or_else(|e| {
+        log::warn!("Failed to create search manager with config: {}, using default", e);
+        SearchManager::new()
+      })
+    };
+    
     Self {
       visible: true,
       target_visible: true,
@@ -202,6 +215,7 @@ impl Sidebar {
       last_frame_time: 0.0,
       remote,
       map_content,
+      search_ui: SearchUI::new(search_manager),
     }
   }
 
@@ -270,6 +284,8 @@ impl Sidebar {
     let t = t - 1.0;
     t * t * t + 1.0
   }
+  
+  
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
@@ -328,6 +344,13 @@ impl Sidebar {
       egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
+          // Add search functionality
+          egui::CollapsingHeader::new("🔍 Location Search")
+            .default_open(true)
+            .show(ui, |ui| {
+              self.search_ui.ui(ui, &self.remote.sender());
+            });
+            
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
             .show(ui, |ui| {

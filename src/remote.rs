@@ -75,6 +75,9 @@ impl Remote {
       MapEvent::Focus => {
         let _ = self.focus.send(MapEvent::Focus);
       }
+      f @ MapEvent::FocusOn { .. } => {
+        let _ = self.focus.send(f);
+      }
       MapEvent::Clear => {
         let _ = self.clear.send(MapEvent::Clear);
       }
@@ -87,5 +90,23 @@ impl Remote {
       }
     }
     self.update.request_repaint();
+  }
+  
+  /// Get a sender that properly routes all event types
+  #[must_use]
+  pub fn sender(&self) -> RoutingSender {
+    RoutingSender { remote: self.clone() }
+  }
+}
+
+/// A sender that routes events through Remote's handle_map_event
+pub struct RoutingSender {
+  remote: Remote,
+}
+
+impl RoutingSender {
+  pub fn send(&self, event: MapEvent) -> Result<(), std::sync::mpsc::SendError<MapEvent>> {
+    self.remote.handle_map_event(event);
+    Ok(())
   }
 }

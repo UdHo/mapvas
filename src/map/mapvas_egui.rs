@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-  map::coordinates::{Coordinate, PixelCoordinate, Transform},
+  map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   parser::{FileParser, GrepParser, JsonParser, Parser},
   remote::Remote,
 };
@@ -130,10 +130,23 @@ impl Map {
           egui::Key::V => self.paste(),
           egui::Key::C => self.copy(),
           egui::Key::S => {
-            let _ = self
-              .remote
-              .screenshot
-              .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
+            // Don't take screenshot if any text input has focus
+            let has_text_focus = self.ctx.memory(|mem| {
+              if let Some(_focus_id) = mem.focused() {
+                // If any widget has focus, assume it could be a text input to be safe
+                // This prevents screenshots when typing in any input field
+                true
+              } else {
+                false
+              }
+            });
+            
+            if !has_text_focus {
+              let _ = self
+                .remote
+                .screenshot
+                .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
+            }
           }
           _ => {
             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
@@ -156,6 +169,33 @@ impl Map {
 
       show_box(&mut self.transform, &bb, rect);
     }
+  }
+
+  fn focus_on_coordinate(&mut self, coordinate: WGS84Coordinate, zoom_level: Option<u8>, rect: Rect) {
+    use crate::map::coordinates::PixelCoordinate;
+    
+    // Convert WGS84 coordinate to pixel coordinate
+    let pixel_coord = PixelCoordinate::from(coordinate);
+    
+    // Set zoom level if specified
+    if let Some(tile_zoom) = zoom_level {
+      const TILE_SIZE: f32 = 512.0;
+      let screen_size = rect.width().max(rect.height());
+      let new_transform_zoom = 2f32.powi(i32::from(tile_zoom) - 2) * TILE_SIZE / screen_size;
+      self.transform.zoom = new_transform_zoom.clamp(1.0, 524_288.0);
+    } else {
+      // Default to a good zoom level for viewing a location (equivalent to zoom level 15)
+      const TILE_SIZE: f32 = 512.0;
+      let screen_size = rect.width().max(rect.height());
+      let default_zoom = 2f32.powi(15 - 2) * TILE_SIZE / screen_size;
+      self.transform.zoom = default_zoom.clamp(1.0, 524_288.0);
+    }
+    
+    // Center the map on the coordinate
+    helpers::set_coordinate_to_pixel(pixel_coord, rect.center().into(), &mut self.transform);
+    
+    log::info!("Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}", 
+      coordinate.lat, coordinate.lon, self.transform.zoom, zoom_level);
   }
 
   fn paste(&self) {
@@ -233,6 +273,11 @@ impl Map {
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
+        MapEvent::FocusOn { coordinate, zoom_level } => {
+          log::info!("Processing FocusOn event for coordinate: {:.4}, {:.4}, zoom: {:?}", 
+            coordinate.lat, coordinate.lon, zoom_level);
+          self.focus_on_coordinate(*coordinate, *zoom_level, rect);
+        }
         MapEvent::Screenshot(_) => {
           // Screenshots are handled by their dedicated layer, but we forward them
           // here to ensure proper timing after focus events

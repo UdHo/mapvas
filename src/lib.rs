@@ -8,3 +8,5 @@ pub mod mapvas_ui;
 pub mod parser;
 /// Server logic to send data to a running application.
 pub mod remote;
+/// Location search functionality with multiple providers.
+pub mod search;
