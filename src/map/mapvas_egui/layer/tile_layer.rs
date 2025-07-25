@@ -249,7 +249,7 @@ impl TileLayer {
   fn preload_tiles(&self, visible_tiles: &[Tile]) {
     // Generate preload candidates
     let preload_candidates = generate_preload_tiles(visible_tiles);
-    
+
     // Limit preloading to avoid overwhelming the system
     let max_preload = 20;
     for (tile, priority) in preload_candidates.into_iter().take(max_preload) {
@@ -370,7 +370,6 @@ impl Layer for TileLayer {
       });
 
     egui::Label::new(format!("{} tiles loaded", self.loaded_tiles.len())).ui(ui);
-
 
     ui.separator();
     ui.label("Tile Coordinate Display:");

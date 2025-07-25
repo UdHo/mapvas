@@ -1,4 +1,7 @@
-use super::{coordinates::{PixelCoordinate, WGS84Coordinate}, geometry_collection::Geometry};
+use super::{
+  coordinates::{PixelCoordinate, WGS84Coordinate},
+  geometry_collection::Geometry,
+};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};

@@ -134,7 +134,10 @@ impl ExeCfg {
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     ui.label("Executable:");
-    ui.add_sized([ui.available_width(), 0.0], egui::TextEdit::singleline(&mut self.executable));
+    ui.add_sized(
+      [ui.available_width(), 0.0],
+      egui::TextEdit::singleline(&mut self.executable),
+    );
   }
 
   fn bounding_box(&self) -> BoundingBox {
@@ -261,11 +264,17 @@ impl CurlCfg {
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     ui.label("Curl Command");
-    ui.add_sized([ui.available_width(), 0.0], egui::TextEdit::singleline(&mut self.url_template));
+    ui.add_sized(
+      [ui.available_width(), 0.0],
+      egui::TextEdit::singleline(&mut self.url_template),
+    );
     if let Some(pdt) = &mut self.post_data_template {
       ui.add_sized([ui.available_width(), 0.0], egui::TextEdit::singleline(pdt));
     }
-    ui.add_sized([ui.available_width(), 0.0], egui::TextEdit::singleline(&mut self.coordinate_template));
+    ui.add_sized(
+      [ui.available_width(), 0.0],
+      egui::TextEdit::singleline(&mut self.coordinate_template),
+    );
   }
 
   fn bounding_box(&self) -> BoundingBox {

@@ -17,76 +17,19 @@ pub struct MapApp {
 }
 
 impl MapApp {
-  pub fn new(map: Map, remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config) -> Self {
-    let settings_dialog = std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
+  pub fn new(
+    map: Map,
+    remote: Remote,
+    map_content: Rc<dyn MapLayerHolder>,
+    config: Config,
+  ) -> Self {
+    let settings_dialog =
+      std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
     let sidebar = Sidebar::new(remote, map_content, config, settings_dialog.clone());
-    Self { map, sidebar, settings_dialog }
-  }
-
-  /// Show the resize handle for the sidebar
-  fn show_resize_handle(&mut self, ui: &mut egui::Ui) {
-    let panel_rect = ui.max_rect();
-
-    // Wider interaction area for better UX (12px)
-    let interaction_rect = egui::Rect::from_min_max(
-      panel_rect.right_top() + egui::vec2(-6.0, 0.0),
-      panel_rect.right_bottom() + egui::vec2(6.0, 0.0),
-    );
-
-    let response = ui.interact(
-      interaction_rect,
-      ui.id().with("resize_handle"),
-      egui::Sense::drag(),
-    );
-
-    // Change cursor when hovering the interaction area
-    if response.hovered() {
-      ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
-
-    // Handle dragging
-    if response.dragged() {
-      self.sidebar.width += response.drag_delta().x;
-      self.sidebar.width = self.sidebar.width.clamp(200.0, 600.0);
-    }
-
-    // Only show visual handle when hovered or being dragged
-    if response.hovered() || response.dragged() {
-      // Thin visual handle (2px wide) centered in the interaction area
-      let visual_rect = egui::Rect::from_min_max(
-        panel_rect.right_top() + egui::vec2(-1.0, 0.0),
-        panel_rect.right_bottom() + egui::vec2(1.0, 0.0),
-      );
-
-      // Use theme-aware colors for modern look
-      let handle_color = if response.dragged() {
-        ui.style().visuals.selection.bg_fill // Theme's accent color when dragging
-      } else if response.hovered() {
-        ui.style().visuals.widgets.hovered.bg_fill // Theme's hover color
-      } else {
-        egui::Color32::from_rgba_unmultiplied(128, 128, 128, 100) // Subtle fallback
-      };
-
-      // Draw the handle with subtle rounded corners
-      ui.painter().rect_filled(visual_rect, 1.0, handle_color);
-
-      // Add grip dots only when hovered (not when dragging for cleaner look)
-      if response.hovered() && !response.dragged() {
-        let center_x = visual_rect.center().x;
-        let center_y = visual_rect.center().y;
-        let dot_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);
-        
-        // Three subtle dots
-        for i in 0..3 {
-          #[allow(clippy::cast_precision_loss)]
-          let y = center_y + (i as f32 - 1.0) * 8.0;
-          ui.painter().circle_filled(
-            egui::pos2(center_x, y),
-            1.0,
-            dot_color,
-          );
-        }
-      }
+    Self {
+      map,
+      sidebar,
+      settings_dialog,
     }
   }
 
@@ -147,7 +90,6 @@ impl eframe::App for MapApp {
         self.sidebar.toggle();
       }
     });
-    
 
     // Update sidebar animation
     self.sidebar.update_animation(ctx);
@@ -160,23 +102,19 @@ impl eframe::App for MapApp {
 
     if effective_width > 1.0 {
       egui::SidePanel::left("sidebar")
-        .exact_width(effective_width)
-        .resizable(false) // Use our custom resize handle instead
+        .default_width(self.sidebar.width)
+        .width_range(200.0..=600.0)
+        .resizable(true) // Use egui's built-in resize handle
         .show(ctx, |ui| {
-          // Add sidebar content with fade effect
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
           self.sidebar.ui(ui);
 
-          // Only show resize handle when sidebar is fully visible
-          if self.sidebar.is_fully_visible() {
-            self.show_resize_handle(ui);
-          }
+          self.sidebar.width = ui.available_width().clamp(200.0, 600.0);
         });
     }
 
-    // Show toggle button when sidebar is hidden or partially hidden
     if !self.sidebar.is_fully_visible() {
       self.show_sidebar_toggle_button(ctx);
     }
@@ -203,7 +141,12 @@ struct Sidebar {
 }
 
 impl Sidebar {
-  fn new(remote: Remote, map_content: Rc<dyn MapLayerHolder>, config: Config, settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>) -> Self {
+  fn new(
+    remote: Remote,
+    map_content: Rc<dyn MapLayerHolder>,
+    config: Config,
+    settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
+  ) -> Self {
     let search_manager = if config.search_providers.is_empty() {
       SearchManager::new()
     } else {
@@ -212,7 +155,7 @@ impl Sidebar {
         SearchManager::new()
       })
     };
-    
+
     Self {
       visible: true,
       target_visible: true,
@@ -291,8 +234,6 @@ impl Sidebar {
     let t = t - 1.0;
     t * t * t + 1.0
   }
-  
-  
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     // Use vertical layout with justified content
@@ -351,7 +292,7 @@ impl Sidebar {
       // Layer content (takes most of the space)
       let available_height = ui.available_height();
       let settings_button_height = 32.0; // Approximate button height + padding
-      
+
       egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .max_height(available_height - settings_button_height)
@@ -362,7 +303,7 @@ impl Sidebar {
             .show(ui, |ui| {
               self.search_ui.ui(ui, &self.remote.sender());
             });
-            
+
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
             .show(ui, |ui| {
@@ -375,7 +316,7 @@ impl Sidebar {
             });
         });
     });
-    
+
     // Add settings button at the very bottom, outside the main vertical layout
     ui.separator();
     if ui.button("Settings").clicked() {
@@ -411,12 +352,14 @@ enum SettingsTab {
 
 impl SettingsDialog {
   fn new(config: Config) -> Self {
-    let cache_directory = config.tile_cache_dir
-      .as_ref().map_or_else(|| "Default".to_string(), |p| p.display().to_string());
-      
-    let screenshot_path = std::env::var("MAPVAS_SCREENSHOT_PATH")
-      .unwrap_or_else(|_| "Desktop".to_string());
-    
+    let cache_directory = config
+      .tile_cache_dir
+      .as_ref()
+      .map_or_else(|| "Default".to_string(), |p| p.display().to_string());
+
+    let screenshot_path =
+      std::env::var("MAPVAS_SCREENSHOT_PATH").unwrap_or_else(|_| "Desktop".to_string());
+
     Self {
       open: false,
       tile_providers: config.tile_provider.clone(),
@@ -454,20 +397,26 @@ impl SettingsDialog {
         ui.horizontal(|ui| {
           // Tab buttons
           ui.selectable_value(&mut self.selected_tab, SettingsTab::General, "General");
-          ui.selectable_value(&mut self.selected_tab, SettingsTab::TileProviders, "Tile Providers");
-          ui.selectable_value(&mut self.selected_tab, SettingsTab::SearchProviders, "Search Providers");
+          ui.selectable_value(
+            &mut self.selected_tab,
+            SettingsTab::TileProviders,
+            "Tile Providers",
+          );
+          ui.selectable_value(
+            &mut self.selected_tab,
+            SettingsTab::SearchProviders,
+            "Search Providers",
+          );
         });
-        
+
         ui.separator();
-        
+
         egui::ScrollArea::vertical()
           .auto_shrink([false; 2])
-          .show(ui, |ui| {
-            match self.selected_tab {
-              SettingsTab::General => self.general_settings_ui(ui),
-              SettingsTab::TileProviders => self.tile_providers_ui(ui),
-              SettingsTab::SearchProviders => self.search_providers_ui(ui),
-            }
+          .show(ui, |ui| match self.selected_tab {
+            SettingsTab::General => self.general_settings_ui(ui),
+            SettingsTab::TileProviders => self.tile_providers_ui(ui),
+            SettingsTab::SearchProviders => self.search_providers_ui(ui),
           });
       });
     self.open = open;
@@ -476,7 +425,7 @@ impl SettingsDialog {
   fn general_settings_ui(&mut self, ui: &mut egui::Ui) {
     ui.heading("General Settings");
     ui.separator();
-    
+
     ui.group(|ui| {
       ui.label("Cache Settings:");
       ui.horizontal(|ui| {
@@ -487,7 +436,7 @@ impl SettingsDialog {
       });
       ui.small("Leave as 'Default' to use the default cache location");
     });
-    
+
     ui.group(|ui| {
       ui.label("Screenshot Settings:");
       ui.horizontal(|ui| {
@@ -498,7 +447,7 @@ impl SettingsDialog {
       });
       ui.small("Path where screenshots will be saved (use 'Desktop' for default)");
     });
-    
+
     ui.group(|ui| {
       ui.label("Config Location:");
       if let Some(config_path) = &self.config.config_path {
@@ -508,9 +457,9 @@ impl SettingsDialog {
       }
       ui.small("Config file location (read-only)");
     });
-    
+
     ui.separator();
-    
+
     // Save button
     ui.horizontal(|ui| {
       if self.settings_changed {
@@ -527,9 +476,9 @@ impl SettingsDialog {
   fn tile_providers_ui(&mut self, ui: &mut egui::Ui) {
     ui.heading("Tile Providers");
     ui.separator();
-    
+
     ui.label("Configure tile servers for map rendering:");
-    
+
     // List existing providers
     ui.group(|ui| {
       ui.label("Current Providers:");
@@ -549,9 +498,9 @@ impl SettingsDialog {
         self.settings_changed = true;
       }
     });
-    
+
     ui.separator();
-    
+
     // Add new provider
     ui.group(|ui| {
       ui.label("Add New Provider:");
@@ -564,7 +513,6 @@ impl SettingsDialog {
         ui.text_edit_singleline(&mut self.new_provider_url);
       });
       ui.small("Use {x}, {y}, {zoom} as placeholders (e.g., https://tile.openstreetmap.org/{zoom}/{x}/{y}.png)");
-      
       if ui.button("Add Provider").clicked() && !self.new_provider_name.is_empty() && !self.new_provider_url.is_empty() {
         self.tile_providers.push(TileProvider {
           name: self.new_provider_name.clone(),
@@ -575,9 +523,9 @@ impl SettingsDialog {
         self.settings_changed = true;
       }
     });
-    
+
     ui.separator();
-    
+
     // Save button for tile providers
     ui.horizontal(|ui| {
       if self.settings_changed {
@@ -593,9 +541,9 @@ impl SettingsDialog {
   fn search_providers_ui(&mut self, ui: &mut egui::Ui) {
     ui.heading("Search Providers");
     ui.separator();
-    
+
     ui.label("Configure location search services:");
-    
+
     // List current providers with ability to remove
     ui.group(|ui| {
       ui.label("Current Providers:");
@@ -615,12 +563,13 @@ impl SettingsDialog {
                 ui.small("(default OpenStreetMap geocoding)");
               }
               // Don't allow removing if it's the only non-coordinate provider
-              if self.search_providers.len() > 2
-                && ui.small_button("🗑").clicked() {
-                  to_remove = Some(i);
-                }
+              if self.search_providers.len() > 2 && ui.small_button("🗑").clicked() {
+                to_remove = Some(i);
+              }
             }
-            SearchProviderConfig::Custom { name, url_template, .. } => {
+            SearchProviderConfig::Custom {
+              name, url_template, ..
+            } => {
               ui.label(format!("🔧 {name}"));
               ui.small(url_template);
               if ui.small_button("🗑").clicked() {
@@ -635,20 +584,23 @@ impl SettingsDialog {
         self.settings_changed = true;
       }
     });
-    
+
     ui.separator();
-    
+
     // Nominatim configuration
     ui.group(|ui| {
       ui.label("Nominatim Configuration:");
       ui.horizontal(|ui| {
         ui.label("Custom base URL (optional):");
-        if ui.text_edit_singleline(&mut self.nominatim_base_url).changed() {
+        if ui
+          .text_edit_singleline(&mut self.nominatim_base_url)
+          .changed()
+        {
           self.settings_changed = true;
         }
       });
       ui.small("Leave empty for default OpenStreetMap Nominatim");
-      
+
       if ui.button("Update Nominatim").clicked() {
         // Update existing Nominatim provider or add new one
         let base_url = if self.nominatim_base_url.trim().is_empty() {
@@ -656,28 +608,32 @@ impl SettingsDialog {
         } else {
           Some(self.nominatim_base_url.trim().to_string())
         };
-        
+
         // Find and update existing Nominatim provider
         let mut found = false;
         for provider in &mut self.search_providers {
           if matches!(provider, SearchProviderConfig::Nominatim { .. }) {
-            *provider = SearchProviderConfig::Nominatim { base_url: base_url.clone() };
+            *provider = SearchProviderConfig::Nominatim {
+              base_url: base_url.clone(),
+            };
             found = true;
             break;
           }
         }
-        
+
         // If no Nominatim provider exists, add one
         if !found {
-          self.search_providers.push(SearchProviderConfig::Nominatim { base_url });
+          self
+            .search_providers
+            .push(SearchProviderConfig::Nominatim { base_url });
         }
-        
+
         self.settings_changed = true;
       }
     });
-    
+
     ui.separator();
-    
+
     // Add custom provider
     ui.group(|ui| {
       ui.label("Add Custom Search Provider:");
@@ -693,36 +649,40 @@ impl SettingsDialog {
         ui.label("Headers (JSON, optional):");
         ui.text_edit_singleline(&mut self.new_search_provider_headers);
       });
-      ui.small("URL should use {query} placeholder (e.g., https://api.example.com/search?q={query})");
+      ui.small(
+        "URL should use {query} placeholder (e.g., https://api.example.com/search?q={query})",
+      );
       ui.small("Headers example: {\"Authorization\": \"Bearer YOUR_API_KEY\"}");
-      
-      if ui.button("Add Custom Provider").clicked() 
-        && !self.new_search_provider_name.is_empty() 
-        && !self.new_search_provider_url.is_empty() {
-        
+
+      if ui.button("Add Custom Provider").clicked()
+        && !self.new_search_provider_name.is_empty()
+        && !self.new_search_provider_url.is_empty()
+      {
         // Parse headers if provided
         let headers = if self.new_search_provider_headers.trim().is_empty() {
           None
-        } else if let Ok(h) = serde_json::from_str(&self.new_search_provider_headers) { Some(h) } else {
+        } else if let Ok(h) = serde_json::from_str(&self.new_search_provider_headers) {
+          Some(h)
+        } else {
           log::warn!("Invalid JSON headers, ignoring");
           None
         };
-        
+
         self.search_providers.push(SearchProviderConfig::Custom {
           name: self.new_search_provider_name.clone(),
           url_template: self.new_search_provider_url.clone(),
           headers,
         });
-        
+
         self.new_search_provider_name.clear();
         self.new_search_provider_url.clear();
         self.new_search_provider_headers.clear();
         self.settings_changed = true;
       }
     });
-    
+
     ui.separator();
-    
+
     // Save button for search providers
     ui.horizontal(|ui| {
       if self.settings_changed {
@@ -733,26 +693,26 @@ impl SettingsDialog {
       }
     });
   }
-  
+
   fn save_settings(&mut self) {
     use std::path::PathBuf;
-    
+
     // Update config with current settings
     self.config.tile_provider = self.tile_providers.clone();
     self.config.search_providers = self.search_providers.clone();
-    
+
     // Update cache directory if changed
     if self.cache_directory != "Default" {
       self.config.tile_cache_dir = Some(PathBuf::from(&self.cache_directory));
     }
-    
+
     // Note: Screenshot path is handled by the application at runtime
     // We'll store it in the config for future reference
     if self.screenshot_path != "Desktop" {
       // In a real application, you'd want to handle screenshot path differently
       log::info!("Screenshot path set to: {}", self.screenshot_path);
     }
-    
+
     // Save to config file
     if let Some(config_path) = &self.config.config_path {
       let config_file = config_path.join("config.json");

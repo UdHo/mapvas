@@ -96,11 +96,13 @@ impl Remote {
       ctx.request_repaint();
     });
   }
-  
+
   /// Get a sender that properly routes all event types
   #[must_use]
   pub fn sender(&self) -> RoutingSender {
-    RoutingSender { remote: self.clone() }
+    RoutingSender {
+      remote: self.clone(),
+    }
   }
 }
 
@@ -111,9 +113,9 @@ pub struct RoutingSender {
 
 impl RoutingSender {
   /// Send a map event through the remote handler.
-  /// 
+  ///
   /// # Errors
-  /// 
+  ///
   /// This function currently never returns an error, but the signature is kept
   /// for future compatibility with potential channel send failures.
   pub fn send(&self, event: MapEvent) -> Result<(), std::sync::mpsc::SendError<MapEvent>> {

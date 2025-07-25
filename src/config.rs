@@ -80,14 +80,14 @@ impl Config {
 
     self.tile_cache_dir = self.tile_cache_dir.or(other.tile_cache_dir.clone());
     self.commands_dir = self.commands_dir.or(other.commands_dir.clone());
-    
+
     // Merge search providers (avoid duplicates)
     for provider in &other.search_providers {
       if !self.search_providers.iter().any(|p| p == provider) {
         self.search_providers.push(provider.clone());
       }
     }
-    
+
     self
   }
 

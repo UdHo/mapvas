@@ -140,7 +140,7 @@ impl Map {
                 false
               }
             });
-            
+
             if !has_text_focus {
               let _ = self
                 .remote
@@ -171,12 +171,17 @@ impl Map {
     }
   }
 
-  fn focus_on_coordinate(&mut self, coordinate: WGS84Coordinate, zoom_level: Option<u8>, rect: Rect) {
+  fn focus_on_coordinate(
+    &mut self,
+    coordinate: WGS84Coordinate,
+    zoom_level: Option<u8>,
+    rect: Rect,
+  ) {
     use crate::map::coordinates::PixelCoordinate;
-    
+
     // Convert WGS84 coordinate to pixel coordinate
     let pixel_coord = PixelCoordinate::from(coordinate);
-    
+
     // Set zoom level if specified
     if let Some(tile_zoom) = zoom_level {
       const TILE_SIZE: f32 = 512.0;
@@ -190,12 +195,17 @@ impl Map {
       let default_zoom = 2f32.powi(15 - 2) * TILE_SIZE / screen_size;
       self.transform.zoom = default_zoom.clamp(1.0, 524_288.0);
     }
-    
+
     // Center the map on the coordinate
     helpers::set_coordinate_to_pixel(pixel_coord, rect.center().into(), &mut self.transform);
-    
-    log::info!("Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}", 
-      coordinate.lat, coordinate.lon, self.transform.zoom, zoom_level);
+
+    log::info!(
+      "Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}",
+      coordinate.lat,
+      coordinate.lon,
+      self.transform.zoom,
+      zoom_level
+    );
   }
 
   fn paste(&self) {
@@ -273,9 +283,16 @@ impl Map {
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
-        MapEvent::FocusOn { coordinate, zoom_level } => {
-          log::info!("Processing FocusOn event for coordinate: {:.4}, {:.4}, zoom: {:?}", 
-            coordinate.lat, coordinate.lon, zoom_level);
+        MapEvent::FocusOn {
+          coordinate,
+          zoom_level,
+        } => {
+          log::info!(
+            "Processing FocusOn event for coordinate: {:.4}, {:.4}, zoom: {:?}",
+            coordinate.lat,
+            coordinate.lon,
+            zoom_level
+          );
           self.focus_on_coordinate(*coordinate, *zoom_level, rect);
         }
         MapEvent::Screenshot(_) => {
