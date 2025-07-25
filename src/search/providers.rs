@@ -12,8 +12,14 @@ pub struct CoordinateParser {
     dms_regex: Regex,
 }
 
+impl Default for CoordinateParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoordinateParser {
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             // Matches: "52.5, 13.4" or "52.5,13.4" or "52.5 13.4"
             decimal_regex: Regex::new(
@@ -27,8 +33,8 @@ impl CoordinateParser {
     }
     
     /// Try to parse a coordinate from various formats
-    pub fn parse_coordinate(&self, input: &str) -> Option<SearchResult> {
-        log::debug!("Attempting to parse coordinate: '{}'", input);
+    #[must_use] pub fn parse_coordinate(&self, input: &str) -> Option<SearchResult> {
+        log::debug!("Attempting to parse coordinate: '{input}'");
         
         // Try decimal degrees first
         if let Some(coord) = self.parse_decimal(input) {
@@ -53,7 +59,7 @@ impl CoordinateParser {
             });
         }
         
-        log::debug!("Could not parse '{}' as coordinate", input);
+        log::debug!("Could not parse '{input}' as coordinate");
         None
     }
     
@@ -64,7 +70,7 @@ impl CoordinateParser {
         let lon: f32 = caps.get(2)?.as_str().parse().ok()?;
         
         // Validate coordinate ranges
-        if lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 {
+        if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
             Some(WGS84Coordinate::new(lat, lon))
         } else {
             None
@@ -103,7 +109,7 @@ pub struct NominatimProvider {
 }
 
 impl NominatimProvider {
-    pub fn new(base_url: Option<String>) -> Self {
+    #[must_use] pub fn new(base_url: Option<String>) -> Self {
         Self {
             base_url: base_url.unwrap_or_else(|| 
                 "https://nominatim.openstreetmap.org".to_string()
@@ -115,7 +121,7 @@ impl NominatimProvider {
 
 #[async_trait::async_trait]
 impl SearchProvider for NominatimProvider {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "OpenStreetMap Nominatim"
     }
     
@@ -148,9 +154,10 @@ impl SearchProvider for NominatimProvider {
                     let address = item["address"].as_object();
                     let country = address
                         .and_then(|a| a["country"].as_str())
-                        .map(|s| s.to_string());
+                        .map(std::string::ToString::to_string);
                     
                     // Calculate relevance based on importance
+                    #[allow(clippy::cast_possible_truncation)]
                     let relevance = item["importance"]
                         .as_f64()
                         .unwrap_or(0.5) as f32;
@@ -190,7 +197,7 @@ impl SearchProvider for NominatimProvider {
             let address = response["address"].as_object();
             let country = address
                 .and_then(|a| a["country"].as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             
             Ok(Some(SearchResult {
                 name: display_name.to_string(),
@@ -214,7 +221,7 @@ pub struct CustomProvider {
 }
 
 impl CustomProvider {
-    pub fn new(
+    #[must_use] pub fn new(
         name: String, 
         url_template: String, 
         headers: Option<HashMap<String, String>>
@@ -261,6 +268,7 @@ impl SearchProvider for CustomProvider {
                     feature["properties"].as_object(),
                 ) {
                     if coords.len() >= 2 {
+                        #[allow(clippy::cast_possible_truncation)]
                         if let (Some(lon), Some(lat)) = (
                             coords[0].as_f64().map(|f| f as f32),
                             coords[1].as_f64().map(|f| f as f32),
@@ -272,8 +280,9 @@ impl SearchProvider for CustomProvider {
                                 .unwrap_or("Unknown location")
                                 .to_string();
                             
-                            let address = props["address"].as_str().map(|s| s.to_string());
-                            let country = props["country"].as_str().map(|s| s.to_string());
+                            let address = props["address"].as_str().map(std::string::ToString::to_string);
+                            let country = props["country"].as_str().map(std::string::ToString::to_string);
+                            #[allow(clippy::cast_possible_truncation)]
                             let relevance = props["relevance"]
                                 .as_f64()
                                 .unwrap_or(0.5) as f32;
@@ -326,7 +335,7 @@ mod tests {
         if let Some(result) = parser.parse_coordinate("52.5, 13.4") {
             assert!((result.coordinate.lat - 52.5).abs() < 0.001);
             assert!((result.coordinate.lon - 13.4).abs() < 0.001);
-            assert_eq!(result.relevance, 1.0);
+            assert!((result.relevance - 1.0).abs() < f32::EPSILON);
         } else {
             panic!("Should have parsed coordinate");
         }

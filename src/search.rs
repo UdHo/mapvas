@@ -75,7 +75,7 @@ pub struct SearchManager {
 
 impl SearchManager {
     /// Create a new search manager with default providers
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             providers: vec![
                 Box::new(providers::NominatimProvider::new(None)),
@@ -84,7 +84,12 @@ impl SearchManager {
         }
     }
     
-    /// Create search manager with custom configuration
+    /// Create a new `SearchManager` with custom provider configurations.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if any of the search providers fail to initialize,
+    /// such as invalid URLs or missing required configuration parameters.
     pub fn with_config(configs: Vec<SearchProviderConfig>) -> Result<Self> {
         let mut providers: Vec<Box<dyn SearchProvider>> = Vec::new();
         
@@ -113,7 +118,12 @@ impl SearchManager {
         })
     }
     
-    /// Search across all providers, with coordinate parsing taking priority
+    /// Search for locations using all configured providers.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if all search providers fail or if there are network
+    /// connectivity issues preventing any searches from completing.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
         let query = query.trim();
         if query.is_empty() {
@@ -128,7 +138,7 @@ impl SearchManager {
         }
         
         // Search through configured providers
-        log::debug!("Starting provider search for: '{}'", query);
+        log::debug!("Starting provider search for: '{query}'");
         let mut all_results = Vec::new();
         
         for provider in &self.providers {
@@ -157,7 +167,7 @@ impl SearchManager {
     }
     
     /// Get list of available provider names
-    pub fn provider_names(&self) -> Vec<String> {
+    #[must_use] pub fn provider_names(&self) -> Vec<String> {
         let mut names = vec!["Coordinates".to_string()];
         names.extend(self.providers.iter().map(|p| p.name().to_string()));
         names

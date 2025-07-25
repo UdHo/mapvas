@@ -104,12 +104,18 @@ impl Remote {
   }
 }
 
-/// A sender that routes events through Remote's handle_map_event
+/// A sender that routes events through Remote's `handle_map_event`
 pub struct RoutingSender {
   remote: Remote,
 }
 
 impl RoutingSender {
+  /// Send a map event through the remote handler.
+  /// 
+  /// # Errors
+  /// 
+  /// This function currently never returns an error, but the signature is kept
+  /// for future compatibility with potential channel send failures.
   pub fn send(&self, event: MapEvent) -> Result<(), std::sync::mpsc::SendError<MapEvent>> {
     self.remote.handle_map_event(event);
     Ok(())

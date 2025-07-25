@@ -202,7 +202,7 @@ impl Sidebar {
       SearchManager::new()
     } else {
       SearchManager::with_config(config.search_providers).unwrap_or_else(|e| {
-        log::warn!("Failed to create search manager with config: {}, using default", e);
+        log::warn!("Failed to create search manager with config: {e}, using default");
         SearchManager::new()
       })
     };

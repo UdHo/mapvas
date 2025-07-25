@@ -36,13 +36,9 @@ impl ShapeLayer {
 
   fn handle_new_shapes(&mut self) {
     for event in self.recv.try_iter() {
-      match event {
-        MapEvent::Layer(EventLayer { id, geometries }) => {
-          let l = self.shape_map.entry(id).or_default();
-          l.extend(geometries.into_iter());
-        }
-        _ => {
-        }
+      if let MapEvent::Layer(EventLayer { id, geometries }) = event {
+        let l = self.shape_map.entry(id).or_default();
+        l.extend(geometries.into_iter());
       }
     }
   }

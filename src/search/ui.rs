@@ -26,7 +26,7 @@ pub struct SearchUI {
 }
 
 impl SearchUI {
-    pub fn new(search_manager: SearchManager) -> Self {
+    #[must_use] pub fn new(search_manager: SearchManager) -> Self {
         let (search_result_sender, search_result_receiver) = channel();
         Self {
             search_manager: Arc::new(search_manager),
@@ -60,7 +60,7 @@ impl SearchUI {
                     }
                 }
                 Err(e) => {
-                    log::error!("Search failed: {}", e);
+                    log::error!("Search failed: {e}");
                     self.results.clear();
                     self.show_results = false;
                 }
@@ -102,13 +102,8 @@ impl SearchUI {
                     !self.query.trim().is_empty() 
                         && self.query != self.last_search_query
                         && self.selected_index.is_none()
-                } else if !self.query.trim().is_empty() 
-                    && self.query != self.last_search_query 
-                    && (current_time - self.last_input_time) >= self.debounce_delay {
-                    true
-                } else {
-                    false
-                };
+                } else { !self.query.trim().is_empty() 
+                    && self.query != self.last_search_query && (current_time - self.last_input_time) >= self.debounce_delay };
                 
                 if !self.query.trim().is_empty() 
                     && self.query != self.last_search_query 
@@ -142,7 +137,7 @@ impl SearchUI {
                             log::debug!("Enter pressed in search results, selected_index: {:?}", self.selected_index);
                             if let Some(index) = self.selected_index {
                                 if index < self.results.len() {
-                                    log::debug!("Calling select_result for index: {}", index);
+                                    log::debug!("Calling select_result for index: {index}");
                                     self.select_result(index, map_sender);
                                     log::debug!("Returned from select_result");
                                 } else {
@@ -196,7 +191,7 @@ impl SearchUI {
                     // Result item with hover effect
                     let response = ui.add_sized(
                         [ui.available_width(), 0.0],
-                        egui::Button::new(self.format_result(result))
+                        egui::Button::new(Self::format_result(result))
                             .fill(if is_selected {
                                 ui.style().visuals.selection.bg_fill
                             } else {
@@ -232,19 +227,19 @@ impl SearchUI {
             });
     }
     
-    fn format_result(&self, result: &SearchResult) -> String {
+    fn format_result(result: &SearchResult) -> String {
         // Truncate long names for better display (using character count, not bytes)
         let name = if result.name.chars().count() > 40 {
             let truncated: String = result.name.chars().take(37).collect();
-            format!("{}...", truncated)
+            format!("{truncated}...")
         } else {
             result.name.clone()
         };
         
         // Add country if available
         match &result.country {
-            Some(country) => format!("📍 {} ({})", name, country),
-            None => format!("📍 {}", name),
+            Some(country) => format!("📍 {name} ({country})"),
+            None => format!("📍 {name}"),
         }
     }
     
@@ -268,7 +263,7 @@ impl SearchUI {
             };
             
             if let Err(e) = map_sender.send(MapEvent::Layer(search_layer)) {
-                log::error!("Failed to send Layer event: {}", e);
+                log::error!("Failed to send Layer event: {e}");
             }
             
             log::info!("Sending FocusOn event for: {:.4}, {:.4}", 
@@ -277,7 +272,7 @@ impl SearchUI {
                 coordinate: result.coordinate,
                 zoom_level: Some(16),
             }) {
-                log::error!("Failed to send FocusOn event: {}", e);
+                log::error!("Failed to send FocusOn event: {e}");
             }
             self.show_results = false;
             self.selected_index = None;
@@ -297,18 +292,18 @@ impl SearchUI {
             return;
         }
         
-        self.last_search_query = query.clone();
+        self.last_search_query.clone_from(&query);
         self.show_results = false;
         self.selected_index = None;
         
         if let Some(active_query) = &self.active_search_query {
             if active_query == &query {
-                log::debug!("Search already in progress for: {}", query);
+                log::debug!("Search already in progress for: {query}");
                 return;
             }
         }
         
-        log::debug!("Starting async search for: {}", query);
+        log::debug!("Starting async search for: {query}");
         self.is_searching = true;
         self.active_search_query = Some(query.clone());
         let search_manager = Arc::clone(&self.search_manager);
