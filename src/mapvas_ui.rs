@@ -241,14 +241,12 @@ impl Sidebar {
   }
 
   fn ui(&mut self, ui: &mut egui::Ui) {
-    // Use vertical layout with justified content
     ui.vertical(|ui| {
       // Sidebar header with close button
       ui.horizontal(|ui| {
         ui.heading("Layers");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-          // Custom close button with better styling
           let close_button_size = egui::vec2(24.0, 24.0);
           let (close_rect, close_response) =
             ui.allocate_exact_size(close_button_size, egui::Sense::click());
@@ -259,13 +257,11 @@ impl Sidebar {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
           }
 
-          // Draw X symbol with better styling
           let center = close_rect.center();
           let size = 8.0;
           let color = egui::Color32::from_gray(100);
           let stroke_width = 1.5;
 
-          // Draw the X
           ui.painter().line_segment(
             [
               center + egui::vec2(-size / 2.0, -size / 2.0),
@@ -285,7 +281,6 @@ impl Sidebar {
             self.hide();
           }
 
-          // Add tooltip
           if close_response.hovered() {
             close_response.on_hover_text("Hide sidebar (F1 or Ctrl+B)");
           }
@@ -294,15 +289,13 @@ impl Sidebar {
 
       ui.separator();
 
-      // Layer content (takes most of the space)
       let available_height = ui.available_height();
-      let settings_button_height = 32.0; // Approximate button height + padding
+      let settings_button_height = 32.0;
 
       egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .max_height(available_height - settings_button_height)
         .show(ui, |ui| {
-          // Add search functionality
           egui::CollapsingHeader::new("🔍Location Search")
             .default_open(true)
             .show(ui, |ui| {
@@ -322,7 +315,6 @@ impl Sidebar {
         });
     });
 
-    // Add settings button at the very bottom, outside the main vertical layout
     ui.separator();
     if ui.button("Settings").clicked() {
       self.settings_dialog.borrow_mut().open();

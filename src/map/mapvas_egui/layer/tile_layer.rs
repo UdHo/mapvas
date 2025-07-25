@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use egui::{Color32, ColorImage, Pos2, Rect, Ui, Widget};
-use log::{debug, error};
+use log::error;
 
 use crate::map::{
   coordinates::{
@@ -99,7 +99,6 @@ impl TileLayer {
     use crate::map::coordinates::tiles_in_box;
 
     let painter = ui.painter_at(clip_rect);
-
 
     for tile in tiles_in_box(min_pos, max_pos) {
       let (nw, se) = tile.position();
@@ -242,7 +241,6 @@ impl TileLayer {
 
   fn collect_new_tile_data(&mut self, ui: &Ui) {
     for (tile, egui_image) in self.receiver.try_iter() {
-      debug!("Received tile from loader: {tile:?}");
       let handle = ui.ctx().load_texture(
         format!("{}-{}-{}", tile.zoom, tile.x, tile.y),
         egui_image,
@@ -367,8 +365,11 @@ impl Layer for TileLayer {
     });
   }
 
+  fn closest_geometry_with_selection(&mut self, _pos: Pos2, _transform: &Transform) -> Option<f64> {
+    None
+  }
+
   fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
-    // Tile layer doesn't handle double-click events
     false
   }
 }

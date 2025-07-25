@@ -46,6 +46,12 @@ pub trait Layer {
   fn has_highlighted_geometry(&self) -> bool {
     false
   }
+  /// Find the closest geometry to the given position and handle selection if applicable
+  /// Returns Some(distance) if this layer can handle the click, None otherwise
+  /// If Some(distance) is returned, the layer should perform its selection action immediately
+  fn closest_geometry_with_selection(&mut self, _pos: Pos2, _transform: &Transform) -> Option<f64> {
+    None
+  }
 }
 
 /// Common properties for all layers.

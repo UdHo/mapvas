@@ -105,15 +105,45 @@ impl Map {
   }
 
   fn handle_double_click(&mut self, pos: egui::Pos2) {
-    // Let layers handle the double-click event in reverse order (top to bottom)
+    log::debug!("Map: Double-click detected at {pos:?}");
+
     if let Ok(mut layers) = self.layers.lock() {
-      for layer in layers.iter_mut().rev() {
-        if layer.handle_double_click(pos, &self.transform) {
-          // Event was handled by this layer, stop propagation
-          return;
+      log::debug!(
+        "Map: Finding closest geometry across {} layers",
+        layers.len()
+      );
+
+      // Find the closest geometry across all layers
+      let mut closest_distance = f64::INFINITY;
+      let mut closest_layer_idx: Option<usize> = None;
+
+      // Find the closest geometry across all layers - treat all layers the same
+      for (i, layer) in layers.iter_mut().enumerate() {
+        if let Some(distance) = layer.closest_geometry_with_selection(pos, &self.transform) {
+          log::debug!(
+            "Map: Layer '{}' can handle at distance: {:.2}",
+            layer.name(),
+            distance
+          );
+
+          if distance < closest_distance {
+            closest_distance = distance;
+            closest_layer_idx = Some(i);
+          }
         }
       }
+
+      // If a layer handled the selection, we're done
+      if let Some(layer_idx) = closest_layer_idx {
+        let layer_name = layers[layer_idx].name();
+        log::debug!(
+          "Map: Layer '{layer_name}' handled the selection at distance {closest_distance:.2}"
+        );
+        return;
+      }
     }
+
+    log::debug!("Map: No layer handled the double-click");
     // If no layer handled the event, clear geometry info
     self.geometry_info = None;
   }

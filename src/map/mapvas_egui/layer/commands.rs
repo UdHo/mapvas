@@ -19,6 +19,8 @@ pub struct CommandLayer {
   commands: Vec<Box<dyn Command>>,
   layer_properties: LayerProperties,
   recv: Receiver<ParameterUpdate>,
+  highlighted_command: Option<usize>,
+  just_highlighted: bool,
 }
 
 impl CommandLayer {
@@ -38,6 +40,8 @@ impl CommandLayer {
         commands,
         layer_properties: LayerProperties::default(),
         recv,
+        highlighted_command: None,
+        just_highlighted: false,
       },
       send,
     )
@@ -95,6 +99,14 @@ impl CommandLayer {
 pub enum ParameterUpdate {
   Update(String, Option<PixelCoordinate>),
   DragUpdate(PixelPosition, PixelPosition, Transform),
+}
+
+fn truncate_label(label: &str, max_len: usize) -> String {
+  if label.len() > max_len {
+    format!("{}...", &label[..max_len])
+  } else {
+    label.to_string()
+  }
 }
 
 const NAME: &str = "Command Layer";
@@ -156,15 +168,78 @@ impl Layer for CommandLayer {
     &mut self.layer_properties.visible
   }
 
+  fn ui(&mut self, ui: &mut egui::Ui) {
+    let has_highlighted_command = self.highlighted_command.is_some();
+    let layer_id = egui::Id::new("command_layer_header");
+
+    let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned())
+      .id_salt(layer_id)
+      .default_open(has_highlighted_command);
+
+    // Only force open once when just highlighted, then let user control it
+    if self.just_highlighted && has_highlighted_command {
+      layer_header = layer_header.open(Some(true));
+    }
+
+    layer_header.show(ui, |ui| {
+      ui.checkbox(self.visible_mut(), "visible");
+      self.ui_content(ui);
+    });
+  }
+
   fn ui_content(&mut self, ui: &mut egui::Ui) {
-    ui.collapsing("Commands", |ui| {
-      for command in &mut self.commands {
-        ui.collapsing(command.name().to_owned(), |ui| {
-          visible_locking_ui(ui, command.as_mut());
-          command.ui(ui);
+    let has_highlighted_command = self.highlighted_command.is_some();
+    let commands_header_id = egui::Id::new("commands_header");
+
+    let mut commands_header = egui::CollapsingHeader::new("Commands")
+      .id_salt(commands_header_id)
+      .default_open(has_highlighted_command);
+
+    // Only force open once when just highlighted
+    if self.just_highlighted && has_highlighted_command {
+      commands_header = commands_header.open(Some(true));
+    }
+
+    commands_header.show(ui, |ui| {
+      for (cmd_idx, command) in self.commands.iter_mut().enumerate() {
+        let is_highlighted = self.highlighted_command == Some(cmd_idx);
+
+        let bg_color = if is_highlighted {
+          Some(egui::Color32::from_rgb(100, 149, 237))
+        } else {
+          None
+        };
+
+        let frame = if let Some(color) = bg_color {
+          egui::Frame::default()
+            .fill(color)
+            .corner_radius(egui::CornerRadius::same(4))
+            .inner_margin(egui::Margin::same(4))
+        } else {
+          egui::Frame::default()
+        };
+
+        frame.show(ui, |ui| {
+          let command_header_id = egui::Id::new(format!("command_header_{cmd_idx}"));
+
+          let mut command_header = egui::CollapsingHeader::new(truncate_label(command.name(), 40))
+            .id_salt(command_header_id)
+            .default_open(is_highlighted);
+
+          // Only force open once when just highlighted
+          if is_highlighted && self.just_highlighted {
+            command_header = command_header.open(Some(true));
+          }
+
+          command_header.show(ui, |ui| {
+            visible_locking_ui(ui, command.as_mut());
+            command.ui(ui);
+          });
         });
       }
     });
+
+    self.just_highlighted = false;
   }
 
   fn bounding_box(&self) -> Option<BoundingBox> {
@@ -179,8 +254,58 @@ impl Layer for CommandLayer {
     bb.is_valid().then_some(bb)
   }
 
-  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
-    false
+  fn has_highlighted_geometry(&self) -> bool {
+    self.highlighted_command.is_some()
+  }
+
+  fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
+    let click_coord = transform.invert().apply(pos.into());
+    let tolerance_map_coords = f64::from(5.0 / transform.zoom);
+    let mut closest_distance = f64::INFINITY;
+    let mut found_command: Option<usize> = None;
+
+    for (cmd_idx, command) in self.commands.iter().enumerate() {
+      if !command.is_visible() {
+        continue;
+      }
+
+      if let Some(distance) = Self::calculate_distance_to_command(&**command, click_coord) {
+        if distance < closest_distance && distance < tolerance_map_coords {
+          closest_distance = distance;
+          found_command = Some(cmd_idx);
+        }
+      }
+    }
+
+    if let Some(cmd_idx) = found_command {
+      let was_different = self.highlighted_command != Some(cmd_idx);
+      self.highlighted_command = Some(cmd_idx);
+      self.just_highlighted = was_different;
+      Some(closest_distance)
+    } else {
+      self.highlighted_command = None;
+      self.just_highlighted = false;
+      None
+    }
+  }
+}
+
+impl CommandLayer {
+  fn calculate_distance_to_command(
+    command: &dyn Command,
+    click_coord: PixelCoordinate,
+  ) -> Option<f64> {
+    let mut min_distance: Option<f64> = None;
+    for drawable in command.result() {
+      if let Some(drawable_distance) = drawable.distance_to_point(click_coord) {
+        min_distance = match min_distance {
+          None => Some(drawable_distance),
+          Some(current_min) => Some(drawable_distance.min(current_min)),
+        };
+      }
+    }
+
+    min_distance
   }
 }
 

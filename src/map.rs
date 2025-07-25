@@ -1,5 +1,7 @@
 /// Contains everything needed to handle coordinates.
 pub mod coordinates;
+/// Distance calculation utilities for geometries and coordinates.
+pub mod distance;
 /// Handles geometry.
 pub mod geometry_collection;
 /// Stuff to be send to the map client.

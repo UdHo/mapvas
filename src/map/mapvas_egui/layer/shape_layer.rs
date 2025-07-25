@@ -1,6 +1,7 @@
 use super::{Layer, LayerProperties, drawable::Drawable as _};
 use crate::map::{
   coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
+  distance,
   geometry_collection::{Geometry, Metadata, Style},
   map_event::{Layer as EventLayer, MapEvent},
 };
@@ -22,6 +23,15 @@ pub struct ShapeLayer {
   send: Sender<MapEvent>,
   layer_properties: LayerProperties,
   highlighted_geometry: Option<(String, usize)>,
+  just_highlighted: bool,
+}
+
+fn truncate_label(label: &str, max_len: usize) -> String {
+  if label.len() > max_len {
+    format!("{}...", &label[..max_len])
+  } else {
+    label.to_string()
+  }
 }
 
 impl ShapeLayer {
@@ -37,6 +47,7 @@ impl ShapeLayer {
       send,
       layer_properties: LayerProperties::default(),
       highlighted_geometry: None,
+      just_highlighted: false,
     }
   }
 
@@ -74,10 +85,17 @@ impl ShapeLayer {
         .as_ref()
         .is_some_and(|(highlighted_layer_id, _)| highlighted_layer_id == &layer_id);
 
-      let mut header =
-        egui::CollapsingHeader::new(format!("📁 {layer_id} ({shapes_count})")).id_salt(&layer_id);
+      let header_id = egui::Id::new(format!("shape_layer_{layer_id}"));
 
-      if has_highlighted_geometry {
+      let mut header = egui::CollapsingHeader::new(format!(
+        "📁 {} ({shapes_count})",
+        truncate_label(&layer_id, 30)
+      ))
+      .id_salt(header_id)
+      .default_open(has_highlighted_geometry);
+
+      // Only force open once when just highlighted, then let user control it
+      if self.just_highlighted && has_highlighted_geometry {
         header = header.open(Some(true));
       }
 
@@ -216,7 +234,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📍", metadata, false);
 
         if let Some(label) = &metadata.label {
-          ui.strong(label);
+          ui.strong(truncate_label(label, 50));
           ui.small(format!("({:.4}, {:.4})", wgs84.lat, wgs84.lon));
         } else {
           ui.label(format!("{:.4}, {:.4}", wgs84.lat, wgs84.lon));
@@ -227,7 +245,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📏", metadata, false);
 
         if let Some(label) = &metadata.label {
-          ui.strong(label);
+          ui.strong(truncate_label(label, 50));
         } else {
           ui.label("Line");
         }
@@ -248,7 +266,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "⬟", metadata, true);
 
         if let Some(label) = &metadata.label {
-          ui.strong(label);
+          ui.strong(truncate_label(label, 50));
         } else {
           ui.label("Polygon");
         }
@@ -256,10 +274,8 @@ impl ShapeLayer {
         ui.small(format!("({} pts)", coords.len()));
 
         if !coords.is_empty() {
-          let wgs84_coords: Vec<WGS84Coordinate> = coords
-            .iter()
-            .map(crate::map::coordinates::Coordinate::as_wgs84)
-            .collect();
+          let wgs84_coords: Vec<WGS84Coordinate> =
+            coords.iter().map(Coordinate::as_wgs84).collect();
           let min_lat = wgs84_coords
             .iter()
             .map(|c| c.lat)
@@ -290,7 +306,7 @@ impl ShapeLayer {
       Geometry::GeometryCollection(geometries, metadata) => {
         ui.label(format!("📦 Collection ({} items)", geometries.len()));
         if let Some(label) = &metadata.label {
-          ui.small(format!("- {label}"));
+          ui.small(format!("- {}", truncate_label(label, 50)));
         }
       }
     }
@@ -468,13 +484,11 @@ const NAME: &str = "Shape Layer";
 
 impl Layer for ShapeLayer {
   fn process_pending_events(&mut self) {
-    // Process any pending layer data immediately
     self.handle_new_shapes();
   }
 
   fn discard_pending_events(&mut self) {
-    for _event in self.recv.try_iter() {
-    }
+    for _event in self.recv.try_iter() {}
   }
 
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
@@ -536,9 +550,13 @@ impl Layer for ShapeLayer {
 
   fn ui(&mut self, ui: &mut Ui) {
     let has_highlighted_geometry = self.highlighted_geometry.is_some();
+    let layer_id = egui::Id::new("shape_layer_header");
 
-    let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned());
-    if has_highlighted_geometry {
+    let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned())
+      .id_salt(layer_id)
+      .default_open(has_highlighted_geometry);
+
+    if self.just_highlighted {
       layer_header = layer_header.open(Some(true));
     }
 
@@ -550,48 +568,29 @@ impl Layer for ShapeLayer {
 
   fn ui_content(&mut self, ui: &mut Ui) {
     let has_highlighted_geometry = self.highlighted_geometry.is_some();
+    let shapes_header_id = egui::Id::new("shapes_header");
 
-    let mut shapes_header = egui::CollapsingHeader::new("Shapes");
-    if has_highlighted_geometry {
+    let mut shapes_header = egui::CollapsingHeader::new("Shapes")
+      .id_salt(shapes_header_id)
+      .default_open(has_highlighted_geometry);
+
+    // Only force open once when just highlighted
+    if self.just_highlighted && has_highlighted_geometry {
       shapes_header = shapes_header.open(Some(true));
     }
 
     shapes_header.show(ui, |ui| {
       self.show_shape_layers(ui);
     });
+
+    self.just_highlighted = false;
   }
 
   fn has_highlighted_geometry(&self) -> bool {
     self.highlighted_geometry.is_some()
   }
 
-  fn find_closest_geometry(&mut self, pos: Pos2, transform: &Transform) -> (f64, bool) {
-    let click_coord = transform.invert().apply(pos.into());
-    let tolerance_map_coords = f64::from(20.0 / transform.zoom);
-    let mut closest_distance = f64::INFINITY;
-
-    for (layer_id, shapes) in &self.shape_map {
-      if !self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        continue;
-      }
-
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        let geometry_key = (layer_id.clone(), shape_idx);
-        if !self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-          continue;
-        }
-
-        let distance = self.calculate_distance_to_geometry(shape, click_coord);
-        if distance < closest_distance && distance < tolerance_map_coords {
-          closest_distance = distance;
-        }
-      }
-    }
-
-    (closest_distance, closest_distance < tolerance_map_coords)
-  }
-
-  fn handle_double_click(&mut self, pos: Pos2, transform: &Transform) -> bool {
+  fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
     let click_coord = transform.invert().apply(pos.into());
     let tolerance_map_coords = f64::from(20.0 / transform.zoom);
     let mut closest_distance = f64::INFINITY;
@@ -608,57 +607,24 @@ impl Layer for ShapeLayer {
           continue;
         }
 
-        let distance = self.calculate_distance_to_geometry(shape, click_coord);
-        if distance < closest_distance && distance < tolerance_map_coords {
-          closest_distance = distance;
-          found_geometry = Some((layer_id.clone(), shape_idx));
+        if let Some(distance) = distance::distance_to_geometry(shape, click_coord) {
+          if distance < closest_distance && distance < tolerance_map_coords {
+            closest_distance = distance;
+            found_geometry = Some((layer_id.clone(), shape_idx));
+          }
         }
       }
     }
 
     if let Some((layer_id, shape_idx)) = found_geometry {
+      let was_different = self.highlighted_geometry != Some((layer_id.clone(), shape_idx));
       self.highlighted_geometry = Some((layer_id, shape_idx));
-      true
-    } else {
-      self.highlighted_geometry = None;
-      false
+      self.just_highlighted = was_different;
+      return Some(closest_distance);
     }
-  }
-}
 
-impl ShapeLayer {
-  #[allow(clippy::only_used_in_recursion)]
-  fn calculate_distance_to_geometry(
-    &self,
-    geometry: &Geometry<PixelCoordinate>,
-    click_coord: PixelCoordinate,
-  ) -> f64 {
-    match geometry {
-      Geometry::Point(coord, _) => {
-        let dx = coord.x - click_coord.x;
-        let dy = coord.y - click_coord.y;
-        f64::from(dx * dx + dy * dy).sqrt()
-      }
-      Geometry::LineString(coords, _) => coords
-        .iter()
-        .map(|coord| {
-          let dx = coord.x - click_coord.x;
-          let dy = coord.y - click_coord.y;
-          f64::from(dx * dx + dy * dy).sqrt()
-        })
-        .fold(f64::INFINITY, f64::min),
-      Geometry::Polygon(coords, _) => coords
-        .iter()
-        .map(|coord| {
-          let dx = coord.x - click_coord.x;
-          let dy = coord.y - click_coord.y;
-          f64::from(dx * dx + dy * dy).sqrt()
-        })
-        .fold(f64::INFINITY, f64::min),
-      Geometry::GeometryCollection(geometries, _) => geometries
-        .iter()
-        .map(|geom| self.calculate_distance_to_geometry(geom, click_coord))
-        .fold(f64::INFINITY, f64::min),
-    }
+    self.highlighted_geometry = None;
+    self.just_highlighted = false;
+    None
   }
 }

@@ -4,7 +4,8 @@ use egui::{
 };
 
 use crate::map::{
-  coordinates::{BoundingBox, Coordinate, Transform},
+  coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform},
+  distance,
   geometry_collection::{DEFAULT_STYLE, Geometry, Style},
 };
 
@@ -20,6 +21,27 @@ pub trait Drawable {
   fn bounding_box(&self) -> Option<BoundingBox> {
     None
   }
+  /// Get the underlying geometry if this drawable is a geometry
+  fn as_geometry(&self) -> Option<&Geometry<PixelCoordinate>> {
+    None
+  }
+  /// Calculate distance from this drawable to a point
+  fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
+    if let Some(geometry) = self.as_geometry() {
+      distance::distance_to_geometry(geometry, point)
+    } else if let Some(bbox) = self.bounding_box() {
+      if bbox.is_valid() {
+        let center = bbox.center();
+        let dx = center.x - point.x;
+        let dy = center.y - point.y;
+        Some(f64::from(dx * dx + dy * dy).sqrt())
+      } else {
+        None
+      }
+    } else {
+      None
+    }
+  }
 }
 
 impl Drawable for egui::Shape {
@@ -28,7 +50,7 @@ impl Drawable for egui::Shape {
   }
 }
 
-impl<C: Coordinate> Drawable for Geometry<C> {
+impl<C: Coordinate + 'static> Drawable for Geometry<C> {
   fn draw(&self, painter: &Painter, transform: &Transform) {
     for el in self
       .flat_iterate_with_merged_style(&Style::default())
@@ -78,5 +100,35 @@ impl<C: Coordinate> Drawable for Geometry<C> {
 
   fn bounding_box(&self) -> Option<BoundingBox> {
     Some(Geometry::bounding_box(self))
+  }
+
+  fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
+    let converted = self.convert_to_pixel_coordinates();
+    distance::distance_to_geometry(&converted, point)
+  }
+}
+
+impl<C: Coordinate> Geometry<C> {
+  fn convert_to_pixel_coordinates(&self) -> Geometry<PixelCoordinate> {
+    match self {
+      Geometry::Point(coord, metadata) => {
+        Geometry::Point(coord.as_pixel_coordinate(), metadata.clone())
+      }
+      Geometry::LineString(coords, metadata) => Geometry::LineString(
+        coords.iter().map(Coordinate::as_pixel_coordinate).collect(),
+        metadata.clone(),
+      ),
+      Geometry::Polygon(coords, metadata) => Geometry::Polygon(
+        coords.iter().map(Coordinate::as_pixel_coordinate).collect(),
+        metadata.clone(),
+      ),
+      Geometry::GeometryCollection(geometries, metadata) => Geometry::GeometryCollection(
+        geometries
+          .iter()
+          .map(Geometry::convert_to_pixel_coordinates)
+          .collect(),
+        metadata.clone(),
+      ),
+    }
   }
 }
