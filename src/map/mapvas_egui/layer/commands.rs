@@ -8,6 +8,7 @@ use log::error;
 use serde::{Deserialize, Serialize};
 
 use crate::map::coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform};
+use egui::Pos2;
 
 use super::{Layer, LayerProperties, drawable::Drawable};
 
@@ -119,7 +120,6 @@ impl Layer for CommandLayer {
     transform: &crate::map::coordinates::Transform,
     _rect: egui::Rect,
   ) {
-    // Update.
     self.recv.try_iter().for_each(|update| {
       for command in self
         .commands
@@ -130,12 +130,10 @@ impl Layer for CommandLayer {
       }
     });
 
-    // Run.
     for command in &mut self.commands {
       command.run();
     }
 
-    // Draw.
     if self.visible() {
       for command in self.commands.iter().filter(|command| command.is_visible()) {
         let drawable = command.result();
@@ -179,6 +177,10 @@ impl Layer for CommandLayer {
       .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
 
     bb.is_valid().then_some(bb)
+  }
+
+  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
+    false
   }
 }
 

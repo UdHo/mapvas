@@ -119,6 +119,11 @@ impl eframe::App for MapApp {
       self.show_sidebar_toggle_button(ctx);
     }
 
+    // Show sidebar if there's a highlighted geometry (from double-click)
+    if self.map.has_highlighted_geometry() {
+      self.sidebar.show();
+    }
+
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
       .show(ctx, |ui| {

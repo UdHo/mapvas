@@ -18,6 +18,7 @@ use log::{debug, info};
 
 use super::{
   coordinates::{BoundingBox, PixelPosition},
+  geometry_collection::Metadata,
   map_event::MapEvent,
 };
 
@@ -25,6 +26,16 @@ mod helpers;
 
 mod layer;
 pub use layer::ParameterUpdate;
+
+#[derive(Debug, Clone)]
+pub struct GeometryInfo {
+  pub layer_id: String,
+  pub geometry_type: String,
+  pub coordinate: PixelCoordinate,
+  pub wgs84: WGS84Coordinate,
+  pub metadata: Metadata,
+  pub details: String,
+}
 
 pub struct Map {
   transform: Transform,
@@ -34,6 +45,7 @@ pub struct Map {
   remote: Remote,
   right_click: Option<PixelCoordinate>,
   keys: Vec<String>,
+  geometry_info: Option<GeometryInfo>,
 }
 
 impl Map {
@@ -85,10 +97,86 @@ impl Map {
         remote: remote.clone(),
         right_click: None,
         keys,
+        geometry_info: None,
       },
       remote,
       map_data_holder,
     )
+  }
+
+  fn handle_double_click(&mut self, pos: egui::Pos2) {
+    // Let layers handle the double-click event in reverse order (top to bottom)
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut().rev() {
+        if layer.handle_double_click(pos, &self.transform) {
+          // Event was handled by this layer, stop propagation
+          return;
+        }
+      }
+    }
+    // If no layer handled the event, clear geometry info
+    self.geometry_info = None;
+  }
+
+  fn show_geometry_info(&mut self, ui: &mut Ui) {
+    if let Some(info) = &self.geometry_info {
+      let mut close_requested = false;
+
+      egui::Window::new("Geometry Information")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+        .show(ui.ctx(), |ui| {
+          ui.set_min_width(250.0);
+
+          ui.heading(&info.geometry_type);
+          ui.separator();
+
+          ui.horizontal(|ui| {
+            ui.label("Layer:");
+            ui.strong(&info.layer_id);
+          });
+
+          ui.horizontal(|ui| {
+            ui.label("Position:");
+            ui.label(format!("{:.6}, {:.6}", info.wgs84.lat, info.wgs84.lon));
+          });
+
+          ui.horizontal(|ui| {
+            ui.label("Details:");
+            ui.label(&info.details);
+          });
+
+          if let Some(label) = &info.metadata.label {
+            ui.horizontal(|ui| {
+              ui.label("Label:");
+              ui.strong(label);
+            });
+          }
+
+          if let Some(style) = &info.metadata.style {
+            ui.horizontal(|ui| {
+              ui.label("Style:");
+              let color = egui::RichText::new("●").color(style.color());
+              ui.label(color);
+              if style.fill_color() != egui::Color32::TRANSPARENT {
+                let fill_color = egui::RichText::new("■").color(style.fill_color());
+                ui.label(fill_color);
+              }
+            });
+          }
+
+          ui.separator();
+
+          if ui.button("Close").clicked() {
+            close_requested = true;
+          }
+        });
+
+      if close_requested {
+        self.geometry_info = None;
+      }
+    }
   }
 
   fn handle_keys(&mut self, events: impl Iterator<Item = egui::Event>, rect: Rect) {
@@ -403,6 +491,12 @@ impl Widget for &mut Map {
       info!("Clicked at: {:?}", response.hover_pos());
     }
 
+    if response.double_clicked() {
+      if let Some(pos) = response.hover_pos() {
+        self.handle_double_click(pos);
+      }
+    }
+
     if !response.context_menu_opened() {
       self.right_click = None;
     }
@@ -468,7 +562,25 @@ impl Widget for &mut Map {
     // Handle map events last (and request repaint if there were any) to have all the other input
     // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
+
+    // Show geometry info popup if available
+    self.show_geometry_info(ui);
+
     response
+  }
+}
+
+impl Map {
+  #[must_use]
+  pub fn has_highlighted_geometry(&self) -> bool {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if layer.has_highlighted_geometry() {
+          return true;
+        }
+      }
+    }
+    false
   }
 }
 

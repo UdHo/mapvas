@@ -1,5 +1,5 @@
 use crate::map::coordinates::{BoundingBox, Transform};
-use egui::{Rect, Ui};
+use egui::{Pos2, Rect, Ui};
 
 /// Allows to display results of commands that return coordinates.
 mod commands;
@@ -28,11 +28,7 @@ pub trait Layer {
   fn bounding_box(&self) -> Option<BoundingBox> {
     None
   }
-  /// Process any pending events immediately (e.g., layer data updates)
-  /// This is called before focus operations to ensure data is up-to-date
   fn process_pending_events(&mut self) {}
-  /// Discard any pending events without processing them
-  /// This is called before clear operations to avoid processing data that will be cleared
   fn discard_pending_events(&mut self) {}
   fn ui(&mut self, ui: &mut Ui) {
     ui.collapsing(self.name().to_owned(), |ui| {
@@ -41,6 +37,15 @@ pub trait Layer {
     });
   }
   fn ui_content(&mut self, ui: &mut Ui);
+  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
+    false
+  }
+  fn find_closest_geometry(&mut self, _pos: Pos2, _transform: &Transform) -> (f64, bool) {
+    (f64::INFINITY, false)
+  }
+  fn has_highlighted_geometry(&self) -> bool {
+    false
+  }
 }
 
 /// Common properties for all layers.
