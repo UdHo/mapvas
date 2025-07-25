@@ -101,11 +101,75 @@ pub enum ParameterUpdate {
   DragUpdate(PixelPosition, PixelPosition, Transform),
 }
 
-fn truncate_label(label: &str, max_len: usize) -> String {
-  if label.len() > max_len {
-    format!("{}...", &label[..max_len])
+fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
+  // Ensure minimum available width
+  if available_width < 20.0 {
+    return ("...".to_string(), true);
+  }
+
+  let chars: Vec<char> = label.chars().collect();
+
+  // Fast fallback for very long strings to prevent hanging
+  if chars.len() > 200 {
+    let truncated: String = chars[..50].iter().collect();
+    return (format!("{}...", truncated), true);
+  }
+
+  let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
+  let ellipsis = "...";
+
+  // Measure using egui's text measurement utilities
+  let galley =
+    ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let full_width = galley.size().x;
+
+  // Add some safety margin to prevent edge cases
+  let safe_available_width = available_width - 5.0;
+
+  if full_width <= safe_available_width {
+    return (label.to_string(), false);
+  }
+
+  // Find the longest substring that fits with ellipsis
+  let ellipsis_galley =
+    ui.fonts(|f| f.layout_no_wrap(ellipsis.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let ellipsis_width = ellipsis_galley.size().x;
+
+  // If even ellipsis doesn't fit, return just dots
+  if ellipsis_width > safe_available_width {
+    return ("...".to_string(), true);
+  }
+
+  let mut best_len = 0;
+
+  // Use binary search for efficiency with long strings
+  let mut left = 0;
+  let mut right = chars.len().min(100); // Cap to prevent excessive measurements
+
+  while left <= right {
+    let mid = (left + right) / 2;
+    if mid == 0 {
+      break;
+    }
+
+    let substring: String = chars[..mid].iter().collect();
+    let substring_galley =
+      ui.fonts(|f| f.layout_no_wrap(substring, font_id.clone(), egui::Color32::BLACK));
+    let test_width = substring_galley.size().x + ellipsis_width;
+
+    if test_width <= safe_available_width {
+      best_len = mid;
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+
+  if best_len == 0 {
+    (ellipsis.to_string(), true)
   } else {
-    label.to_string()
+    let truncated: String = chars[..best_len].iter().collect();
+    (format!("{truncated}{ellipsis}"), true)
   }
 }
 
@@ -222,7 +286,10 @@ impl Layer for CommandLayer {
         frame.show(ui, |ui| {
           let command_header_id = egui::Id::new(format!("command_header_{cmd_idx}"));
 
-          let mut command_header = egui::CollapsingHeader::new(truncate_label(command.name(), 40))
+          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let (truncated_command_name, was_truncated) =
+            truncate_label_by_width(ui, command.name(), available_width);
+          let mut command_header = egui::CollapsingHeader::new(truncated_command_name)
             .id_salt(command_header_id)
             .default_open(is_highlighted);
 
@@ -231,13 +298,36 @@ impl Layer for CommandLayer {
             command_header = command_header.open(Some(true));
           }
 
-          command_header.show(ui, |ui| {
+          let command_header_response = command_header.show(ui, |ui| {
             visible_locking_ui(ui, command.as_mut());
             command.ui(ui);
           });
+
+          if was_truncated && command_header_response.header_response.clicked() {
+            let popup_id = egui::Id::new(format!("command_popup_{cmd_idx}"));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, command.name().to_string()));
+          }
         });
       }
     });
+
+    // Show popups for command names if clicked when truncated
+    for cmd_idx in 0..self.commands.len() {
+      let popup_id = egui::Id::new(format!("command_popup_{cmd_idx}"));
+      if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        egui::Window::new("Full Command Name")
+          .id(popup_id)
+          .collapsible(false)
+          .resizable(false)
+          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .show(ui.ctx(), |ui| {
+            ui.label(&full_text);
+            if ui.button("Close").clicked() {
+              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+            }
+          });
+      }
+    }
 
     self.just_highlighted = false;
   }

@@ -26,11 +26,75 @@ pub struct ShapeLayer {
   just_highlighted: bool,
 }
 
-fn truncate_label(label: &str, max_len: usize) -> String {
-  if label.len() > max_len {
-    format!("{}...", &label[..max_len])
+fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
+  // Ensure minimum available width
+  if available_width < 20.0 {
+    return ("...".to_string(), true);
+  }
+
+  let chars: Vec<char> = label.chars().collect();
+
+  // Fast fallback for very long strings to prevent hanging
+  if chars.len() > 200 {
+    let truncated: String = chars[..50].iter().collect();
+    return (format!("{}...", truncated), true);
+  }
+
+  let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
+  let ellipsis = "...";
+
+  // Measure using egui's text measurement utilities
+  let galley =
+    ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let full_width = galley.size().x;
+
+  // Add some safety margin to prevent edge cases
+  let safe_available_width = available_width - 5.0;
+
+  if full_width <= safe_available_width {
+    return (label.to_string(), false);
+  }
+
+  // Find the longest substring that fits with ellipsis
+  let ellipsis_galley =
+    ui.fonts(|f| f.layout_no_wrap(ellipsis.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let ellipsis_width = ellipsis_galley.size().x;
+
+  // If even ellipsis doesn't fit, return just dots
+  if ellipsis_width > safe_available_width {
+    return ("...".to_string(), true);
+  }
+
+  let mut best_len = 0;
+
+  // Use binary search for efficiency with long strings
+  let mut left = 0;
+  let mut right = chars.len().min(100); // Cap to prevent excessive measurements
+
+  while left <= right {
+    let mid = (left + right) / 2;
+    if mid == 0 {
+      break;
+    }
+
+    let substring: String = chars[..mid].iter().collect();
+    let substring_galley =
+      ui.fonts(|f| f.layout_no_wrap(substring, font_id.clone(), egui::Color32::BLACK));
+    let test_width = substring_galley.size().x + ellipsis_width;
+
+    if test_width <= safe_available_width {
+      best_len = mid;
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+
+  if best_len == 0 {
+    (ellipsis.to_string(), true)
   } else {
-    label.to_string()
+    let truncated: String = chars[..best_len].iter().collect();
+    (format!("{truncated}{ellipsis}"), true)
   }
 }
 
@@ -87,12 +151,27 @@ impl ShapeLayer {
 
       let header_id = egui::Id::new(format!("shape_layer_{layer_id}"));
 
-      let mut header = egui::CollapsingHeader::new(format!(
-        "📁 {} ({shapes_count})",
-        truncate_label(&layer_id, 30)
-      ))
-      .id_salt(header_id)
-      .default_open(has_highlighted_geometry);
+      // Reserve space for the folder icon, parentheses, count, and padding - be more conservative
+      let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
+      let reserved_galley = ui.fonts(|f| {
+        f.layout_no_wrap(
+          "📁  (9999) ".to_string(), // More conservative estimate
+          font_id.clone(),
+          egui::Color32::BLACK,
+        )
+      });
+      let reserved_width = reserved_galley.size().x + 30.0; // More padding
+      let available_width = (ui.available_width() - reserved_width).max(50.0); // Ensure minimum width
+      let (truncated_layer_id, was_truncated) =
+        truncate_label_by_width(ui, &layer_id, available_width);
+      let mut header =
+        egui::CollapsingHeader::new(format!("📁 {truncated_layer_id} ({shapes_count})"))
+          .id_salt(header_id)
+          .default_open(has_highlighted_geometry);
+
+      if was_truncated {
+        header = header.show_background(true);
+      }
 
       // Only force open once when just highlighted, then let user control it
       if self.just_highlighted && has_highlighted_geometry {
@@ -110,7 +189,17 @@ impl ShapeLayer {
         }
       });
 
-      header_response.header_response.context_menu(|ui| {
+      let header_resp = header_response.header_response;
+      if was_truncated && header_resp.clicked() {
+        ui.memory_mut(|mem| {
+          mem.data.insert_temp(
+            egui::Id::new(format!("layer_popup_{layer_id}")),
+            layer_id.clone(),
+          )
+        });
+      }
+
+      header_resp.context_menu(|ui| {
         let layer_visible = *self.layer_visibility.get(&layer_id).unwrap_or(&true);
         let visibility_text = if layer_visible {
           "Hide Layer"
@@ -136,6 +225,22 @@ impl ShapeLayer {
           ui.close();
         }
       });
+
+      // Show popup with full layer name if clicked when truncated
+      let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
+      if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        egui::Window::new("Full Layer Name")
+          .id(popup_id)
+          .collapsible(false)
+          .resizable(false)
+          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .show(ui.ctx(), |ui| {
+            ui.label(&full_text);
+            if ui.button("Close").clicked() {
+              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+            }
+          });
+      }
     }
   }
 
@@ -234,7 +339,14 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📍", metadata, false);
 
         if let Some(label) = &metadata.label {
-          ui.strong(truncate_label(label, 50));
+          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let (truncated_label, was_truncated) =
+            truncate_label_by_width(ui, label, available_width);
+          let response = ui.strong(truncated_label);
+          if was_truncated && response.clicked() {
+            let popup_id = egui::Id::new(format!("point_popup_{layer_id}_{shape_idx}"));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+          }
           ui.small(format!("({:.4}, {:.4})", wgs84.lat, wgs84.lon));
         } else {
           ui.label(format!("{:.4}, {:.4}", wgs84.lat, wgs84.lon));
@@ -245,7 +357,14 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📏", metadata, false);
 
         if let Some(label) = &metadata.label {
-          ui.strong(truncate_label(label, 50));
+          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let (truncated_label, was_truncated) =
+            truncate_label_by_width(ui, label, available_width);
+          let response = ui.strong(truncated_label);
+          if was_truncated && response.clicked() {
+            let popup_id = egui::Id::new(format!("line_popup_{layer_id}_{shape_idx}"));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+          }
         } else {
           ui.label("Line");
         }
@@ -266,7 +385,14 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "⬟", metadata, true);
 
         if let Some(label) = &metadata.label {
-          ui.strong(truncate_label(label, 50));
+          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let (truncated_label, was_truncated) =
+            truncate_label_by_width(ui, label, available_width);
+          let response = ui.strong(truncated_label);
+          if was_truncated && response.clicked() {
+            let popup_id = egui::Id::new(format!("polygon_popup_{layer_id}_{shape_idx}"));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+          }
         } else {
           ui.label("Polygon");
         }
@@ -306,8 +432,40 @@ impl ShapeLayer {
       Geometry::GeometryCollection(geometries, metadata) => {
         ui.label(format!("📦 Collection ({} items)", geometries.len()));
         if let Some(label) = &metadata.label {
-          ui.small(format!("- {}", truncate_label(label, 50)));
+          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding  
+          let (truncated_label, was_truncated) =
+            truncate_label_by_width(ui, label, available_width);
+          let response = ui.small(format!("- {truncated_label}"));
+          if was_truncated && response.clicked() {
+            let popup_id = egui::Id::new(format!("collection_popup_{layer_id}_{shape_idx}"));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+          }
         }
+      }
+    }
+
+    // Show popups for geometry labels if clicked when truncated
+    let geometry_popup_ids = [
+      format!("point_popup_{layer_id}_{shape_idx}"),
+      format!("line_popup_{layer_id}_{shape_idx}"),
+      format!("polygon_popup_{layer_id}_{shape_idx}"),
+      format!("collection_popup_{layer_id}_{shape_idx}"),
+    ];
+
+    for popup_id_str in geometry_popup_ids {
+      let popup_id = egui::Id::new(&popup_id_str);
+      if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        egui::Window::new("Full Label")
+          .id(popup_id)
+          .collapsible(false)
+          .resizable(false)
+          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .show(ui.ctx(), |ui| {
+            ui.label(&full_text);
+            if ui.button("Close").clicked() {
+              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+            }
+          });
       }
     }
   }
