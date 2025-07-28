@@ -269,7 +269,7 @@ impl Layer for CommandLayer {
         let is_highlighted = self.highlighted_command == Some(cmd_idx);
 
         let bg_color = if is_highlighted {
-          Some(egui::Color32::from_rgb(100, 149, 237))
+          Some(egui::Color32::from_rgb(60, 80, 110))
         } else {
           None
         };
@@ -315,17 +315,30 @@ impl Layer for CommandLayer {
     for cmd_idx in 0..self.commands.len() {
       let popup_id = egui::Id::new(format!("command_popup_{cmd_idx}"));
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        let mut is_open = true;
         egui::Window::new("Full Command Name")
           .id(popup_id)
+          .open(&mut is_open)
           .collapsible(false)
-          .resizable(false)
-          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .resizable(true)
+          .movable(true)
+          .default_width(500.0)
+          .min_width(400.0)
+          .max_width(800.0)
+          .max_height(400.0)
           .show(ui.ctx(), |ui| {
-            ui.label(&full_text);
-            if ui.button("Close").clicked() {
-              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
-            }
+            egui::ScrollArea::vertical()
+              .max_height(300.0)
+              .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                  ui.add(egui::Label::new(&full_text).wrap());
+                });
+              });
           });
+        
+        if !is_open {
+          ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+        }
       }
     }
 

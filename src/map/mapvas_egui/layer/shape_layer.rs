@@ -160,8 +160,8 @@ impl ShapeLayer {
           egui::Color32::BLACK,
         )
       });
-      let reserved_width = reserved_galley.size().x + 30.0; // More padding
-      let available_width = (ui.available_width() - reserved_width).max(50.0); // Ensure minimum width
+      let reserved_width = reserved_galley.size().x + 60.0; // Much more padding for scrollbar
+      let available_width = (ui.available_width() - reserved_width).max(30.0); // Smaller minimum width
       let (truncated_layer_id, was_truncated) =
         truncate_label_by_width(ui, &layer_id, available_width);
       let mut header =
@@ -229,17 +229,30 @@ impl ShapeLayer {
       // Show popup with full layer name if clicked when truncated
       let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        let mut is_open = true;
         egui::Window::new("Full Layer Name")
           .id(popup_id)
+          .open(&mut is_open)
           .collapsible(false)
-          .resizable(false)
-          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .resizable(true)
+          .movable(true)
+          .default_width(500.0)
+          .min_width(400.0)
+          .max_width(800.0)
+          .max_height(400.0)
           .show(ui.ctx(), |ui| {
-            ui.label(&full_text);
-            if ui.button("Close").clicked() {
-              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
-            }
+            egui::ScrollArea::vertical()
+              .max_height(300.0)
+              .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                  ui.add(egui::Label::new(&full_text).wrap());
+                });
+              });
           });
+        
+        if !is_open {
+          ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+        }
       }
     }
   }
@@ -256,7 +269,7 @@ impl ShapeLayer {
     let is_highlighted = self.highlighted_geometry.as_ref() == Some(&geometry_key);
 
     let bg_color = if is_highlighted {
-      Some(egui::Color32::from_rgb(100, 149, 237))
+      Some(egui::Color32::from_rgb(60, 80, 110))
     } else {
       None
     };
@@ -339,7 +352,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📍", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -347,9 +360,15 @@ impl ShapeLayer {
             let popup_id = egui::Id::new(format!("point_popup_{layer_id}_{shape_idx}"));
             ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
           }
-          ui.small(format!("({:.4}, {:.4})", wgs84.lat, wgs84.lon));
+          let coord_text = format!("({:.3}, {:.3})", wgs84.lat, wgs84.lon);
+          let available_width = (ui.available_width() - 20.0).max(30.0);
+          let (truncated_coord, _) = truncate_label_by_width(ui, &coord_text, available_width);
+          ui.small(truncated_coord);
         } else {
-          ui.label(format!("{:.4}, {:.4}", wgs84.lat, wgs84.lon));
+          let coord_text = format!("{:.3}, {:.3}", wgs84.lat, wgs84.lon);
+          let available_width = (ui.available_width() - 20.0).max(30.0);
+          let (truncated_coord, _) = truncate_label_by_width(ui, &coord_text, available_width);
+          ui.label(truncated_coord);
         }
       }
 
@@ -357,7 +376,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📏", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -374,10 +393,13 @@ impl ShapeLayer {
         if let (Some(first), Some(last)) = (coords.first(), coords.last()) {
           let first_wgs84 = first.as_wgs84();
           let last_wgs84 = last.as_wgs84();
-          ui.small(format!(
+          let coord_text = format!(
             "{:.2},{:.2}→{:.2},{:.2}",
             first_wgs84.lat, first_wgs84.lon, last_wgs84.lat, last_wgs84.lon
-          ));
+          );
+          let available_width = (ui.available_width() - 20.0).max(30.0);
+          let (truncated_coord, _) = truncate_label_by_width(ui, &coord_text, available_width);
+          ui.small(truncated_coord);
         }
       }
 
@@ -385,7 +407,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "⬟", metadata, true);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -423,16 +445,19 @@ impl ShapeLayer {
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0);
 
-          ui.small(format!(
+          let bounds_text = format!(
             "{min_lat:.1},{min_lon:.1}→{max_lat:.1},{max_lon:.1}"
-          ));
+          );
+          let available_width = (ui.available_width() - 20.0).max(30.0);
+          let (truncated_bounds, _) = truncate_label_by_width(ui, &bounds_text, available_width);
+          ui.small(truncated_bounds);
         }
       }
 
       Geometry::GeometryCollection(geometries, metadata) => {
         ui.label(format!("📦 Collection ({} items)", geometries.len()));
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding  
+          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar  
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.small(format!("- {truncated_label}"));
@@ -455,17 +480,30 @@ impl ShapeLayer {
     for popup_id_str in geometry_popup_ids {
       let popup_id = egui::Id::new(&popup_id_str);
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        let mut is_open = true;
         egui::Window::new("Full Label")
           .id(popup_id)
+          .open(&mut is_open)
           .collapsible(false)
-          .resizable(false)
-          .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+          .resizable(true)
+          .movable(true)
+          .default_width(500.0)
+          .min_width(400.0)
+          .max_width(800.0)
+          .max_height(400.0)
           .show(ui.ctx(), |ui| {
-            ui.label(&full_text);
-            if ui.button("Close").clicked() {
-              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
-            }
+            egui::ScrollArea::vertical()
+              .max_height(300.0)
+              .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                  ui.add(egui::Label::new(&full_text).wrap());
+                });
+              });
           });
+        
+        if !is_open {
+          ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+        }
       }
     }
   }

@@ -138,6 +138,32 @@ impl ExeCfg {
       [ui.available_width(), 0.0],
       egui::TextEdit::singleline(&mut self.executable),
     );
+    
+    ui.separator();
+    ui.label("Coordinates:");
+    for (key, coord) in &self.coordinates {
+      match coord {
+        OoMCoordinates::Coordinate(c) => {
+          if c.is_valid() {
+            let wgs84 = c.as_wgs84();
+            ui.label(format!("{}: {:.4}, {:.4}", key, wgs84.lat, wgs84.lon));
+          } else {
+            ui.label(format!("{key}: (not set)"));
+          }
+        }
+        OoMCoordinates::Coordinates(coords) => {
+          if coords.is_empty() {
+            ui.label(format!("{key}: (no coordinates)"));
+          } else {
+            ui.label(format!("{}: {} coordinates", key, coords.len()));
+            for (i, c) in coords.iter().enumerate() {
+              let wgs84 = c.as_wgs84();
+              ui.small(format!("  {}: {:.4}, {:.4}", i + 1, wgs84.lat, wgs84.lon));
+            }
+          }
+        }
+      }
+    }
   }
 
   fn bounding_box(&self) -> BoundingBox {
@@ -275,6 +301,32 @@ impl CurlCfg {
       [ui.available_width(), 0.0],
       egui::TextEdit::singleline(&mut self.coordinate_template),
     );
+    
+    ui.separator();
+    ui.label("Coordinates:");
+    for (key, coord) in &self.coordinates {
+      match coord {
+        OoMCoordinates::Coordinate(c) => {
+          if c.is_valid() {
+            let wgs84 = c.as_wgs84();
+            ui.label(format!("{}: {:.4}, {:.4}", key, wgs84.lat, wgs84.lon));
+          } else {
+            ui.label(format!("{key}: (not set)"));
+          }
+        }
+        OoMCoordinates::Coordinates(coords) => {
+          if coords.is_empty() {
+            ui.label(format!("{key}: (no coordinates)"));
+          } else {
+            ui.label(format!("{}: {} coordinates", key, coords.len()));
+            for (i, c) in coords.iter().enumerate() {
+              let wgs84 = c.as_wgs84();
+              ui.small(format!("  {}: {:.4}, {:.4}", i + 1, wgs84.lat, wgs84.lon));
+            }
+          }
+        }
+      }
+    }
   }
 
   fn bounding_box(&self) -> BoundingBox {
@@ -403,6 +455,352 @@ impl ExternalCommand {
   }
 }
 
+impl ExternalCommand {
+  // Helper function to calculate approximate line distance in meters
+  fn calculate_line_distance(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
+    if coords.len() < 2 {
+      return 0.0;
+    }
+    
+    coords.windows(2)
+      .map(|window| {
+        let p1 = window[0].as_wgs84();
+        let p2 = window[1].as_wgs84();
+        // Approximate distance using Haversine formula
+        let lat1 = p1.lat as f64 * std::f64::consts::PI / 180.0;
+        let lat2 = p2.lat as f64 * std::f64::consts::PI / 180.0;
+        let dlat = lat2 - lat1;
+        let dlon = (p2.lon - p1.lon) as f64 * std::f64::consts::PI / 180.0;
+        
+        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+        6371000.0 * c // Earth radius in meters
+      })
+      .sum()
+  }
+  
+  // Helper function to calculate approximate polygon area in square meters
+  fn calculate_polygon_area(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
+    if coords.len() < 3 {
+      return 0.0;
+    }
+    
+    // Simple shoelace formula approximation
+    let wgs84_coords: Vec<_> = coords.iter().map(|c| c.as_wgs84()).collect();
+    let mut area = 0.0;
+    
+    for i in 0..wgs84_coords.len() {
+      let j = (i + 1) % wgs84_coords.len();
+      area += (wgs84_coords[j].lon as f64) * (wgs84_coords[i].lat as f64);
+      area -= (wgs84_coords[i].lon as f64) * (wgs84_coords[j].lat as f64);
+    }
+    
+    // Convert from degrees to approximate square meters (very rough approximation)
+    (area.abs() / 2.0) * 111320.0 * 110540.0
+  }
+  
+  // Helper function to calculate polygon perimeter
+  fn calculate_polygon_perimeter(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
+    if coords.len() < 2 {
+      return 0.0;
+    }
+    
+    let mut perimeter = Self::calculate_line_distance(coords);
+    
+    // Add distance from last point back to first point
+    if coords.len() > 2 {
+      let first = coords[0].as_wgs84();
+      let last = coords[coords.len() - 1].as_wgs84();
+      let lat1 = first.lat as f64 * std::f64::consts::PI / 180.0;
+      let lat2 = last.lat as f64 * std::f64::consts::PI / 180.0;
+      let dlat = lat2 - lat1;
+      let dlon = (last.lon - first.lon) as f64 * std::f64::consts::PI / 180.0;
+      
+      let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+      let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+      perimeter += 6371000.0 * c;
+    }
+    
+    perimeter
+  }
+  
+  // Helper function to count geometry types in a collection
+  fn count_geometry_types(geometries: &[Geometry<crate::map::coordinates::PixelCoordinate>]) -> (usize, usize, usize) {
+    let mut points = 0;
+    let mut lines = 0;
+    let mut polygons = 0;
+    
+    for geom in geometries {
+      match geom {
+        Geometry::Point(_, _) => points += 1,
+        Geometry::LineString(_, _) => lines += 1,
+        Geometry::Polygon(_, _) => polygons += 1,
+        Geometry::GeometryCollection(nested, _) => {
+          let (p, l, poly) = Self::count_geometry_types(nested);
+          points += p;
+          lines += l;
+          polygons += poly;
+        }
+      }
+    }
+    
+    (points, lines, polygons)
+  }
+
+  fn display_geometry_info(ui: &mut egui::Ui, drawable: &dyn Drawable) {
+    // Try to get geometry to display detailed info
+    if let Some(geometry) = drawable.as_geometry() {
+      Self::display_geometry_details(ui, geometry);
+    } else {
+      // Fallback: show bounding box info
+      if let Some(bbox) = drawable.bounding_box() {
+        if bbox.is_valid() {
+          let center = bbox.center().as_wgs84();
+          let bbox_text = "Geometry bounding box:";
+          let available_width = (ui.available_width() - 80.0).max(30.0); // Much more conservative for scrollbar
+          let (truncated_bbox, _) = super::truncate_label_by_width(ui, bbox_text, available_width);
+          ui.label(truncated_bbox);
+          
+          let center_text = format!("  Center: {:.3}, {:.3}", center.lat, center.lon);
+          let (truncated_center, _) = super::truncate_label_by_width(ui, &center_text, available_width);
+          ui.small(truncated_center);
+          
+          let size_text = format!("  Size: {:.0}m × {:.0}m", bbox.width(), bbox.height());
+          let (truncated_size, _) = super::truncate_label_by_width(ui, &size_text, available_width);
+          ui.small(truncated_size);
+        } else {
+          let error_text = "Invalid geometry bounding box";
+          let available_width = (ui.available_width() - 80.0).max(30.0);
+          let (truncated_error, _) = super::truncate_label_by_width(ui, error_text, available_width);
+          ui.label(truncated_error);
+        }
+      } else {
+        let no_data_text = "No geometry data available";
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated_no_data, _) = super::truncate_label_by_width(ui, no_data_text, available_width);
+        ui.label(truncated_no_data);
+      }
+    }
+  }
+  
+  fn display_geometry_details(ui: &mut egui::Ui, geometry: &Geometry<crate::map::coordinates::PixelCoordinate>) {
+    match geometry {
+      Geometry::Point(coord, metadata) => {
+        let wgs84 = coord.as_wgs84();
+        let point_text = format!("📍 Point at {:.3}°N, {:.3}°E", wgs84.lat, wgs84.lon);
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated_point, _was_truncated) = super::truncate_label_by_width(ui, &point_text, available_width);
+        let response = ui.label(truncated_point);
+        if response.clicked() {
+          let popup_id = egui::Id::new("external_point_popup");
+          let full_text = format!("📍 Point Location\nLatitude: {:.6}°\nLongitude: {:.6}°\nCoordinates: {:.4}°N, {:.4}°E\n\nFull Coordinates:\n{:.6}, {:.6}", wgs84.lat, wgs84.lon, wgs84.lat, wgs84.lon, wgs84.lat, wgs84.lon);
+          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+        }
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let (truncated_label, _was_label_truncated) = super::truncate_label_by_width(ui, label, available_width);
+          let label_response = ui.small(format!("  Label: {truncated_label}"));
+          if label_response.clicked() {
+            let popup_id = egui::Id::new("external_point_label_popup");
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, format!("Point Label: {}", label)));
+          }
+        }
+      }
+      Geometry::LineString(coords, metadata) => {
+        let total_distance = Self::calculate_line_distance(coords);
+        let linestring_text = format!("📏 Line {} pts ({:.0}m)", coords.len(), total_distance);
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated_linestring, _was_truncated) = super::truncate_label_by_width(ui, &linestring_text, available_width);
+        let response = ui.label(truncated_linestring);
+        if response.clicked() {
+          let popup_id = egui::Id::new("external_linestring_popup");
+          let coords_text = coords.iter()
+            .enumerate()
+            .map(|(i, coord)| {
+              let wgs84 = coord.as_wgs84();
+              format!("{:2}: {:.6},{:.6}", i + 1, wgs84.lat, wgs84.lon)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+          let full_text = format!("📏 LineString Details\nTotal Points: {}\nApproximate Length: {:.2} meters\nSegments: {}\n\nAll Coordinates:\n{}", coords.len(), total_distance, coords.len().saturating_sub(1), coords_text);
+          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+        }
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let (truncated_label, _was_label_truncated) = super::truncate_label_by_width(ui, label, available_width);
+          let label_response = ui.small(format!("  Label: {truncated_label}"));
+          if label_response.clicked() {
+            let popup_id = egui::Id::new("external_linestring_label_popup");
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, format!("LineString Label: {}", label)));
+          }
+        }
+        if let (Some(first), Some(last)) = (coords.first(), coords.last()) {
+          let first_wgs84 = first.as_wgs84();
+          let last_wgs84 = last.as_wgs84();
+          let start_text = format!("  Start: {:.3}°N, {:.3}°E", first_wgs84.lat, first_wgs84.lon);
+          let end_text = format!("  End: {:.3}°N, {:.3}°E", last_wgs84.lat, last_wgs84.lon);
+          let available_width = (ui.available_width() - 80.0).max(30.0);
+          let (truncated_start, _start_truncated) = super::truncate_label_by_width(ui, &start_text, available_width);
+          let (truncated_end, _end_truncated) = super::truncate_label_by_width(ui, &end_text, available_width);
+          let start_response = ui.small(truncated_start);
+          if start_response.clicked() {
+            let popup_id = egui::Id::new("external_linestring_start_popup");
+            let full_text = format!("📏 LineString Start Point\nLatitude: {:.6}°\nLongitude: {:.6}°\nCoordinates: {:.4}°N, {:.4}°E\n\nFull Coordinates:\n{:.6}, {:.6}", first_wgs84.lat, first_wgs84.lon, first_wgs84.lat, first_wgs84.lon, first_wgs84.lat, first_wgs84.lon);
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+          }
+          let end_response = ui.small(truncated_end);
+          if end_response.clicked() {
+            let popup_id = egui::Id::new("external_linestring_end_popup");
+            let full_text = format!("📏 LineString End Point\nLatitude: {:.6}°\nLongitude: {:.6}°\nCoordinates: {:.4}°N, {:.4}°E\n\nFull Coordinates:\n{:.6}, {:.6}", last_wgs84.lat, last_wgs84.lon, last_wgs84.lat, last_wgs84.lon, last_wgs84.lat, last_wgs84.lon);
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+          }
+        }
+      }
+      Geometry::Polygon(coords, metadata) => {
+        let area = Self::calculate_polygon_area(coords);
+        let polygon_text = format!("⬟ Polygon {} vtx ({:.0}m²)", coords.len(), area);
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated_polygon, _was_truncated) = super::truncate_label_by_width(ui, &polygon_text, available_width);
+        let response = ui.label(truncated_polygon);
+        if response.clicked() {
+          let popup_id = egui::Id::new("external_polygon_popup");
+          let coords_text = coords.iter()
+            .enumerate()
+            .map(|(i, coord)| {
+              let wgs84 = coord.as_wgs84();
+              format!("{:2}: {:.6},{:.6}", i + 1, wgs84.lat, wgs84.lon)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+          let full_text = format!("⬟ Polygon Details\nVertices: {}\nApproximate Area: {:.2} square meters\nPerimeter: {:.2} meters\n\nAll Vertices:\n{}", coords.len(), area, Self::calculate_polygon_perimeter(coords), coords_text);
+          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+        }
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let (truncated_label, _was_label_truncated) = super::truncate_label_by_width(ui, label, available_width);
+          let label_response = ui.small(format!("  Label: {truncated_label}"));
+          if label_response.clicked() {
+            let popup_id = egui::Id::new("external_polygon_label_popup");
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, format!("Polygon Label: {}", label)));
+          }
+        }
+        if !coords.is_empty() {
+          let wgs84_coords: Vec<_> = coords.iter().map(crate::map::coordinates::Coordinate::as_wgs84).collect();
+          let min_lat = wgs84_coords.iter().map(|c| c.lat).fold(f32::INFINITY, f32::min);
+          let max_lat = wgs84_coords.iter().map(|c| c.lat).fold(f32::NEG_INFINITY, f32::max);
+          let min_lon = wgs84_coords.iter().map(|c| c.lon).fold(f32::INFINITY, f32::min);
+          let max_lon = wgs84_coords.iter().map(|c| c.lon).fold(f32::NEG_INFINITY, f32::max);
+          let bounds_text = format!("  Bounds: {min_lat:.2}°N-{max_lat:.2}°N, {min_lon:.2}°E-{max_lon:.2}°E");
+          let available_width = (ui.available_width() - 80.0).max(30.0);
+          let (truncated_bounds, _bounds_truncated) = super::truncate_label_by_width(ui, &bounds_text, available_width);
+          let bounds_response = ui.small(truncated_bounds);
+          if bounds_response.clicked() {
+            let popup_id = egui::Id::new("external_polygon_bounds_popup");
+            let full_text = format!("⬟ Polygon Bounding Box\nNorth: {:.6}°\nSouth: {:.6}°\nEast: {:.6}°\nWest: {:.6}°\nWidth: {:.1}m\nHeight: {:.1}m", max_lat, min_lat, max_lon, min_lon, (max_lon - min_lon) as f64 * 111320.0, (max_lat - min_lat) as f64 * 110540.0);
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+          }
+        }
+      }
+      Geometry::GeometryCollection(geometries, metadata) => {
+        let (points, lines, polygons) = Self::count_geometry_types(geometries);
+        let collection_text = format!("📦 {}p {}l {}poly", points, lines, polygons);
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated_collection, _was_truncated) = super::truncate_label_by_width(ui, &collection_text, available_width);
+        let response = ui.label(truncated_collection);
+        if response.clicked() {
+          let popup_id = egui::Id::new("external_collection_popup");
+          let geometries_text = geometries.iter()
+            .enumerate()
+            .map(|(i, geom)| {
+              match geom {
+                Geometry::Point(coord, _) => {
+                  let wgs84 = coord.as_wgs84();
+                  format!("  {}: Point ({:.6}, {:.6})", i + 1, wgs84.lat, wgs84.lon)
+                },
+                Geometry::LineString(coords, _) => {
+                  format!("  {}: LineString ({} points)", i + 1, coords.len())
+                },
+                Geometry::Polygon(coords, _) => {
+                  format!("  {}: Polygon ({} vertices)", i + 1, coords.len())
+                },
+                Geometry::GeometryCollection(nested, _) => {
+                  format!("  {}: Collection ({} items)", i + 1, nested.len())
+                }
+              }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+          let full_text = format!("📦 Geometry Collection\nTotal Items: {}\nPoints: {}\nLineStrings: {}\nPolygons: {}\nNested Collections: {}\n\nAll Geometries:\n{}", 
+            geometries.len(), points, lines, polygons, 
+            geometries.iter().filter(|g| matches!(g, Geometry::GeometryCollection(_, _))).count(),
+            geometries_text);
+          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+        }
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let (truncated_label, _was_label_truncated) = super::truncate_label_by_width(ui, label, available_width);
+          let label_response = ui.small(format!("  Label: {truncated_label}"));
+          if label_response.clicked() {
+            let popup_id = egui::Id::new("external_collection_label_popup");
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, format!("Collection Label: {}", label)));
+          }
+        }
+        for (i, geom) in geometries.iter().enumerate() {
+          ui.horizontal(|ui| {
+            ui.small(format!("  {}:", i + 1));
+            Self::display_geometry_details(ui, geom);
+          });
+        }
+      }
+    }
+    
+    // Show popups for external command geometry if clicked when truncated
+    let external_popup_ids = [
+      "external_point_popup",
+      "external_point_label_popup", 
+      "external_linestring_popup",
+      "external_linestring_label_popup",
+      "external_linestring_start_popup",
+      "external_linestring_end_popup",
+      "external_polygon_popup",
+      "external_polygon_label_popup",
+      "external_polygon_bounds_popup",
+      "external_collection_popup",
+      "external_collection_label_popup",
+    ];
+
+    for popup_id_str in external_popup_ids {
+      let popup_id = egui::Id::new(popup_id_str);
+      if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+        let mut is_open = true;
+        egui::Window::new("Full Geometry Info")
+          .id(popup_id)
+          .open(&mut is_open)
+          .collapsible(false)
+          .resizable(true)
+          .movable(true)
+          .default_width(500.0)
+          .min_width(400.0)
+          .max_width(800.0)
+          .max_height(400.0)
+          .show(ui.ctx(), |ui| {
+            egui::ScrollArea::vertical()
+              .max_height(300.0)
+              .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                  ui.add(egui::Label::new(&full_text).wrap());
+                });
+              });
+          });
+        
+        if !is_open {
+          ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+        }
+      }
+    }
+  }
+}
+
 impl Command for ExternalCommand {
   fn update_paramters(&mut self, parameters: ParameterUpdate) {
     if self.cmd.update(parameters) {
@@ -482,6 +880,18 @@ impl Command for ExternalCommand {
 
   fn ui(&mut self, ui: &mut egui::Ui) {
     self.cmd.ui(ui);
+    
+    // Show response geometry if available
+    if let Some(result) = &self.common.result {
+      ui.separator();
+      let response_header_id = egui::Id::new(format!("response_geometry_{}", self.name()));
+      egui::CollapsingHeader::new("Response Geometry")
+        .id_salt(response_header_id)
+        .default_open(false)
+        .show(ui, |ui| {
+          Self::display_geometry_info(ui, result.as_ref());
+        });
+    }
   }
 
   fn name(&self) -> &str {

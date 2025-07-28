@@ -102,11 +102,23 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
     Some(Geometry::bounding_box(self))
   }
 
+  fn as_geometry(&self) -> Option<&Geometry<PixelCoordinate>> {
+    // Check if this is already a PixelCoordinate geometry
+    use std::any::TypeId;
+    if TypeId::of::<C>() == TypeId::of::<PixelCoordinate>() {
+      // Safe to cast since we've verified the type
+      Some(unsafe { std::mem::transmute(self) })
+    } else {
+      None
+    }
+  }
+
   fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
     let converted = self.convert_to_pixel_coordinates();
     distance::distance_to_geometry(&converted, point)
   }
 }
+
 
 impl<C: Coordinate> Geometry<C> {
   fn convert_to_pixel_coordinates(&self) -> Geometry<PixelCoordinate> {
