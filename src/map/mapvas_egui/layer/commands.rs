@@ -112,7 +112,7 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   // Fast fallback for very long strings to prevent hanging
   if chars.len() > 200 {
     let truncated: String = chars[..50].iter().collect();
-    return (format!("{}...", truncated), true);
+    return (format!("{truncated}..."), true);
   }
 
   let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
@@ -147,7 +147,7 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   let mut right = chars.len().min(100); // Cap to prevent excessive measurements
 
   while left <= right {
-    let mid = (left + right) / 2;
+    let mid = usize::midpoint(left, right);
     if mid == 0 {
       break;
     }
@@ -291,7 +291,7 @@ impl Layer for CommandLayer {
             .id_salt(command_header_id)
             .default_open(is_highlighted);
 
-                if is_highlighted && self.just_highlighted {
+          if is_highlighted && self.just_highlighted {
             command_header = command_header.open(Some(true));
           }
 
@@ -331,7 +331,7 @@ impl Layer for CommandLayer {
                 });
               });
           });
-        
+
         if !is_open {
           ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
         }

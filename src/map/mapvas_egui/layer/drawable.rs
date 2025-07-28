@@ -1,5 +1,5 @@
 use egui::{
-  Stroke,
+  Shape, Stroke,
   epaint::{CircleShape, PathShape, PathStroke},
 };
 
@@ -44,7 +44,7 @@ pub trait Drawable {
   }
 }
 
-impl Drawable for egui::Shape {
+impl Drawable for Shape {
   fn draw(&self, painter: &Painter, _transform: &Transform) {
     painter.add(self.clone());
   }
@@ -62,7 +62,7 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
         }
         Geometry::Point(coord, metadata) => {
           let color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
-          egui::Shape::Circle(CircleShape {
+          Shape::Circle(CircleShape {
             center: transform.apply(coord.as_pixel_coordinate()).into(),
             radius: DEFAULT_POINT_RADIUS,
             fill: color,
@@ -71,7 +71,7 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
         }
         Geometry::LineString(coord, metadata) => {
           let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-          egui::Shape::Path(PathShape {
+          Shape::Path(PathShape {
             points: coord
               .iter()
               .map(|c| transform.apply(c.as_pixel_coordinate()).into())
@@ -83,7 +83,7 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
         }
         Geometry::Polygon(vec, metadata) => {
           let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-          egui::Shape::Path(PathShape {
+          Shape::Path(PathShape {
             points: vec
               .iter()
               .map(|c| transform.apply(c.as_pixel_coordinate()).into())
@@ -103,14 +103,7 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
   }
 
   fn as_geometry(&self) -> Option<&Geometry<PixelCoordinate>> {
-    // Check if this is already a PixelCoordinate geometry
-    use std::any::TypeId;
-    if TypeId::of::<C>() == TypeId::of::<PixelCoordinate>() {
-      // Safe to cast since we've verified the type
-      Some(unsafe { std::mem::transmute(self) })
-    } else {
-      None
-    }
+    None
   }
 
   fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
@@ -118,7 +111,6 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
     distance::distance_to_geometry(&converted, point)
   }
 }
-
 
 impl<C: Coordinate> Geometry<C> {
   fn convert_to_pixel_coordinates(&self) -> Geometry<PixelCoordinate> {

@@ -37,7 +37,7 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   // Fast fallback for very long strings to prevent hanging
   if chars.len() > 200 {
     let truncated: String = chars[..50].iter().collect();
-    return (format!("{}...", truncated), true);
+    return (format!("{truncated}..."), true);
   }
 
   let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
@@ -72,7 +72,7 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   let mut right = chars.len().min(100); // Cap to prevent excessive measurements
 
   while left <= right {
-    let mid = (left + right) / 2;
+    let mid = usize::midpoint(left, right);
     if mid == 0 {
       break;
     }
@@ -193,7 +193,7 @@ impl ShapeLayer {
           mem.data.insert_temp(
             egui::Id::new(format!("layer_popup_{layer_id}")),
             layer_id.clone(),
-          )
+          );
         });
       }
 
@@ -224,7 +224,7 @@ impl ShapeLayer {
         }
       });
 
-        let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
+      let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
         let mut is_open = true;
         egui::Window::new("Full Layer Name")
@@ -246,7 +246,7 @@ impl ShapeLayer {
                 });
               });
           });
-        
+
         if !is_open {
           ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
         }
@@ -336,6 +336,7 @@ impl ShapeLayer {
     });
   }
 
+  #[allow(clippy::too_many_lines)]
   fn show_shape_content(
     &mut self,
     ui: &mut egui::Ui,
@@ -385,12 +386,13 @@ impl ShapeLayer {
           let response = ui.strong("Line");
           if response.clicked() {
             let popup_id = egui::Id::new(format!("line_popup_{layer_id}_{shape_idx}"));
-            let line_info = format!("📏 LineString\nPoints: {}\nStart: {:.4}, {:.4}\nEnd: {:.4}, {:.4}", 
+            let line_info = format!(
+              "📏 LineString\nPoints: {}\nStart: {:.4}, {:.4}\nEnd: {:.4}, {:.4}",
               coords.len(),
-              coords.first().map(|c| c.as_wgs84().lat).unwrap_or(0.0),
-              coords.first().map(|c| c.as_wgs84().lon).unwrap_or(0.0),
-              coords.last().map(|c| c.as_wgs84().lat).unwrap_or(0.0),
-              coords.last().map(|c| c.as_wgs84().lon).unwrap_or(0.0)
+              coords.first().map_or(0.0, |c| c.as_wgs84().lat),
+              coords.first().map_or(0.0, |c| c.as_wgs84().lon),
+              coords.last().map_or(0.0, |c| c.as_wgs84().lat),
+              coords.last().map_or(0.0, |c| c.as_wgs84().lon)
             );
             ui.memory_mut(|mem| mem.data.insert_temp(popup_id, line_info));
           }
@@ -410,8 +412,20 @@ impl ShapeLayer {
           let response = ui.small(truncated_coord);
           if response.clicked() {
             let popup_id = egui::Id::new(format!("line_coords_popup_{layer_id}_{shape_idx}"));
-            let coords_info = format!("📏 LineString Coordinates\nStart Point: {:.6}, {:.6}\nEnd Point: {:.6}, {:.6}\nTotal Points: {}", 
-              first_wgs84.lat, first_wgs84.lon, last_wgs84.lat, last_wgs84.lon, coords.len());
+            let all_coords = coords
+              .iter()
+              .enumerate()
+              .map(|(i, coord)| {
+                let wgs84 = coord.as_wgs84();
+                format!("{:2}: {:.6}, {:.6}", i + 1, wgs84.lat, wgs84.lon)
+              })
+              .collect::<Vec<_>>()
+              .join("\n");
+            let coords_info = format!(
+              "📏 LineString Coordinates\nTotal Points: {}\n\nAll Coordinates:\n{}",
+              coords.len(),
+              all_coords
+            );
             ui.memory_mut(|mem| mem.data.insert_temp(popup_id, coords_info));
           }
         }
@@ -459,9 +473,7 @@ impl ShapeLayer {
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0);
 
-          let bounds_text = format!(
-            "{min_lat:.1},{min_lon:.1}→{max_lat:.1},{max_lon:.1}"
-          );
+          let bounds_text = format!("{min_lat:.1},{min_lon:.1}→{max_lat:.1},{max_lon:.1}");
           let available_width = (ui.available_width() - 20.0).max(30.0);
           let (truncated_bounds, _) = truncate_label_by_width(ui, &bounds_text, available_width);
           ui.small(truncated_bounds);
@@ -471,7 +483,7 @@ impl ShapeLayer {
       Geometry::GeometryCollection(geometries, metadata) => {
         ui.label(format!("📦 Collection ({} items)", geometries.len()));
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);  
+          let available_width = (ui.available_width() - 100.0).max(30.0);
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.small(format!("- {truncated_label}"));
@@ -514,18 +526,21 @@ impl ShapeLayer {
                 });
               });
           });
-        
+
         if !is_open {
           ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
         }
       }
     }
-    
+
     let mut color_picker_requests = Vec::new();
     for (layer_id, shapes) in &self.shape_map {
       for (shape_idx, shape) in shapes.iter().enumerate() {
         let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
-        if ui.memory(|mem| mem.data.get_temp::<bool>(popup_id)).unwrap_or(false) {
+        if ui
+          .memory(|mem| mem.data.get_temp::<bool>(popup_id))
+          .unwrap_or(false)
+        {
           let window_title = match shape {
             Geometry::Polygon(_, _) => "Choose Colors",
             _ => "Choose Color",
@@ -534,7 +549,7 @@ impl ShapeLayer {
         }
       }
     }
-    
+
     for (layer_id, shape_idx, window_title, popup_id) in color_picker_requests {
       let mut is_open = true;
       egui::Window::new(window_title)
@@ -553,16 +568,16 @@ impl ShapeLayer {
                 | Geometry::Polygon(_, metadata)
                 | Geometry::GeometryCollection(_, metadata) => metadata,
               };
-              
+
               if metadata.style.is_none() {
                 metadata.style = Some(crate::map::geometry_collection::Style::default());
               }
-              
+
               if let Some(style) = &metadata.style {
                 let mut stroke_color = style.color();
                 let mut fill_color = style.fill_color();
                 let is_polygon = matches!(shape, Geometry::Polygon(_, _));
-                
+
                 if is_polygon {
                   ui.label("Stroke Color:");
                   if ui.color_edit_button_srgba(&mut stroke_color).changed() {
@@ -617,7 +632,7 @@ impl ShapeLayer {
             }
           }
         });
-      
+
       if !is_open {
         ui.memory_mut(|mem| mem.data.remove::<bool>(popup_id));
       }
@@ -638,7 +653,7 @@ impl ShapeLayer {
     } else {
       egui::Color32::BLUE
     };
-    
+
     let colored_text = egui::RichText::new(icon).color(stroke_color);
 
     let hover_text = if is_polygon {
@@ -738,7 +753,6 @@ impl ShapeLayer {
       }
     }
   }
-  
 }
 
 const NAME: &str = "Shape Layer";

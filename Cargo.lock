@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "mapvas"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2898,7 +2898,6 @@ dependencies = [
  "surf",
  "surf-governor",
  "thiserror 2.0.12",
- "tiny-skia",
  "tokio",
  "tower-http",
  "tracing",

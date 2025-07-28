@@ -1,19 +1,9 @@
 # Changelog
 
-## 0.2.x
+## 0.2.5
 
-### User Interface Improvements
-- **Enhanced Sidebar**: Elegant hide/show functionality with smooth animations
-  - Keyboard shortcuts: `F1` or `Ctrl+B` to toggle visibility
-  - Clean hamburger menu button when hidden (custom-drawn icon)
-  - Smooth slide animations with cubic easing
-  - Content fade effects for polished feel
-  - Improved resize handle with visual feedback
-  - Professional close button with hover effects
-
-### Features
-- Sidebar with layer management and settings
-- Commands: Ruler will measure distance, curl allows to query a GET routing endpoint, arbitrary external commands.
+- Clickable geometry coordinate popups with detailed information
+- Color picker for shapes with stroke and fill controls
 
 ## 0.2.1
 
