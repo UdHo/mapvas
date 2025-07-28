@@ -75,6 +75,9 @@ impl Remote {
       MapEvent::Focus => {
         let _ = self.focus.send(MapEvent::Focus);
       }
+      f @ MapEvent::FocusOn { .. } => {
+        let _ = self.focus.send(f);
+      }
       MapEvent::Clear => {
         let _ = self.clear.send(MapEvent::Clear);
       }
@@ -86,6 +89,37 @@ impl Remote {
         let _ = self.focus.send(e);
       }
     }
-    self.update.request_repaint();
+    // Delay repaint request to avoid deadlock during UI event processing
+    let ctx = self.update.clone();
+    std::thread::spawn(move || {
+      std::thread::sleep(std::time::Duration::from_millis(1));
+      ctx.request_repaint();
+    });
+  }
+
+  /// Get a sender that properly routes all event types
+  #[must_use]
+  pub fn sender(&self) -> RoutingSender {
+    RoutingSender {
+      remote: self.clone(),
+    }
+  }
+}
+
+/// A sender that routes events through Remote's `handle_map_event`
+pub struct RoutingSender {
+  remote: Remote,
+}
+
+impl RoutingSender {
+  /// Send a map event through the remote handler.
+  ///
+  /// # Errors
+  ///
+  /// This function currently never returns an error, but the signature is kept
+  /// for future compatibility with potential channel send failures.
+  pub fn send(&self, event: MapEvent) -> Result<(), std::sync::mpsc::SendError<MapEvent>> {
+    self.remote.handle_map_event(event);
+    Ok(())
   }
 }

@@ -31,8 +31,14 @@ Via brew on MacOs:
 
 Start `mapvas` and a map window will appear.
 ![mapvas](https://github.com/UdHo/mapvas/blob/master/mapvas.png)
+
+#### Interface Controls
 |Functionality | Description |
 |--------------|-------------|
+| **Sidebar** | `F1` or `Ctrl+B` to toggle sidebar visibility |
+| **Hamburger Menu** | Click the ☰ button (top-left) when sidebar is hidden |
+| **Close Sidebar** | Click the ✕ button in sidebar header |
+| **Resize Sidebar** | Drag the right edge when sidebar is fully visible |
 | zoom | Use the mouse wheel or +/- |
 | focus to drawn elements | f centers the drawn elements |
 | moving | Left mouse and dragging or arrow keys |
@@ -141,6 +147,16 @@ curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 
 ### Advanced usage
 
+#### UI Customization
+
+**Sidebar Features:**
+- The sidebar provides access to map layers and settings with smooth animations
+- **Toggle Methods**: Use `F1`, `Ctrl+B`, hamburger menu (☰), or close button (✕)
+- **Animations**: Smooth slide-in/out with content fade effects for polished experience
+- **Resizable**: Drag the right edge to resize between 200-600px width
+- **Scrollable Content**: Layer list and settings scroll when content exceeds height
+- **Hover Effects**: All interactive elements provide visual feedback
+
 #### Offline usage
 
 To cache tile images for future runs set the environment variable `TILECACHE` to an existing directory.
@@ -159,3 +175,12 @@ To use tiles from a different provider than [openstreetmap] you can set a templa
     export MAPVAS_TILE_URL='https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=***'
     export MAPVAS_TILE_URL='https://maps.hereapi.com/v3/background/mc/{zoom}/{x}/{y}/png8?size=512&apiKey=***'
 ```
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TILECACHE` | Directory for caching map tiles | None (no caching) |
+| `MAPVAS_TILE_URL` | Custom tile provider URL template | OpenStreetMap |
+| `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location | Current directory |
+

@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.2.x
+## 0.2.5
 
-- Sidebar
-- Commands: Ruler will measure distance, curl allows to query a GET routing endpoint, arbitrary external commands.
+- Clickable geometry coordinate popups with detailed information
+- Color picker for shapes with stroke and fill controls
 
 ## 0.2.1
 

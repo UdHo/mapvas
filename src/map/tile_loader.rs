@@ -1,9 +1,10 @@
 use crate::config::TileProvider;
-use crate::map::coordinates::Tile;
+use crate::map::coordinates::{Tile, TilePriority};
 use anyhow::Result;
 use log::{debug, error, trace};
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::Display;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -50,10 +51,46 @@ impl Display for TileSource {
   }
 }
 
+/// A prioritized tile request.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct PrioritizedTileRequest {
+  tile: Tile,
+  priority: TilePriority,
+  timestamp: Instant,
+}
+
+impl PartialOrd for PrioritizedTileRequest {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl Ord for PrioritizedTileRequest {
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    // First by priority (lower number = higher priority)
+    self
+      .priority
+      .cmp(&other.priority)
+      // Then by timestamp (older requests first)
+      .then_with(|| self.timestamp.cmp(&other.timestamp))
+  }
+}
+
 /// The interface the cached and non-cached tile loader.
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile, source: TileSource) -> Result<TileData>;
+
+  /// Tries to fetch the tile data with priority.
+  async fn tile_data_with_priority(
+    &self,
+    tile: &Tile,
+    source: TileSource,
+    _priority: TilePriority,
+  ) -> Result<TileData> {
+    // Default implementation ignores priority
+    self.tile_data(tile, source).await
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +143,8 @@ impl TileLoader for TileCache {
 struct DownloadManager<T: Hash + Eq + Clone> {
   tiles_in_download: Arc<Mutex<HashSet<T>>>,
   last_failed_attempt: Arc<Mutex<HashMap<T, Instant>>>,
+  priority_queue: Arc<Mutex<BinaryHeap<Reverse<PrioritizedTileRequest>>>>,
+  max_concurrent: usize,
 }
 
 impl<T> Default for DownloadManager<T>
@@ -116,15 +155,96 @@ where
     Self {
       tiles_in_download: Arc::new(Mutex::new(HashSet::new())),
       last_failed_attempt: Arc::new(Mutex::new(HashMap::new())),
+      priority_queue: Arc::new(Mutex::new(BinaryHeap::new())),
+      max_concurrent: 6, // Reduced from 10 to prioritize current tiles
     }
   }
 }
 
+impl DownloadManager<Tile> {
+  fn download_with_priority(
+    dm: &Arc<Self>,
+    tile: Tile,
+    priority: TilePriority,
+  ) -> Option<DownloadToken<Tile>> {
+    let mut tiles_lock = dm.tiles_in_download.lock().expect("lock");
+    let mut queue_lock = dm.priority_queue.lock().expect("queue lock");
+
+    // Check if already downloading
+    if tiles_lock.contains(&tile) {
+      return None;
+    }
+
+    // For current priority tiles, skip queue if under limit
+    if priority == TilePriority::Current && tiles_lock.len() < dm.max_concurrent {
+      tiles_lock.insert(tile);
+      drop(tiles_lock);
+      drop(queue_lock);
+
+      if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&tile) {
+        let now = Instant::now();
+        if now.duration_since(*ts).as_secs() < 5 {
+          dm.tiles_in_download.lock().unwrap().remove(&tile);
+          return None;
+        }
+      }
+
+      return Some(DownloadToken::new(tile, dm.clone()));
+    }
+
+    // Add to priority queue if at capacity or lower priority
+    let request = PrioritizedTileRequest {
+      tile,
+      priority,
+      timestamp: Instant::now(),
+    };
+
+    queue_lock.push(Reverse(request));
+    drop(queue_lock);
+    drop(tiles_lock);
+
+    None
+  }
+
+  fn try_next_from_queue(dm: &Arc<Self>) -> Option<DownloadToken<Tile>> {
+    loop {
+      let mut tiles_lock = dm.tiles_in_download.lock().expect("lock");
+      let mut queue_lock = dm.priority_queue.lock().expect("queue lock");
+
+      if tiles_lock.len() >= dm.max_concurrent {
+        return None;
+      }
+
+      if let Some(Reverse(request)) = queue_lock.pop() {
+        if !tiles_lock.contains(&request.tile) {
+          tiles_lock.insert(request.tile);
+          drop(tiles_lock);
+          drop(queue_lock);
+
+          if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&request.tile) {
+            let now = Instant::now();
+            if now.duration_since(*ts).as_secs() < 5 {
+              dm.tiles_in_download.lock().unwrap().remove(&request.tile);
+              continue;
+            }
+          }
+
+          return Some(DownloadToken::new(request.tile, dm.clone()));
+        }
+        // Continue with next item in queue
+      } else {
+        return None; // Queue is empty
+      }
+    }
+  }
+}
+
+#[allow(dead_code)]
 impl<T: Hash + Eq + Clone> DownloadManager<T> {
   fn download(dm: &Arc<Self>, tile: T) -> Option<DownloadToken<T>> {
     let mut lock = dm.tiles_in_download.lock().expect("lock");
 
-    if lock.contains(&tile) || lock.len() >= 10 {
+    if lock.contains(&tile) || lock.len() >= dm.max_concurrent {
       return None;
     }
     lock.insert(tile.clone());
@@ -228,11 +348,25 @@ impl TileDownloader {
 
 impl TileLoader for TileDownloader {
   async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    self
+      .tile_data_with_priority(tile, tile_source, TilePriority::Current)
+      .await
+  }
+
+  async fn tile_data_with_priority(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+    priority: TilePriority,
+  ) -> Result<TileData> {
     if tile_source == TileSource::Cache {
       return Err(TileLoaderError::TileNotAvailable { tile: *tile }.into());
     }
 
-    let download_token = DownloadManager::download(&self.download_manager, *tile);
+    let download_token =
+      DownloadManager::download_with_priority(&self.download_manager, *tile, priority)
+        .or_else(|| DownloadManager::try_next_from_queue(&self.download_manager));
+
     if download_token.is_none() {
       return Err(TileLoaderError::TileDownloadInProgress { tile: *tile }.into());
     }
@@ -330,8 +464,17 @@ impl CachedTileLoader {
     });
   }
 
-  async fn download(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
-    match self.tile_loader.tile_data(tile, tile_source).await {
+  async fn download_with_priority(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+    priority: TilePriority,
+  ) -> Result<TileData> {
+    match self
+      .tile_loader
+      .tile_data_with_priority(tile, tile_source, priority)
+      .await
+    {
       Ok(data) => {
         self.tile_cache.cache_tile(tile, &data);
         match data.len() {
@@ -375,13 +518,26 @@ impl Default for CachedTileLoader {
 
 impl TileLoader for CachedTileLoader {
   async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+    self
+      .tile_data_with_priority(tile, tile_source, TilePriority::Current)
+      .await
+  }
+
+  async fn tile_data_with_priority(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+    priority: TilePriority,
+  ) -> Result<TileData> {
     trace!("Loading tile from file {:?}", &tile);
     if let Ok(data) = self.get_from_cache(tile, tile_source).await {
       debug!("cache_hit: {tile:?}");
       Ok(data)
     } else {
       debug!("cache_miss: {tile:?}");
-      self.download(tile, tile_source).await
+      self
+        .download_with_priority(tile, tile_source, priority)
+        .await
     }
   }
 }

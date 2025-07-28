@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-  map::coordinates::{Coordinate, PixelCoordinate, Transform},
+  map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   parser::{FileParser, GrepParser, JsonParser, Parser},
   remote::Remote,
 };
 use arboard::Clipboard;
-use egui::{Event, InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
+use egui::{InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
@@ -18,6 +18,7 @@ use log::{debug, info};
 
 use super::{
   coordinates::{BoundingBox, PixelPosition},
+  geometry_collection::Metadata,
   map_event::MapEvent,
 };
 
@@ -25,6 +26,16 @@ mod helpers;
 
 mod layer;
 pub use layer::ParameterUpdate;
+
+#[derive(Debug, Clone)]
+pub struct GeometryInfo {
+  pub layer_id: String,
+  pub geometry_type: String,
+  pub coordinate: PixelCoordinate,
+  pub wgs84: WGS84Coordinate,
+  pub metadata: Metadata,
+  pub details: String,
+}
 
 pub struct Map {
   transform: Transform,
@@ -34,6 +45,7 @@ pub struct Map {
   remote: Remote,
   right_click: Option<PixelCoordinate>,
   keys: Vec<String>,
+  geometry_info: Option<GeometryInfo>,
 }
 
 impl Map {
@@ -85,15 +97,121 @@ impl Map {
         remote: remote.clone(),
         right_click: None,
         keys,
+        geometry_info: None,
       },
       remote,
       map_data_holder,
     )
   }
 
-  fn handle_keys(&mut self, events: impl Iterator<Item = Event>, rect: Rect) {
+  fn handle_double_click(&mut self, pos: egui::Pos2) {
+    log::debug!("Map: Double-click detected at {pos:?}");
+
+    if let Ok(mut layers) = self.layers.lock() {
+      log::debug!(
+        "Map: Finding closest geometry across {} layers",
+        layers.len()
+      );
+
+      // Find the closest geometry across all layers
+      let mut closest_distance = f64::INFINITY;
+      let mut closest_layer_idx: Option<usize> = None;
+
+      // Find the closest geometry across all layers - treat all layers the same
+      for (i, layer) in layers.iter_mut().enumerate() {
+        if let Some(distance) = layer.closest_geometry_with_selection(pos, &self.transform) {
+          log::debug!(
+            "Map: Layer '{}' can handle at distance: {:.2}",
+            layer.name(),
+            distance
+          );
+
+          if distance < closest_distance {
+            closest_distance = distance;
+            closest_layer_idx = Some(i);
+          }
+        }
+      }
+
+      // If a layer handled the selection, we're done
+      if let Some(layer_idx) = closest_layer_idx {
+        let layer_name = layers[layer_idx].name();
+        log::debug!(
+          "Map: Layer '{layer_name}' handled the selection at distance {closest_distance:.2}"
+        );
+        return;
+      }
+    }
+
+    log::debug!("Map: No layer handled the double-click");
+    // If no layer handled the event, clear geometry info
+    self.geometry_info = None;
+  }
+
+  fn show_geometry_info(&mut self, ui: &mut Ui) {
+    if let Some(info) = &self.geometry_info {
+      let mut close_requested = false;
+
+      egui::Window::new("Geometry Information")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+        .show(ui.ctx(), |ui| {
+          ui.set_min_width(250.0);
+
+          ui.heading(&info.geometry_type);
+          ui.separator();
+
+          ui.horizontal(|ui| {
+            ui.label("Layer:");
+            ui.strong(&info.layer_id);
+          });
+
+          ui.horizontal(|ui| {
+            ui.label("Position:");
+            ui.label(format!("{:.6}, {:.6}", info.wgs84.lat, info.wgs84.lon));
+          });
+
+          ui.horizontal(|ui| {
+            ui.label("Details:");
+            ui.label(&info.details);
+          });
+
+          if let Some(label) = &info.metadata.label {
+            ui.horizontal(|ui| {
+              ui.label("Label:");
+              ui.strong(label);
+            });
+          }
+
+          if let Some(style) = &info.metadata.style {
+            ui.horizontal(|ui| {
+              ui.label("Style:");
+              let color = egui::RichText::new("●").color(style.color());
+              ui.label(color);
+              if style.fill_color() != egui::Color32::TRANSPARENT {
+                let fill_color = egui::RichText::new("■").color(style.fill_color());
+                ui.label(fill_color);
+              }
+            });
+          }
+
+          ui.separator();
+
+          if ui.button("Close").clicked() {
+            close_requested = true;
+          }
+        });
+
+      if close_requested {
+        self.geometry_info = None;
+      }
+    }
+  }
+
+  fn handle_keys(&mut self, events: impl Iterator<Item = egui::Event>, rect: Rect) {
     for event in events {
-      if let Event::Key {
+      if let egui::Event::Key {
         key,
         pressed: true,
         modifiers,
@@ -130,10 +248,23 @@ impl Map {
           egui::Key::V => self.paste(),
           egui::Key::C => self.copy(),
           egui::Key::S => {
-            let _ = self
-              .remote
-              .screenshot
-              .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
+            // Don't take screenshot if any text input has focus
+            let has_text_focus = self.ctx.memory(|mem| {
+              if let Some(_focus_id) = mem.focused() {
+                // If any widget has focus, assume it could be a text input to be safe
+                // This prevents screenshots when typing in any input field
+                true
+              } else {
+                false
+              }
+            });
+
+            if !has_text_focus {
+              let _ = self
+                .remote
+                .screenshot
+                .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
+            }
           }
           _ => {
             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
@@ -156,6 +287,43 @@ impl Map {
 
       show_box(&mut self.transform, &bb, rect);
     }
+  }
+
+  fn focus_on_coordinate(
+    &mut self,
+    coordinate: WGS84Coordinate,
+    zoom_level: Option<u8>,
+    rect: Rect,
+  ) {
+    use crate::map::coordinates::PixelCoordinate;
+
+    // Convert WGS84 coordinate to pixel coordinate
+    let pixel_coord = PixelCoordinate::from(coordinate);
+
+    // Set zoom level if specified
+    if let Some(tile_zoom) = zoom_level {
+      const TILE_SIZE: f32 = 512.0;
+      let screen_size = rect.width().max(rect.height());
+      let new_transform_zoom = 2f32.powi(i32::from(tile_zoom) - 2) * TILE_SIZE / screen_size;
+      self.transform.zoom = new_transform_zoom.clamp(1.0, 524_288.0);
+    } else {
+      // Default to a good zoom level for viewing a location (equivalent to zoom level 15)
+      const TILE_SIZE: f32 = 512.0;
+      let screen_size = rect.width().max(rect.height());
+      let default_zoom = 2f32.powi(15 - 2) * TILE_SIZE / screen_size;
+      self.transform.zoom = default_zoom.clamp(1.0, 524_288.0);
+    }
+
+    // Center the map on the coordinate
+    helpers::set_coordinate_to_pixel(pixel_coord, rect.center().into(), &mut self.transform);
+
+    log::info!(
+      "Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}",
+      coordinate.lat,
+      coordinate.lon,
+      self.transform.zoom,
+      zoom_level
+    );
   }
 
   fn paste(&self) {
@@ -233,6 +401,18 @@ impl Map {
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
+        MapEvent::FocusOn {
+          coordinate,
+          zoom_level,
+        } => {
+          log::info!(
+            "Processing FocusOn event for coordinate: {:.4}, {:.4}, zoom: {:?}",
+            coordinate.lat,
+            coordinate.lon,
+            zoom_level
+          );
+          self.focus_on_coordinate(*coordinate, *zoom_level, rect);
+        }
         MapEvent::Screenshot(_) => {
           // Screenshots are handled by their dedicated layer, but we forward them
           // here to ensure proper timing after focus events
@@ -341,6 +521,12 @@ impl Widget for &mut Map {
       info!("Clicked at: {:?}", response.hover_pos());
     }
 
+    if response.double_clicked() {
+      if let Some(pos) = response.hover_pos() {
+        self.handle_double_click(pos);
+      }
+    }
+
     if !response.context_menu_opened() {
       self.right_click = None;
     }
@@ -406,7 +592,25 @@ impl Widget for &mut Map {
     // Handle map events last (and request repaint if there were any) to have all the other input
     // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
+
+    // Show geometry info popup if available
+    self.show_geometry_info(ui);
+
     response
+  }
+}
+
+impl Map {
+  #[must_use]
+  pub fn has_highlighted_geometry(&self) -> bool {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if layer.has_highlighted_geometry() {
+          return true;
+        }
+      }
+    }
+    false
   }
 }
 

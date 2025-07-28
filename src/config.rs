@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use dirs::home_dir;
 use log::error;
 
+use crate::search::SearchProviderConfig;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TileProvider {
   pub name: String,
@@ -15,6 +17,7 @@ pub struct Config {
   pub tile_provider: Vec<TileProvider>,
   pub tile_cache_dir: Option<PathBuf>,
   pub commands_dir: Option<PathBuf>,
+  pub search_providers: Vec<SearchProviderConfig>,
 }
 
 const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
@@ -63,6 +66,7 @@ impl Config {
       tile_provider: tile_urls,
       tile_cache_dir,
       commands_dir,
+      search_providers: Vec::new(),
     }
   }
 
@@ -76,6 +80,14 @@ impl Config {
 
     self.tile_cache_dir = self.tile_cache_dir.or(other.tile_cache_dir.clone());
     self.commands_dir = self.commands_dir.or(other.commands_dir.clone());
+
+    // Merge search providers (avoid duplicates)
+    for provider in &other.search_providers {
+      if !self.search_providers.iter().any(|p| p == provider) {
+        self.search_providers.push(provider.clone());
+      }
+    }
+
     self
   }
 
@@ -143,6 +155,10 @@ impl Default for Config {
       }],
       tile_cache_dir: home_dir().map(|p| p.join(".mapvas_tile_cache")),
       commands_dir: config_path.map(|p| p.join("commands")),
+      search_providers: vec![
+        SearchProviderConfig::Coordinate,
+        SearchProviderConfig::Nominatim { base_url: None },
+      ],
     }
   }
 }

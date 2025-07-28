@@ -1,4 +1,7 @@
-use super::{coordinates::PixelCoordinate, geometry_collection::Geometry};
+use super::{
+  coordinates::{PixelCoordinate, WGS84Coordinate},
+  geometry_collection::Geometry,
+};
 use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
@@ -89,13 +92,20 @@ impl Layer {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Focus {}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MapEvent {
+  /// Ends mapvas.
   Shutdown,
+  /// Clears the layers.
   Clear,
+  /// Adds to the geometry layer.
   Layer(Layer),
+  /// Shows the bounding box of everything on the map.
   Focus,
+  /// Focus on a specific coordinate with zoom level
+  FocusOn {
+    coordinate: WGS84Coordinate,
+    zoom_level: Option<u8>,
+  },
+  /// Create a screenshot and store it to the given path.
   Screenshot(PathBuf),
 }

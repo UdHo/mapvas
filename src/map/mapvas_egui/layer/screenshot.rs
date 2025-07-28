@@ -163,5 +163,13 @@ impl Layer for ScreenshotLayer {
     &mut self.layer_properties.visible
   }
 
+  fn closest_geometry_with_selection(
+    &mut self,
+    _pos: egui::Pos2,
+    _transform: &crate::map::coordinates::Transform,
+  ) -> Option<f64> {
+    None
+  }
+
   fn ui_content(&mut self, _ui: &mut egui::Ui) {}
 }

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use egui::IconData;
-use mapvas::{map::mapvas_egui::Map, mapvas_ui::MapApp, remote::spawn_remote_runner};
+use mapvas::{
+  config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp, remote::spawn_remote_runner,
+};
 
 fn load_icon() -> Option<Arc<IconData>> {
   Some(Arc::new(
@@ -34,9 +36,10 @@ fn main() -> eframe::Result {
       // Image support
       egui_extras::install_image_loaders(&cc.egui_ctx);
 
+      let config = Config::new();
       let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
       spawn_remote_runner(rt, remote.clone());
-      Ok(Box::new(MapApp::new(map, remote, data_holder)))
+      Ok(Box::new(MapApp::new(map, remote, data_holder, config)))
     }),
   )
 }
