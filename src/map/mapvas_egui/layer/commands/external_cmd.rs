@@ -456,7 +456,6 @@ impl ExternalCommand {
 }
 
 impl ExternalCommand {
-  // Helper function to calculate approximate line distance in meters
   fn calculate_line_distance(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
     if coords.len() < 2 {
       return 0.0;
@@ -466,7 +465,6 @@ impl ExternalCommand {
       .map(|window| {
         let p1 = window[0].as_wgs84();
         let p2 = window[1].as_wgs84();
-        // Approximate distance using Haversine formula
         let lat1 = p1.lat as f64 * std::f64::consts::PI / 180.0;
         let lat2 = p2.lat as f64 * std::f64::consts::PI / 180.0;
         let dlat = lat2 - lat1;
@@ -474,18 +472,16 @@ impl ExternalCommand {
         
         let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-        6371000.0 * c // Earth radius in meters
+        6371000.0 * c
       })
       .sum()
   }
   
-  // Helper function to calculate approximate polygon area in square meters
   fn calculate_polygon_area(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
     if coords.len() < 3 {
       return 0.0;
     }
     
-    // Simple shoelace formula approximation
     let wgs84_coords: Vec<_> = coords.iter().map(|c| c.as_wgs84()).collect();
     let mut area = 0.0;
     
@@ -495,11 +491,9 @@ impl ExternalCommand {
       area -= (wgs84_coords[i].lon as f64) * (wgs84_coords[j].lat as f64);
     }
     
-    // Convert from degrees to approximate square meters (very rough approximation)
     (area.abs() / 2.0) * 111320.0 * 110540.0
   }
   
-  // Helper function to calculate polygon perimeter
   fn calculate_polygon_perimeter(coords: &[crate::map::coordinates::PixelCoordinate]) -> f64 {
     if coords.len() < 2 {
       return 0.0;
@@ -507,7 +501,6 @@ impl ExternalCommand {
     
     let mut perimeter = Self::calculate_line_distance(coords);
     
-    // Add distance from last point back to first point
     if coords.len() > 2 {
       let first = coords[0].as_wgs84();
       let last = coords[coords.len() - 1].as_wgs84();
@@ -524,7 +517,6 @@ impl ExternalCommand {
     perimeter
   }
   
-  // Helper function to count geometry types in a collection
   fn count_geometry_types(geometries: &[Geometry<crate::map::coordinates::PixelCoordinate>]) -> (usize, usize, usize) {
     let mut points = 0;
     let mut lines = 0;
@@ -548,16 +540,14 @@ impl ExternalCommand {
   }
 
   fn display_geometry_info(ui: &mut egui::Ui, drawable: &dyn Drawable) {
-    // Try to get geometry to display detailed info
     if let Some(geometry) = drawable.as_geometry() {
       Self::display_geometry_details(ui, geometry);
     } else {
-      // Fallback: show bounding box info
       if let Some(bbox) = drawable.bounding_box() {
         if bbox.is_valid() {
           let center = bbox.center().as_wgs84();
           let bbox_text = "Geometry bounding box:";
-          let available_width = (ui.available_width() - 80.0).max(30.0); // Much more conservative for scrollbar
+          let available_width = (ui.available_width() - 80.0).max(30.0);
           let (truncated_bbox, _) = super::truncate_label_by_width(ui, bbox_text, available_width);
           ui.label(truncated_bbox);
           
@@ -754,7 +744,6 @@ impl ExternalCommand {
       }
     }
     
-    // Show popups for external command geometry if clicked when truncated
     let external_popup_ids = [
       "external_point_popup",
       "external_point_label_popup", 

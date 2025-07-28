@@ -240,7 +240,6 @@ impl Layer for CommandLayer {
       .id_salt(layer_id)
       .default_open(has_highlighted_command);
 
-    // Only force open once when just highlighted, then let user control it
     if self.just_highlighted && has_highlighted_command {
       layer_header = layer_header.open(Some(true));
     }
@@ -259,7 +258,6 @@ impl Layer for CommandLayer {
       .id_salt(commands_header_id)
       .default_open(has_highlighted_command);
 
-    // Only force open once when just highlighted
     if self.just_highlighted && has_highlighted_command {
       commands_header = commands_header.open(Some(true));
     }
@@ -286,15 +284,14 @@ impl Layer for CommandLayer {
         frame.show(ui, |ui| {
           let command_header_id = egui::Id::new(format!("command_header_{cmd_idx}"));
 
-          let available_width = (ui.available_width() - 60.0).max(30.0); // More conservative padding
+          let available_width = (ui.available_width() - 60.0).max(30.0);
           let (truncated_command_name, was_truncated) =
             truncate_label_by_width(ui, command.name(), available_width);
           let mut command_header = egui::CollapsingHeader::new(truncated_command_name)
             .id_salt(command_header_id)
             .default_open(is_highlighted);
 
-          // Only force open once when just highlighted
-          if is_highlighted && self.just_highlighted {
+                if is_highlighted && self.just_highlighted {
             command_header = command_header.open(Some(true));
           }
 
@@ -311,7 +308,6 @@ impl Layer for CommandLayer {
       }
     });
 
-    // Show popups for command names if clicked when truncated
     for cmd_idx in 0..self.commands.len() {
       let popup_id = egui::Id::new(format!("command_popup_{cmd_idx}"));
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {

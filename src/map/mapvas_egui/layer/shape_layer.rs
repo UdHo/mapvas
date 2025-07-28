@@ -151,17 +151,16 @@ impl ShapeLayer {
 
       let header_id = egui::Id::new(format!("shape_layer_{layer_id}"));
 
-      // Reserve space for the folder icon, parentheses, count, and padding - be more conservative
       let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
       let reserved_galley = ui.fonts(|f| {
         f.layout_no_wrap(
-          "📁  (9999) ".to_string(), // More conservative estimate
+          "📁  (9999) ".to_string(),
           font_id.clone(),
           egui::Color32::BLACK,
         )
       });
-      let reserved_width = reserved_galley.size().x + 60.0; // Much more padding for scrollbar
-      let available_width = (ui.available_width() - reserved_width).max(30.0); // Smaller minimum width
+      let reserved_width = reserved_galley.size().x + 60.0;
+      let available_width = (ui.available_width() - reserved_width).max(30.0);
       let (truncated_layer_id, was_truncated) =
         truncate_label_by_width(ui, &layer_id, available_width);
       let mut header =
@@ -173,7 +172,6 @@ impl ShapeLayer {
         header = header.show_background(true);
       }
 
-      // Only force open once when just highlighted, then let user control it
       if self.just_highlighted && has_highlighted_geometry {
         header = header.open(Some(true));
       }
@@ -226,8 +224,7 @@ impl ShapeLayer {
         }
       });
 
-      // Show popup with full layer name if clicked when truncated
-      let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
+        let popup_id = egui::Id::new(format!("layer_popup_{layer_id}"));
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
         let mut is_open = true;
         egui::Window::new("Full Layer Name")
@@ -352,7 +349,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📍", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
+          let available_width = (ui.available_width() - 100.0).max(30.0);
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -376,7 +373,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📏", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
+          let available_width = (ui.available_width() - 100.0).max(30.0);
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -385,7 +382,18 @@ impl ShapeLayer {
             ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
           }
         } else {
-          ui.label("Line");
+          let response = ui.strong("Line");
+          if response.clicked() {
+            let popup_id = egui::Id::new(format!("line_popup_{layer_id}_{shape_idx}"));
+            let line_info = format!("📏 LineString\nPoints: {}\nStart: {:.4}, {:.4}\nEnd: {:.4}, {:.4}", 
+              coords.len(),
+              coords.first().map(|c| c.as_wgs84().lat).unwrap_or(0.0),
+              coords.first().map(|c| c.as_wgs84().lon).unwrap_or(0.0),
+              coords.last().map(|c| c.as_wgs84().lat).unwrap_or(0.0),
+              coords.last().map(|c| c.as_wgs84().lon).unwrap_or(0.0)
+            );
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, line_info));
+          }
         }
 
         ui.small(format!("({} pts)", coords.len()));
@@ -399,7 +407,13 @@ impl ShapeLayer {
           );
           let available_width = (ui.available_width() - 20.0).max(30.0);
           let (truncated_coord, _) = truncate_label_by_width(ui, &coord_text, available_width);
-          ui.small(truncated_coord);
+          let response = ui.small(truncated_coord);
+          if response.clicked() {
+            let popup_id = egui::Id::new(format!("line_coords_popup_{layer_id}_{shape_idx}"));
+            let coords_info = format!("📏 LineString Coordinates\nStart Point: {:.6}, {:.6}\nEnd Point: {:.6}, {:.6}\nTotal Points: {}", 
+              first_wgs84.lat, first_wgs84.lon, last_wgs84.lat, last_wgs84.lon, coords.len());
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, coords_info));
+          }
         }
       }
 
@@ -407,7 +421,7 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "⬟", metadata, true);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar
+          let available_width = (ui.available_width() - 100.0).max(30.0);
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.strong(truncated_label);
@@ -457,7 +471,7 @@ impl ShapeLayer {
       Geometry::GeometryCollection(geometries, metadata) => {
         ui.label(format!("📦 Collection ({} items)", geometries.len()));
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0); // Much more conservative for scrollbar  
+          let available_width = (ui.available_width() - 100.0).max(30.0);  
           let (truncated_label, was_truncated) =
             truncate_label_by_width(ui, label, available_width);
           let response = ui.small(format!("- {truncated_label}"));
@@ -469,10 +483,10 @@ impl ShapeLayer {
       }
     }
 
-    // Show popups for geometry labels if clicked when truncated
     let geometry_popup_ids = [
       format!("point_popup_{layer_id}_{shape_idx}"),
       format!("line_popup_{layer_id}_{shape_idx}"),
+      format!("line_coords_popup_{layer_id}_{shape_idx}"),
       format!("polygon_popup_{layer_id}_{shape_idx}"),
       format!("collection_popup_{layer_id}_{shape_idx}"),
     ];
@@ -506,6 +520,108 @@ impl ShapeLayer {
         }
       }
     }
+    
+    let mut color_picker_requests = Vec::new();
+    for (layer_id, shapes) in &self.shape_map {
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
+        if ui.memory(|mem| mem.data.get_temp::<bool>(popup_id)).unwrap_or(false) {
+          let window_title = match shape {
+            Geometry::Polygon(_, _) => "Choose Colors",
+            _ => "Choose Color",
+          };
+          color_picker_requests.push((layer_id.clone(), shape_idx, window_title, popup_id));
+        }
+      }
+    }
+    
+    for (layer_id, shape_idx, window_title, popup_id) in color_picker_requests {
+      let mut is_open = true;
+      egui::Window::new(window_title)
+        .id(popup_id)
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_width(250.0)
+        .show(ui.ctx(), |ui| {
+          if let Some(shapes) = self.shape_map.get_mut(&layer_id) {
+            if let Some(shape) = shapes.get_mut(shape_idx) {
+              let metadata = match shape {
+                Geometry::Point(_, metadata)
+                | Geometry::LineString(_, metadata)
+                | Geometry::Polygon(_, metadata)
+                | Geometry::GeometryCollection(_, metadata) => metadata,
+              };
+              
+              if metadata.style.is_none() {
+                metadata.style = Some(crate::map::geometry_collection::Style::default());
+              }
+              
+              if let Some(style) = &metadata.style {
+                let mut stroke_color = style.color();
+                let mut fill_color = style.fill_color();
+                let is_polygon = matches!(shape, Geometry::Polygon(_, _));
+                
+                if is_polygon {
+                  ui.label("Stroke Color:");
+                  if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                    self.update_shape_stroke_color(&layer_id, shape_idx, stroke_color);
+                  }
+
+                  let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
+                  egui::widgets::color_picker::color_picker_hsva_2d(
+                    ui,
+                    &mut stroke_hsva,
+                    egui::widgets::color_picker::Alpha::Opaque,
+                  );
+                  let new_stroke_color = egui::Color32::from(stroke_hsva);
+                  if new_stroke_color != stroke_color {
+                    self.update_shape_stroke_color(&layer_id, shape_idx, new_stroke_color);
+                  }
+
+                  ui.separator();
+                  ui.label("Fill Color:");
+                  if ui.color_edit_button_srgba(&mut fill_color).changed() {
+                    self.update_shape_fill_color(&layer_id, shape_idx, fill_color);
+                  }
+
+                  let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
+                  egui::widgets::color_picker::color_picker_hsva_2d(
+                    ui,
+                    &mut fill_hsva,
+                    egui::widgets::color_picker::Alpha::BlendOrAdditive,
+                  );
+                  let new_fill_color = egui::Color32::from(fill_hsva);
+                  if new_fill_color != fill_color {
+                    self.update_shape_fill_color(&layer_id, shape_idx, new_fill_color);
+                  }
+                } else {
+                  if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                    self.update_shape_color(&layer_id, shape_idx, stroke_color);
+                  }
+
+                  ui.separator();
+                  let mut hsva = egui::ecolor::Hsva::from(stroke_color);
+                  egui::widgets::color_picker::color_picker_hsva_2d(
+                    ui,
+                    &mut hsva,
+                    egui::widgets::color_picker::Alpha::Opaque,
+                  );
+                  let new_color = egui::Color32::from(hsva);
+                  if new_color != stroke_color {
+                    self.update_shape_color(&layer_id, shape_idx, new_color);
+                  }
+                }
+              }
+            }
+          }
+        });
+      
+      if !is_open {
+        ui.memory_mut(|mem| mem.data.remove::<bool>(popup_id));
+      }
+    }
   }
 
   fn show_colored_icon(
@@ -517,90 +633,38 @@ impl ShapeLayer {
     metadata: &Metadata,
     is_polygon: bool,
   ) {
-    if let Some(style) = &metadata.style {
-      let mut stroke_color = style.color();
-      let mut fill_color = style.fill_color();
-      let colored_text = egui::RichText::new(icon).color(stroke_color);
-
-      let hover_text = if is_polygon {
-        "Click to change stroke & fill colors"
-      } else {
-        "Click to change color"
-      };
-      let icon_response = ui.button(colored_text).on_hover_text(hover_text);
-
-      let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
-
-      if icon_response.clicked() {
-        #[allow(deprecated)]
-        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
-      }
-
-      #[allow(deprecated)]
-      egui::popup_below_widget(
-        ui,
-        popup_id,
-        &icon_response,
-        egui::PopupCloseBehavior::CloseOnClickOutside,
-        |ui| {
-          if is_polygon {
-            ui.heading("Choose Colors");
-            ui.separator();
-            ui.label("Stroke Color:");
-            if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-              self.update_shape_stroke_color(layer_id, shape_idx, stroke_color);
-            }
-
-            let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
-            egui::widgets::color_picker::color_picker_hsva_2d(
-              ui,
-              &mut stroke_hsva,
-              egui::widgets::color_picker::Alpha::Opaque,
-            );
-            let new_stroke_color = egui::Color32::from(stroke_hsva);
-            if new_stroke_color != stroke_color {
-              self.update_shape_stroke_color(layer_id, shape_idx, new_stroke_color);
-            }
-
-            ui.separator();
-            ui.label("Fill Color:");
-            if ui.color_edit_button_srgba(&mut fill_color).changed() {
-              self.update_shape_fill_color(layer_id, shape_idx, fill_color);
-            }
-
-            let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
-            egui::widgets::color_picker::color_picker_hsva_2d(
-              ui,
-              &mut fill_hsva,
-              egui::widgets::color_picker::Alpha::BlendOrAdditive,
-            );
-            let new_fill_color = egui::Color32::from(fill_hsva);
-            if new_fill_color != fill_color {
-              self.update_shape_fill_color(layer_id, shape_idx, new_fill_color);
-            }
-          } else {
-            ui.heading("Choose Color");
-            ui.separator();
-            if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-              self.update_shape_color(layer_id, shape_idx, stroke_color);
-            }
-
-            ui.separator();
-            let mut hsva = egui::ecolor::Hsva::from(stroke_color);
-            egui::widgets::color_picker::color_picker_hsva_2d(
-              ui,
-              &mut hsva,
-              egui::widgets::color_picker::Alpha::Opaque,
-            );
-            let new_color = egui::Color32::from(hsva);
-            if new_color != stroke_color {
-              self.update_shape_color(layer_id, shape_idx, new_color);
-            }
-          }
-        },
-      );
+    let stroke_color = if let Some(style) = &metadata.style {
+      style.color()
     } else {
-      ui.label(icon);
+      egui::Color32::BLUE
+    };
+    
+    let colored_text = egui::RichText::new(icon).color(stroke_color);
+
+    let hover_text = if is_polygon {
+      "Click to change stroke & fill colors"
+    } else {
+      "Click to change color"
+    };
+    let icon_response = ui.button(colored_text).on_hover_text(hover_text);
+
+    let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
+
+    if icon_response.clicked() {
+      if metadata.style.is_none() {
+        if let Some(shapes) = self.shape_map.get_mut(layer_id) {
+          if let Some(shape) = shapes.get_mut(shape_idx) {
+            let shape_metadata = match shape {
+              Geometry::Point(_, metadata)
+              | Geometry::LineString(_, metadata)
+              | Geometry::Polygon(_, metadata)
+              | Geometry::GeometryCollection(_, metadata) => metadata,
+            };
+            shape_metadata.style = Some(crate::map::geometry_collection::Style::default());
+          }
+        }
+      }
+      ui.memory_mut(|mem| mem.data.insert_temp(popup_id, true));
     }
   }
 
@@ -674,6 +738,7 @@ impl ShapeLayer {
       }
     }
   }
+  
 }
 
 const NAME: &str = "Shape Layer";
@@ -770,7 +835,6 @@ impl Layer for ShapeLayer {
       .id_salt(shapes_header_id)
       .default_open(has_highlighted_geometry);
 
-    // Only force open once when just highlighted
     if self.just_highlighted && has_highlighted_geometry {
       shapes_header = shapes_header.open(Some(true));
     }
