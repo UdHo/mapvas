@@ -10,10 +10,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-/// Creates a sender that spawns a mapvas instance and queues requests and summarizes layers for
-/// performance speedup with some parsers. The events are send from another thread to not block the
-/// parsing.
-/// To guarantee that the events are send to the map the `finalize` method has to be used in the end.
 pub struct MapSender {
   sender: UnboundedSender<Option<MapEvent>>,
   inner_join_handle: tokio::task::JoinHandle<()>,
@@ -87,7 +83,6 @@ impl SenderInner {
     let mut non_layer_events = Vec::new();
     let mut has_layer_events = false;
 
-    // First pass: collect and compact layer events, record non-layer events
     for event in queue {
       match event {
         MapEvent::Layer(Layer { id, mut geometries }) => {
@@ -101,22 +96,18 @@ impl SenderInner {
       }
     }
 
-    // Send non-layer events first (Clear, etc.)
     for event in &non_layer_events {
-      // Skip Focus and Screenshot events - they should come after layer data
       if !matches!(event, MapEvent::Focus | MapEvent::Screenshot(_)) {
         Self::send_event(event).await;
       }
     }
 
-    // Send compacted layer data
     if has_layer_events {
       for (id, geometries) in layers {
         Self::send_event(&MapEvent::Layer(Layer { id, geometries })).await;
       }
     }
 
-    // Send Focus and Screenshot events last, after data is processed
     for event in &non_layer_events {
       if matches!(event, MapEvent::Focus | MapEvent::Screenshot(_)) {
         Self::send_event(event).await;
@@ -134,25 +125,24 @@ impl SenderInner {
 }
 
 impl MapSender {
-  /// Creates a new sender and spawns a mapvas instance if none is running.
-  pub async fn new() -> MapSender {
+  pub async fn new() -> (MapSender, bool) {
     let (rx, tx) = unbounded_channel();
     let sender = Self {
       sender: rx,
       inner_join_handle: SenderInner::start(tx),
     };
-    sender.spawn_mapvas_if_needed().await;
+    let was_spawned = sender.spawn_mapvas_if_needed().await;
 
-    sender
+    (sender, was_spawned)
   }
 
-  async fn spawn_mapvas_if_needed(&self) {
+  async fn spawn_mapvas_if_needed(&self) -> bool {
     if surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
       .send()
       .await
       .is_ok()
     {
-      return;
+      return false;
     }
 
     let _ = std::process::Command::new("mapvas")
@@ -165,14 +155,14 @@ impl MapSender {
     {
       debug!("Healthcheck {e}");
     }
+    
+    true
   }
 
-  /// Queues an event for sending.
   pub fn send_event(&self, event: MapEvent) {
     let _ = self.sender.send(Some(event));
   }
 
-  /// Sends the events that are still in the queue.
   pub async fn finalize(self) {
     let _ = self.sender.send(None);
     let _ = self.inner_join_handle.await;
