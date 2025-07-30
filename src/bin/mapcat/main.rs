@@ -4,7 +4,7 @@ use std::str::FromStr;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{FileParser, GrepParser, JsonParser, TTJsonParser};
+use mapvas::parser::{FileParser, GpxParser, GrepParser, JsonParser, KmlParser, TTJsonParser};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -13,7 +13,7 @@ mod sender;
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, ttjson.
+  /// Which parser to use. Values: grep, ttjson, json, gpx, kml.
   #[arg(short, long, default_value = "grep")]
   parser: String,
 
@@ -81,6 +81,8 @@ async fn main() {
     match args.parser.as_str() {
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
       "json" => Box::new(JsonParser::new()),
+      "gpx" => Box::new(GpxParser::new()),
+      "kml" => Box::new(KmlParser::new()),
       "grep" => Box::new(
         GrepParser::new(args.invert_coordinates)
           .with_color(color)
