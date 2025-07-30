@@ -202,6 +202,18 @@ pub struct TileCoordinate {
   pub zoom: u8,
 }
 
+impl Eq for TileCoordinate {}
+
+impl TileCoordinate {
+  /// Exact equality comparison using bit representation
+  #[must_use]
+  pub fn exact_eq(&self, other: &Self) -> bool {
+    self.x.to_bits() == other.x.to_bits() 
+      && self.y.to_bits() == other.y.to_bits() 
+      && self.zoom == other.zoom
+  }
+}
+
 /// A coordinate system used in this application to draw on an imaginary canvas.
 /// Is equivalent to Web Mercator projection on a fixed zoom level.
 #[derive(Debug, Default, PartialEq, Copy, Clone, Serialize, Deserialize)]
@@ -210,7 +222,14 @@ pub struct PixelCoordinate {
   pub y: f32,
 }
 
+impl Eq for PixelCoordinate {}
+
 impl PixelCoordinate {
+  /// Exact equality comparison using bit representation
+  #[must_use]
+  pub fn exact_eq(&self, other: &Self) -> bool {
+    self.x.to_bits() == other.x.to_bits() && self.y.to_bits() == other.y.to_bits()
+  }
   #[must_use]
   pub fn new(x: f32, y: f32) -> Self {
     Self { x, y }
@@ -277,11 +296,31 @@ impl WGS84Coordinate {
   }
 }
 
+impl Eq for WGS84Coordinate {}
+
+impl WGS84Coordinate {
+  /// Exact equality comparison using bit representation
+  #[must_use]
+  pub fn exact_eq(&self, other: &Self) -> bool {
+    self.lat.to_bits() == other.lat.to_bits() && self.lon.to_bits() == other.lon.to_bits()
+  }
+}
+
 /// Meant for actual pixel in the UI. Handled equivalently to a ``egui::Pos2``.
 #[derive(Debug, Default, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct PixelPosition {
   pub x: f32,
   pub y: f32,
+}
+
+impl Eq for PixelPosition {}
+
+impl PixelPosition {
+  /// Exact equality comparison using bit representation
+  #[must_use]
+  pub fn exact_eq(&self, other: &Self) -> bool {
+    self.x.to_bits() == other.x.to_bits() && self.y.to_bits() == other.y.to_bits()
+  }
 }
 
 impl Mul<f32> for PixelPosition {

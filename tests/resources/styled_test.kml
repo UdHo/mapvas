@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Styled Test</name>
+    <Style id="redLineStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>4</width>
+      </LineStyle>
+    </Style>
+    <Style id="blueFillStyle">
+      <PolyStyle>
+        <color>ffff0000</color>
+        <fill>1</fill>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Red Line</name>
+      <description>A red line with style</description>
+      <styleUrl>#redLineStyle</styleUrl>
+      <LineString>
+        <coordinates>13.4050,52.5200,0 13.4070,52.5220,0 13.4090,52.5240,0</coordinates>
+      </LineString>
+    </Placemark>
+    <Placemark>
+      <name>Blue Polygon</name>
+      <description>A blue filled polygon</description>
+      <styleUrl>#blueFillStyle</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>13.40,52.52,0 13.41,52.52,0 13.41,52.53,0 13.40,52.53,0 13.40,52.52,0</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Simple Point</name>
+      <Point>
+        <coordinates>13.405,52.525,0</coordinates>
+      </Point>
+    </Placemark>
+  </Document>
+</kml>

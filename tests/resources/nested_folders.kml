@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Folder>
+      <name>Outer Folder</name>
+      <Folder>
+        <name>Inner Folder</name>
+        <Placemark>
+          <name>Nested Point</name>
+          <Point>
+            <coordinates>10.0,52.0,0</coordinates>
+          </Point>
+        </Placemark>
+      </Folder>
+      <Placemark>
+        <name>Outer Point</name>
+        <Point>
+          <coordinates>11.0,53.0,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

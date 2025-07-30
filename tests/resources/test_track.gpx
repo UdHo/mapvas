@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <metadata>
+    <name>Test Track</name>
+    <desc>A simple test track with waypoints</desc>
+  </metadata>
+  <wpt lat="52.5200" lon="13.4050">
+    <name>Berlin</name>
+    <desc>Capital of Germany</desc>
+  </wpt>
+  <wpt lat="48.1351" lon="11.5820">
+    <name>Munich</name>
+    <desc>City in Bavaria</desc>
+  </wpt>
+  <trk>
+    <name>Test Route</name>
+    <desc>Route from Berlin to Munich</desc>
+    <trkseg>
+      <trkpt lat="52.5200" lon="13.4050"></trkpt>
+      <trkpt lat="52.0000" lon="13.0000"></trkpt>
+      <trkpt lat="51.0000" lon="12.0000"></trkpt>
+      <trkpt lat="50.0000" lon="11.0000"></trkpt>
+      <trkpt lat="48.1351" lon="11.5820"></trkpt>
+    </trkseg>
+  </trk>
+  <rte>
+    <name>Alternative Route</name>
+    <rtept lat="52.5200" lon="13.4050"></rtept>
+    <rtept lat="51.5074" lon="7.4663"></rtept>
+    <rtept lat="48.1351" lon="11.5820"></rtept>
+  </rte>
+</gpx>

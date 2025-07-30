@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Style id="redStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+      </LineStyle>
+      <PolyStyle>
+        <color>aa00ff00</color>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Styled Feature</name>
+      <styleUrl>#redStyle</styleUrl>
+      <LineString>
+        <coordinates>0,0,0 1,1,0</coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

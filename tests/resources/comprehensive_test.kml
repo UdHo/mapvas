@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"
+     xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>Comprehensive KML Test</name>
+    <description>Testing all KML features</description>
+
+    <!-- Styles -->
+    <Style id="iconStyleNormal">
+      <IconStyle>
+        <scale>1.1</scale>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/paddle/blu-circle.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <color>ff0000ff</color>
+      </LabelStyle>
+    </Style>
+
+    <Style id="iconStyleHighlight">
+      <IconStyle>
+        <scale>1.4</scale>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+
+    <!-- StyleMap -->
+    <StyleMap id="iconStyleMap">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#iconStyleNormal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#iconStyleHighlight</styleUrl>
+      </Pair>
+    </StyleMap>
+
+    <!-- Placemark with Point and ExtendedData -->
+    <Placemark>
+      <name>Point Marker with StyleMap</name>
+      <styleUrl>#iconStyleMap</styleUrl>
+      <ExtendedData>
+        <Data name="category">
+          <value>example</value>
+        </Data>
+        <Data name="id">
+          <value>12345</value>
+        </Data>
+      </ExtendedData>
+      <Point>
+        <coordinates>-122.0822035425683,37.42228990140251,0</coordinates>
+      </Point>
+    </Placemark>
+
+    <!-- Placemark with LineString -->
+    <Placemark>
+      <name>Styled Line</name>
+      <Style>
+        <LineStyle>
+          <color>ff0000ff</color>
+          <width>4</width>
+        </LineStyle>
+      </Style>
+      <LineString>
+        <coordinates>
+          -122.0822035425683,37.42228990140251,0
+          -122.085,37.422,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+
+    <!-- Placemark with Polygon -->
+    <Placemark>
+      <name>Styled Polygon</name>
+      <Style>
+        <PolyStyle>
+          <color>7d00ff00</color>
+        </PolyStyle>
+        <LineStyle>
+          <color>ff00ffff</color>
+          <width>2</width>
+        </LineStyle>
+      </Style>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -122.085,37.422,0
+              -122.085,37.418,0
+              -122.078,37.418,0
+              -122.078,37.422,0
+              -122.085,37.422,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+
+    <!-- GroundOverlay -->
+    <GroundOverlay>
+      <name>Overlay Image</name>
+      <Icon>
+        <href>http://www.lib.utexas.edu/maps/historical/newark_nj_1922.jpg</href>
+      </Icon>
+      <LatLonBox>
+        <north>37.43</north>
+        <south>37.41</south>
+        <east>-122.08</east>
+        <west>-122.10</west>
+      </LatLonBox>
+    </GroundOverlay>
+
+    <!-- Folder with nested Placemarks -->
+    <Folder>
+      <name>Nested Items</name>
+      <Placemark>
+        <name>Inside Folder</name>
+        <Point>
+          <coordinates>-122.09,37.42,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+
+    <!-- Placemark with TimeSpan -->
+    <Placemark>
+      <name>Timed Placemark</name>
+      <TimeSpan>
+        <begin>2025-01-01T00:00:00Z</begin>
+        <end>2025-12-31T23:59:59Z</end>
+      </TimeSpan>
+      <Point>
+        <coordinates>-122.082,37.418,0</coordinates>
+      </Point>
+    </Placemark>
+
+    <!-- 3D Model (basic link to COLLADA file) -->
+    <Placemark>
+      <name>3D Model Example</name>
+      <Model>
+        <altitudeMode>absolute</altitudeMode>
+        <Location>
+          <longitude>-122.082</longitude>
+          <latitude>37.418</latitude>
+          <altitude>0</altitude>
+        </Location>
+        <Orientation>
+          <heading>0</heading>
+          <tilt>0</tilt>
+          <roll>0</roll>
+        </Orientation>
+        <Scale>
+          <x>1</x>
+          <y>1</y>
+          <z>1</z>
+        </Scale>
+        <Link>
+          <href>http://yourdomain.com/model.dae</href>
+        </Link>
+      </Model>
+    </Placemark>
+
+    <!-- NetworkLink -->
+    <NetworkLink>
+      <name>Linked KML</name>
+      <Link>
+        <href>http://yourdomain.com/another.kml</href>
+        <refreshMode>onInterval</refreshMode>
+        <refreshInterval>30</refreshInterval>
+      </Link>
+    </NetworkLink>
+
+  </Document>
+</kml>
