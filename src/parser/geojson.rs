@@ -43,7 +43,6 @@ impl GeoJsonParser {
             }
             "Point" | "LineString" | "Polygon" | "MultiPoint" | "MultiLineString"
             | "MultiPolygon" | "GeometryCollection" => {
-              // Direct geometry object
               if let Some(geometry) = self.parse_geometry(value, &Metadata::default()) {
                 self.geometry.push(geometry);
               }
@@ -67,10 +66,8 @@ impl GeoJsonParser {
   fn parse_feature(&mut self, feature: &Value) -> Result<(), String> {
     let obj = feature.as_object().ok_or("Feature must be an object")?;
 
-    // Extract properties for styling and metadata
     let metadata = Self::extract_metadata_from_properties(obj.get("properties"));
 
-    // Parse geometry
     if let Some(geometry_value) = obj.get("geometry") {
       if let Some(geometry) = self.parse_geometry(geometry_value, &metadata) {
         self.geometry.push(geometry);
@@ -114,7 +111,6 @@ impl GeoJsonParser {
         }
       }
       "Polygon" => {
-        // GeoJSON Polygon coordinates are [[[lon, lat], [lon, lat], ...]]
         if let Some(rings) = coordinates.as_array() {
           if let Some(exterior_ring) = rings.first() {
             let coords = Self::parse_coordinate_array(exterior_ring)?;
@@ -229,16 +225,29 @@ impl GeoJsonParser {
 
 impl Parser for GeoJsonParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    let trimmed = line.trim();
+
+    if trimmed.is_empty() {
+      return None;
+    }
+
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+      if self.parse_geojson(&parsed).is_ok() {
+        return None;
+      }
+    }
+
     self.data.push_str(line);
     None
   }
 
   fn finalize(&mut self) -> Option<MapEvent> {
-    let parsed: Value = serde_json::from_str(&self.data).ok()?;
-
-    if let Err(e) = self.parse_geojson(&parsed) {
-      log::warn!("GeoJSON parsing failed: {e}");
-      return None;
+    if !self.data.is_empty() {
+      if let Ok(parsed) = serde_json::from_str::<Value>(&self.data) {
+        if let Err(e) = self.parse_geojson(&parsed) {
+          log::warn!("GeoJSON document parsing failed: {e}");
+        }
+      }
     }
 
     if !self.geometry.is_empty() {
@@ -391,7 +400,6 @@ mod tests {
         "Should have 3 geometries from feature collection"
       );
 
-      // Check that we have point, linestring, and polygon
       let mut has_point = false;
       let mut has_linestring = false;
       let mut has_polygon = false;
@@ -458,7 +466,6 @@ mod tests {
       assert_eq!(layer.id, "geojson", "Layer should be named 'geojson'");
       assert_eq!(layer.geometries.len(), 3, "Should have 3 multi-geometries");
 
-      // All should be GeometryCollection due to multi-geometry conversion
       for geometry in &layer.geometries {
         match geometry {
           Geometry::GeometryCollection(_, metadata) => {
@@ -509,14 +516,94 @@ mod tests {
         "All geometries should have parsed colors"
       );
 
-      // Check that we got different colors (hex, short hex, rgb, named, hex with alpha)
-      assert_eq!(parsed_colors[0], egui::Color32::RED); // #ff0000
-      assert_eq!(parsed_colors[1], egui::Color32::RED); // #f00 (should expand to #ff0000)
-      assert_eq!(parsed_colors[2], egui::Color32::GREEN); // rgb(0, 255, 0)
-      assert_eq!(parsed_colors[3], egui::Color32::BLUE); // blue
-    // Note: Color with alpha (#ff000080) will be parsed but may differ in representation
+      assert_eq!(parsed_colors[0], egui::Color32::RED);
+      assert_eq!(parsed_colors[1], egui::Color32::RED);
+      assert_eq!(parsed_colors[2], egui::Color32::GREEN);
+      assert_eq!(parsed_colors[3], egui::Color32::BLUE);
     } else {
       panic!("First event should be a Layer event");
     }
+  }
+
+  #[test]
+  fn test_geojson_linewise_from_file() {
+    let events = load_and_parse::<GeoJsonParser>("linewise.geojson");
+    let actual_layer = extract_layer(&events, "geojson");
+
+    assert_eq!(
+      actual_layer.geometries.len(),
+      3,
+      "Should have 3 geometries from linewise parsing"
+    );
+    let expected_point1 = GeometryBuilder::point(52.0, 10.0);
+    assert_eq!(
+      actual_layer.geometries[0], expected_point1,
+      "First point should match"
+    );
+
+    let expected_style = StyleBuilder::with_color(egui::Color32::RED);
+    let expected_metadata = MetadataBuilder::with_label_and_style("Feature Point", expected_style);
+    let expected_point2 = GeometryBuilder::point_with_metadata(52.1, 10.1, expected_metadata);
+    assert_eq!(
+      actual_layer.geometries[1], expected_point2,
+      "Second point should match with styling"
+    );
+    let expected_linestring =
+      GeometryBuilder::linestring(&[(52.2, 10.2), (52.3, 10.3), (52.4, 10.4)]);
+    assert_eq!(
+      actual_layer.geometries[2], expected_linestring,
+      "LineString should match"
+    );
+  }
+
+  #[test]
+  fn test_geojson_mixed_linewise_from_file() {
+    let events = load_and_parse::<GeoJsonParser>("mixed_linewise.geojson");
+    let actual_layer = extract_layer(&events, "geojson");
+
+    assert_eq!(
+      actual_layer.geometries.len(),
+      3,
+      "Should have 3 geometries from mixed linewise parsing"
+    );
+
+    let expected_point1 = GeometryBuilder::point(52.0, 10.0);
+    assert_eq!(
+      actual_layer.geometries[0], expected_point1,
+      "First point should match"
+    );
+
+    let expected_metadata = MetadataBuilder::with_label("Test Point");
+    let expected_point2 = GeometryBuilder::point_with_metadata(52.1, 10.1, expected_metadata);
+    assert_eq!(
+      actual_layer.geometries[1], expected_point2,
+      "Feature point should match with label"
+    );
+    let expected_style = StyleBuilder::with_color(egui::Color32::GREEN);
+    let expected_metadata = MetadataBuilder::with_style(expected_style);
+    let expected_point3 = GeometryBuilder::point_with_metadata(52.2, 10.2, expected_metadata);
+    assert_eq!(
+      actual_layer.geometries[2], expected_point3,
+      "FeatureCollection point should match with styling"
+    );
+  }
+
+  #[test]
+  fn test_geojson_multiline_document_fallback() {
+    let events = load_and_parse::<GeoJsonParser>("multiline_document.geojson");
+    let actual_layer = extract_layer(&events, "geojson");
+
+    assert_eq!(
+      actual_layer.geometries.len(),
+      1,
+      "Should have 1 geometry from document parsing"
+    );
+
+    let expected_metadata = MetadataBuilder::with_label("Multiline Point");
+    let expected_point = GeometryBuilder::point_with_metadata(52.0, 10.0, expected_metadata);
+    assert_eq!(
+      actual_layer.geometries[0], expected_point,
+      "Multiline document point should match"
+    );
   }
 }

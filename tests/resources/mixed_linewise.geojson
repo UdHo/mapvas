@@ -1,0 +1,5 @@
+{"type": "Point", "coordinates": [10.0, 52.0]}
+
+{"type": "Feature", "geometry": {"type": "Point", "coordinates": [10.1, 52.1]}, "properties": {"name": "Test Point"}}
+   
+{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [10.2, 52.2]}, "properties": {"stroke": "#00ff00"}}]}

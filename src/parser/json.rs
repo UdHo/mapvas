@@ -44,10 +44,7 @@ impl JsonParser {
       }
       Value::Object(map) => {
         if let Some(coord) = Self::try_get_coordinate_from_obj(map) {
-          // Check if this object also contains styling information
           let metadata = StyleParser::extract_metadata_from_json(Some(v));
-
-          // Create a point geometry with the extracted metadata
           let point = Geometry::Point(coord, metadata);
           self.geometry.push(point);
           return Some(coord);
@@ -158,7 +155,6 @@ mod tests {
         "Should have at least 4 point geometries"
       );
 
-      // Check that all points have labels and styling
       let mut styled_count = 0;
       let mut labeled_count = 0;
 
@@ -214,12 +210,10 @@ mod tests {
         "Should have at least 5 parsed colors"
       );
 
-      // Check that we got different colors (hex, short hex, rgb, named, hex with alpha)
-      assert_eq!(parsed_colors[0], egui::Color32::RED); // #ff0000
-      assert_eq!(parsed_colors[1], egui::Color32::RED); // #f00 (should expand to #ff0000)
-      assert_eq!(parsed_colors[2], egui::Color32::GREEN); // rgb(0, 255, 0)
-      assert_eq!(parsed_colors[3], egui::Color32::BLUE); // blue
-    // Note: Color with alpha (#ff000080) will be parsed but may differ in representation
+      assert_eq!(parsed_colors[0], egui::Color32::RED);
+      assert_eq!(parsed_colors[1], egui::Color32::RED);
+      assert_eq!(parsed_colors[2], egui::Color32::GREEN);
+      assert_eq!(parsed_colors[3], egui::Color32::BLUE);
     } else {
       panic!("First event should be a Layer event");
     }
@@ -227,7 +221,6 @@ mod tests {
 
   #[test]
   fn test_legacy_json_parsing() {
-    // Test backwards compatibility with old inline test
     let data = r#"
 {
   "x": {
@@ -267,7 +260,6 @@ mod tests {
 
   #[test]
   fn test_geojson_linestring_compatibility() {
-    // Test that JSON parser still handles GeoJSON-style coordinates (backward compatibility)
     let data = r#"
 {"type":"LineString","coordinates":[[10.0,53.0],[10.0,54.0],[10.0,53.5],[10.0,50.0]]}"#
       .to_string();

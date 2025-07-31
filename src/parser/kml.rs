@@ -152,11 +152,9 @@ impl KmlParser {
           None
         } else {
           let mut metadata = Metadata::default();
-          // Try different ways to get the document name
           if let Some(name) = attrs.get("name") {
             metadata = metadata.with_label(name.clone());
           } else {
-            // Document names might be in child elements, let's search for Name elements
             for element in elements {
               if let kml::Kml::Element(el) = element {
                 if el.name == "name" {
@@ -182,7 +180,6 @@ impl KmlParser {
           None
         } else {
           let mut metadata = Metadata::default();
-          // Use folder name if available
           if let Some(name) = &folder.name {
             metadata = metadata.with_label(name.clone());
           }
@@ -530,8 +527,7 @@ mod tests {
           Geometry::LineString(_, metadata) => {
             assert!(metadata.style.is_some(), "Geometry should have style");
             if let Some(style) = &metadata.style {
-              // The color() method always returns a color (with default fallback)
-              let _color = style.color(); // Just verify the method works
+              let _color = style.color();
             }
           }
           _ => panic!("Expected LineString geometry"),

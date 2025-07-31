@@ -12,7 +12,6 @@ impl StyleParser {
     let mut metadata = Metadata::default();
 
     if let Some(Value::Object(props)) = properties {
-      // Extract name/title/label for metadata
       let label = props
         .get("name")
         .or_else(|| props.get("title"))
@@ -24,7 +23,6 @@ impl StyleParser {
         metadata = metadata.with_label(label);
       }
 
-      // Extract style information
       let style = Self::extract_style_from_properties(props);
       if let Some(style) = style {
         metadata = metadata.with_style(style);
@@ -39,7 +37,6 @@ impl StyleParser {
     let mut style = Style::default();
     let mut has_style = false;
 
-    // Check for Mapbox/Leaflet style properties first (lower precedence)
     if let Some(color) = props.get("color").and_then(Value::as_str) {
       if let Some(parsed_color) = Self::parse_color(color) {
         style = style.with_color(parsed_color);
@@ -54,7 +51,6 @@ impl StyleParser {
       }
     }
 
-    // Check for common GeoJSON style properties (higher precedence)
     if let Some(stroke) = props.get("stroke").and_then(Value::as_str) {
       if let Some(color) = Self::parse_color(stroke) {
         style = style.with_color(color);
@@ -69,7 +65,6 @@ impl StyleParser {
       }
     }
 
-    // Check for stroke-width, stroke-opacity, fill-opacity
     if props.contains_key("stroke-width")
       || props.contains_key("stroke-opacity")
       || props.contains_key("fill-opacity")
@@ -84,17 +79,14 @@ impl StyleParser {
   pub fn parse_color(color_str: &str) -> Option<Color32> {
     let color_str = color_str.trim();
 
-    // Handle hex colors
     if let Some(hex) = color_str.strip_prefix('#') {
       return Self::parse_hex_color(hex);
     }
 
-    // Handle rgb() colors
     if color_str.starts_with("rgb(") && color_str.ends_with(')') {
       return Self::parse_rgb_color(&color_str[4..color_str.len() - 1]);
     }
 
-    // Handle named colors
     match color_str.to_lowercase().as_str() {
       "red" => Some(Color32::RED),
       "green" => Some(Color32::GREEN),
@@ -111,21 +103,18 @@ impl StyleParser {
   pub fn parse_hex_color(hex: &str) -> Option<Color32> {
     match hex.len() {
       3 => {
-        // Short hex: #RGB -> #RRGGBB
         let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
         let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
         let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
         Some(Color32::from_rgb(r, g, b))
       }
       6 => {
-        // Full hex: #RRGGBB
         let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
         Some(Color32::from_rgb(r, g, b))
       }
       8 => {
-        // Full hex with alpha: #RRGGBBAA
         let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
@@ -157,7 +146,6 @@ mod tests {
 
   #[test]
   fn test_color_parsing() {
-    // Test hex colors
     assert_eq!(StyleParser::parse_color("#ff0000"), Some(Color32::RED));
     assert_eq!(StyleParser::parse_color("#f00"), Some(Color32::RED));
     assert_eq!(
@@ -165,7 +153,6 @@ mod tests {
       Some(Color32::from_rgba_unmultiplied(255, 0, 0, 128))
     );
 
-    // Test RGB colors
     assert_eq!(
       StyleParser::parse_color("rgb(255, 0, 0)"),
       Some(Color32::RED)
@@ -175,12 +162,10 @@ mod tests {
       Some(Color32::GREEN)
     );
 
-    // Test named colors
     assert_eq!(StyleParser::parse_color("red"), Some(Color32::RED));
     assert_eq!(StyleParser::parse_color("blue"), Some(Color32::BLUE));
     assert_eq!(StyleParser::parse_color("green"), Some(Color32::GREEN));
 
-    // Test invalid colors
     assert_eq!(StyleParser::parse_color("invalid"), None);
     assert_eq!(StyleParser::parse_color("#gg0000"), None);
   }
@@ -199,7 +184,6 @@ mod tests {
       assert!(style.is_some());
 
       if let Some(style) = style {
-        // stroke should override color
         assert_eq!(style.color(), Color32::RED);
         assert_eq!(style.fill_color(), Color32::GREEN);
       }
