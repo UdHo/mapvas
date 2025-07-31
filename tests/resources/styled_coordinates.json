@@ -1,0 +1,10 @@
+{
+  "location": {
+    "latitude": 52.0,
+    "longitude": 10.0,
+    "name": "Test Location",
+    "stroke": "#ff0000",
+    "fill": "#00ff00",
+    "color": "blue"
+  }
+}

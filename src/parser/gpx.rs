@@ -22,7 +22,7 @@ impl GpxParser {
   #[allow(clippy::cast_possible_truncation)]
   fn parse_gpx(&self) -> Vec<Geometry<PixelCoordinate>> {
     let mut geometries = Vec::new();
-    
+
     match gpx::read(&mut self.data.as_bytes()) {
       Ok(gpx_data) => {
         for waypoint in &gpx_data.waypoints {
@@ -45,7 +45,7 @@ impl GpxParser {
                 ))
               })
               .collect();
-            
+
             if track_points.len() >= 2 {
               geometries.push(Geometry::LineString(track_points, Metadata::default()));
             }
@@ -63,7 +63,7 @@ impl GpxParser {
               ))
             })
             .collect();
-          
+
           if route_points.len() >= 2 {
             geometries.push(Geometry::LineString(route_points, Metadata::default()));
           }
@@ -98,33 +98,39 @@ impl Parser for GpxParser {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::map::{
+    coordinates::{PixelCoordinate, WGS84Coordinate},
+    geometry_collection::{Geometry, Metadata},
+    map_event::MapEvent,
+  };
 
   #[test]
   fn test_gpx_waypoint() {
+    use crate::parser::FileParser;
     use std::fs::File;
     use std::io::BufReader;
-    use crate::parser::FileParser;
 
-    let gpx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/resources/simple_waypoint.gpx");
+    let gpx_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/simple_waypoint.gpx"
+    );
     let file = File::open(gpx_path).expect("Could not open simple waypoint GPX file");
     let reader = Box::new(BufReader::new(file));
-    
+
     let mut parser = GpxParser::new();
     let events: Vec<_> = parser.parse(reader).collect();
-    
+
     assert!(!events.is_empty(), "GPX parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 waypoint");
-      
-      let expected_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+
+      let expected_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
+      let expected_geometry = Geometry::Point(expected_coord, Metadata::default());
+
+      assert_eq!(
+        layer.geometries[0], expected_geometry,
+        "Waypoint geometry should match expected"
       );
-      let expected_geometry = crate::map::geometry_collection::Geometry::Point(
-        expected_coord,
-        crate::map::geometry_collection::Metadata::default()
-      );
-      
-      assert_eq!(layer.geometries[0], expected_geometry, "Waypoint geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -132,35 +138,38 @@ mod tests {
 
   #[test]
   fn test_gpx_track() {
+    use crate::parser::FileParser;
     use std::fs::File;
     use std::io::BufReader;
-    use crate::parser::FileParser;
 
-    let gpx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/resources/simple_track.gpx");
+    let gpx_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/simple_track.gpx"
+    );
     let file = File::open(gpx_path).expect("Could not open simple track GPX file");
     let reader = Box::new(BufReader::new(file));
-    
+
     let mut parser = GpxParser::new();
     let events: Vec<_> = parser.parse(reader).collect();
-    
+
     assert!(!events.is_empty(), "GPX parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 track");
-      
+
       let expected_coords = vec![
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0),
         ),
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1)  
+          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1),
         ),
       ];
-      let expected_geometry = crate::map::geometry_collection::Geometry::LineString(
-        expected_coords,
-        crate::map::geometry_collection::Metadata::default()
+      let expected_geometry = Geometry::LineString(expected_coords, Metadata::default());
+
+      assert_eq!(
+        layer.geometries[0], expected_geometry,
+        "Track geometry should match expected"
       );
-      
-      assert_eq!(layer.geometries[0], expected_geometry, "Track geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -168,37 +177,46 @@ mod tests {
 
   #[test]
   fn test_gpx_parsing() {
+    use crate::parser::FileParser;
     use std::fs::File;
     use std::io::BufReader;
-    use crate::parser::FileParser;
 
-    let gpx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/resources/test_track.gpx");
+    let gpx_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/test_track.gpx"
+    );
     let file = File::open(gpx_path).expect("Could not open test GPX file");
     let reader = Box::new(BufReader::new(file));
-    
+
     let mut parser = GpxParser::new();
     let events: Vec<_> = parser.parse(reader).collect();
-    
+
     assert!(!events.is_empty(), "GPX parser should produce events");
-    
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
-        assert!(layer.geometries.len() >= 4, "Should have at least 4 geometries (2 waypoints, 1 track, 1 route)");
-        
-        let mut points = 0;
-        let mut linestrings = 0;
-        
-        for geometry in &layer.geometries {
-            match geometry {
-                crate::map::geometry_collection::Geometry::Point(_, _) => points += 1,
-                crate::map::geometry_collection::Geometry::LineString(_, _) => linestrings += 1,
-                _ => {}
-            }
+
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert!(
+        layer.geometries.len() >= 4,
+        "Should have at least 4 geometries (2 waypoints, 1 track, 1 route)"
+      );
+
+      let mut points = 0;
+      let mut linestrings = 0;
+
+      for geometry in &layer.geometries {
+        match geometry {
+          Geometry::Point(_, _) => points += 1,
+          Geometry::LineString(_, _) => linestrings += 1,
+          _ => {}
         }
-        
-        assert!(points >= 2, "Should have at least 2 waypoints");
-        assert!(linestrings >= 2, "Should have at least 2 linestrings (track + route)");
+      }
+
+      assert!(points >= 2, "Should have at least 2 waypoints");
+      assert!(
+        linestrings >= 2,
+        "Should have at least 2 linestrings (track + route)"
+      );
     } else {
-        panic!("First event should be a Layer event");
+      panic!("First event should be a Layer event");
     }
   }
 }

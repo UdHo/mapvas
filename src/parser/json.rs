@@ -1,4 +1,4 @@
-use super::Parser;
+use super::{Parser, style::StyleParser};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -44,6 +44,12 @@ impl JsonParser {
       }
       Value::Object(map) => {
         if let Some(coord) = Self::try_get_coordinate_from_obj(map) {
+          // Check if this object also contains styling information
+          let metadata = StyleParser::extract_metadata_from_json(Some(v));
+
+          // Create a point geometry with the extracted metadata
+          let point = Geometry::Point(coord, metadata);
+          self.geometry.push(point);
           return Some(coord);
         }
         for (_, v) in map {
@@ -96,10 +102,132 @@ impl Parser for JsonParser {
 
 #[cfg(test)]
 mod tests {
-  use crate::parser::Parser as _;
+  use super::*;
+  use crate::map::{geometry_collection::Geometry, map_event::MapEvent};
+  use crate::parser::{FileParser, test_utils::*};
+  use std::fs::File;
+  use std::io::BufReader;
 
   #[test]
-  fn test_json_parser() {
+  fn test_json_simple_coordinates_from_file() {
+    let events = load_and_parse::<JsonParser>("simple_coordinates.json");
+    let actual_layer = extract_layer(&events, "json");
+
+    let expected_layer = LayerBuilder::new("json")
+      .with_geometry(GeometryBuilder::point(52.0, 10.0))
+      .build();
+
+    assert_layer_eq(actual_layer, &expected_layer);
+  }
+
+  #[test]
+  fn test_json_styled_coordinates_from_file() {
+    let events = load_and_parse::<JsonParser>("styled_coordinates.json");
+    let actual_layer = extract_layer(&events, "json");
+
+    let expected_style = StyleBuilder::with_colors(egui::Color32::RED, egui::Color32::GREEN);
+    let expected_metadata = MetadataBuilder::with_label_and_style("Test Location", expected_style);
+    let expected_layer = LayerBuilder::new("json")
+      .with_geometry(GeometryBuilder::point_with_metadata(
+        52.0,
+        10.0,
+        expected_metadata,
+      ))
+      .build();
+
+    assert_layer_eq(actual_layer, &expected_layer);
+  }
+
+  #[test]
+  fn test_json_multiple_coordinates_from_file() {
+    let json_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/multiple_coordinates.json"
+    );
+    let file = File::open(json_path).expect("Could not open multiple coordinates JSON file");
+    let reader = Box::new(BufReader::new(file));
+
+    let mut parser = super::JsonParser::new();
+    let events: Vec<_> = parser.parse(reader).collect();
+
+    assert!(!events.is_empty(), "JSON parser should produce events");
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(layer.id, "json", "Layer should be named 'json'");
+      assert!(
+        layer.geometries.len() >= 4,
+        "Should have at least 4 point geometries"
+      );
+
+      // Check that all points have labels and styling
+      let mut styled_count = 0;
+      let mut labeled_count = 0;
+
+      for geometry in &layer.geometries {
+        if let Geometry::Point(_, metadata) = geometry {
+          if metadata.label.is_some() {
+            labeled_count += 1;
+          }
+          if metadata.style.is_some() {
+            styled_count += 1;
+          }
+        }
+      }
+
+      assert!(labeled_count >= 4, "Should have at least 4 labeled points");
+      assert!(styled_count >= 4, "Should have at least 4 styled points");
+    } else {
+      panic!("First event should be a Layer event");
+    }
+  }
+
+  #[test]
+  fn test_json_color_variations_from_file() {
+    let json_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/color_variations.json"
+    );
+    let file = File::open(json_path).expect("Could not open color variations JSON file");
+    let reader = Box::new(BufReader::new(file));
+
+    let mut parser = super::JsonParser::new();
+    let events: Vec<_> = parser.parse(reader).collect();
+
+    assert!(!events.is_empty(), "JSON parser should produce events");
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(layer.id, "json", "Layer should be named 'json'");
+      assert!(
+        layer.geometries.len() >= 5,
+        "Should have at least 5 geometries with different color formats"
+      );
+
+      let mut parsed_colors = Vec::new();
+      for geometry in &layer.geometries {
+        if let Geometry::Point(_, metadata) = geometry {
+          if let Some(style) = &metadata.style {
+            parsed_colors.push(style.color());
+          }
+        }
+      }
+
+      assert!(
+        parsed_colors.len() >= 5,
+        "Should have at least 5 parsed colors"
+      );
+
+      // Check that we got different colors (hex, short hex, rgb, named, hex with alpha)
+      assert_eq!(parsed_colors[0], egui::Color32::RED); // #ff0000
+      assert_eq!(parsed_colors[1], egui::Color32::RED); // #f00 (should expand to #ff0000)
+      assert_eq!(parsed_colors[2], egui::Color32::GREEN); // rgb(0, 255, 0)
+      assert_eq!(parsed_colors[3], egui::Color32::BLUE); // blue
+    // Note: Color with alpha (#ff000080) will be parsed but may differ in representation
+    } else {
+      panic!("First event should be a Layer event");
+    }
+  }
+
+  #[test]
+  fn test_legacy_json_parsing() {
+    // Test backwards compatibility with old inline test
     let data = r#"
 {
   "x": {
@@ -138,7 +266,8 @@ mod tests {
   }
 
   #[test]
-  fn test_geojson_parser() {
+  fn test_geojson_linestring_compatibility() {
+    // Test that JSON parser still handles GeoJSON-style coordinates (backward compatibility)
     let data = r#"
 {"type":"LineString","coordinates":[[10.0,53.0],[10.0,54.0],[10.0,53.5],[10.0,50.0]]}"#
       .to_string();

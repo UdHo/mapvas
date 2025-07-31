@@ -80,7 +80,6 @@ impl MapApp {
         }
       });
   }
-
 }
 
 impl eframe::App for MapApp {

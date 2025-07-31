@@ -135,7 +135,10 @@ impl KmlParser {
         if child_geometries.is_empty() {
           None
         } else {
-          Some(Geometry::GeometryCollection(child_geometries, Metadata::default()))
+          Some(Geometry::GeometryCollection(
+            child_geometries,
+            Metadata::default(),
+          ))
         }
       }
       kml::Kml::Document { elements, attrs } => {
@@ -310,16 +313,21 @@ impl Parser for KmlParser {
 #[cfg(test)]
 mod tests {
   use super::*;
-  
-  fn extract_leaf_geometries(geom: &crate::map::geometry_collection::Geometry<crate::map::coordinates::PixelCoordinate>) -> Vec<&crate::map::geometry_collection::Geometry<crate::map::coordinates::PixelCoordinate>> {
+  use crate::map::{
+    coordinates::{PixelCoordinate, WGS84Coordinate},
+    geometry_collection::{Geometry, Metadata, Style},
+    map_event::MapEvent,
+  };
+
+  fn extract_leaf_geometries(geom: &Geometry<PixelCoordinate>) -> Vec<&Geometry<PixelCoordinate>> {
     match geom {
-      crate::map::geometry_collection::Geometry::GeometryCollection(children, _) => {
+      Geometry::GeometryCollection(children, _) => {
         let mut results = Vec::new();
         for child in children {
           results.extend(extract_leaf_geometries(child));
         }
         results
-      },
+      }
       _ => vec![geom],
     }
   }
@@ -341,26 +349,23 @@ mod tests {
     let events: Vec<_> = parser.parse(reader).collect();
 
     assert!(!events.is_empty(), "KML parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert_eq!(leaf_geometries.len(), 1, "Should have 1 point geometry");
-      
-      let expected_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
-      );
-      let expected_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let expected_metadata = crate::map::geometry_collection::Metadata::default()
+
+      let expected_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
+      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_metadata = Metadata::default()
         .with_label("Simple Point".to_string())
         .with_style(expected_style);
-      let expected_geometry = crate::map::geometry_collection::Geometry::Point(
-        expected_coord,
-        expected_metadata
+      let expected_geometry = Geometry::Point(expected_coord, expected_metadata);
+
+      assert_eq!(
+        leaf_geometries[0], &expected_geometry,
+        "Point geometry should match expected"
       );
-      
-      assert_eq!(leaf_geometries[0], &expected_geometry, "Point geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -383,34 +388,37 @@ mod tests {
     let events: Vec<_> = parser.parse(reader).collect();
 
     assert!(!events.is_empty(), "KML parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
-      assert_eq!(leaf_geometries.len(), 1, "Should have 1 linestring geometry");
-      
+      assert_eq!(
+        leaf_geometries.len(),
+        1,
+        "Should have 1 linestring geometry"
+      );
+
       let expected_coords = vec![
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0),
         ),
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1)
+          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1),
         ),
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.2, 10.2)
+          crate::map::coordinates::WGS84Coordinate::new(52.2, 10.2),
         ),
       ];
-      let expected_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let expected_metadata = crate::map::geometry_collection::Metadata::default()
+      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_metadata = Metadata::default()
         .with_label("Simple Line".to_string())
         .with_style(expected_style);
-      let expected_geometry = crate::map::geometry_collection::Geometry::LineString(
-        expected_coords,
-        expected_metadata
+      let expected_geometry = Geometry::LineString(expected_coords, expected_metadata);
+
+      assert_eq!(
+        leaf_geometries[0], &expected_geometry,
+        "LineString geometry should match expected"
       );
-      
-      assert_eq!(leaf_geometries[0], &expected_geometry, "LineString geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -436,7 +444,7 @@ mod tests {
 
     let layer_events: Vec<_> = events
       .iter()
-      .filter(|event| matches!(event, crate::map::map_event::MapEvent::Layer(_)))
+      .filter(|event| matches!(event, MapEvent::Layer(_)))
       .collect();
 
     assert!(
@@ -465,9 +473,9 @@ mod tests {
       "Styled KML parser should produce events"
     );
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert!(
         leaf_geometries.len() >= 3,
@@ -477,12 +485,10 @@ mod tests {
       let geometries_with_labels: Vec<_> = leaf_geometries
         .iter()
         .filter(|geom| match geom {
-          crate::map::geometry_collection::Geometry::Point(_, metadata)
-          | crate::map::geometry_collection::Geometry::LineString(_, metadata)
-          | crate::map::geometry_collection::Geometry::Polygon(_, metadata)
-          | crate::map::geometry_collection::Geometry::GeometryCollection(_, metadata) => {
-            metadata.label.is_some()
-          }
+          Geometry::Point(_, metadata)
+          | Geometry::LineString(_, metadata)
+          | Geometry::Polygon(_, metadata)
+          | Geometry::GeometryCollection(_, metadata) => metadata.label.is_some(),
         })
         .collect();
 
@@ -513,15 +519,15 @@ mod tests {
 
     assert!(!events.is_empty(), "Should parse KML with styles");
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert!(!leaf_geometries.is_empty(), "Should have geometries");
 
       if let Some(geometry) = leaf_geometries.first() {
         match geometry {
-          crate::map::geometry_collection::Geometry::LineString(_, metadata) => {
+          Geometry::LineString(_, metadata) => {
             assert!(metadata.style.is_some(), "Geometry should have style");
             if let Some(style) = &metadata.style {
               // The color() method always returns a color (with default fallback)
@@ -552,56 +558,44 @@ mod tests {
 
     assert!(!events.is_empty(), "Should parse nested KML structure");
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
-      assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry collection");
-      
-      let nested_point_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(
+        layer.geometries.len(),
+        1,
+        "Should have 1 root geometry collection"
       );
-      let nested_point_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let nested_point_metadata = crate::map::geometry_collection::Metadata::default()
+
+      let nested_point_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
+      let nested_point_style = Style::default().with_color(egui::Color32::BLUE);
+      let nested_point_metadata = Metadata::default()
         .with_label("Nested Point".to_string())
         .with_style(nested_point_style.clone());
-      let nested_point = crate::map::geometry_collection::Geometry::Point(
-        nested_point_coord,
-        nested_point_metadata
-      );
+      let nested_point = Geometry::Point(nested_point_coord, nested_point_metadata);
 
-      let outer_point_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(53.0, 11.0)
-      );
-      let outer_point_metadata = crate::map::geometry_collection::Metadata::default()
+      let outer_point_coord = PixelCoordinate::from(WGS84Coordinate::new(53.0, 11.0));
+      let outer_point_metadata = Metadata::default()
         .with_label("Outer Point".to_string())
         .with_style(nested_point_style.clone());
-      let outer_point = crate::map::geometry_collection::Geometry::Point(
-        outer_point_coord,
-        outer_point_metadata
-      );
+      let outer_point = Geometry::Point(outer_point_coord, outer_point_metadata);
 
-      let inner_folder = crate::map::geometry_collection::Geometry::GeometryCollection(
+      let inner_folder = Geometry::GeometryCollection(
         vec![nested_point],
-        crate::map::geometry_collection::Metadata::default()
-          .with_label("Inner Folder".to_string())
+        Metadata::default().with_label("Inner Folder".to_string()),
       );
 
-      let outer_folder = crate::map::geometry_collection::Geometry::GeometryCollection(
+      let outer_folder = Geometry::GeometryCollection(
         vec![inner_folder, outer_point],
-        crate::map::geometry_collection::Metadata::default()
-          .with_label("Outer Folder".to_string())
+        Metadata::default().with_label("Outer Folder".to_string()),
       );
 
-      let document = crate::map::geometry_collection::Geometry::GeometryCollection(
-        vec![outer_folder],
-        crate::map::geometry_collection::Metadata::default()
-      );
+      let document = Geometry::GeometryCollection(vec![outer_folder], Metadata::default());
 
-      let expected_root = crate::map::geometry_collection::Geometry::GeometryCollection(
-        vec![document],
-        crate::map::geometry_collection::Metadata::default()
-      );
+      let expected_root = Geometry::GeometryCollection(vec![document], Metadata::default());
 
-      assert_eq!(layer.geometries[0], expected_root, "Nested KML structure should match expected geometry hierarchy");
+      assert_eq!(
+        layer.geometries[0], expected_root,
+        "Nested KML structure should match expected geometry hierarchy"
+      );
     } else {
       panic!("First event should be a Layer event");
     }
@@ -609,33 +603,48 @@ mod tests {
 
   #[test]
   fn test_geometry_equality() {
-    use crate::map::coordinates::PixelCoordinate;
-    use crate::map::geometry_collection::{Geometry, Metadata, Style};
-    
     let coord1 = PixelCoordinate::new(10.0, 20.0);
     let coord2 = PixelCoordinate::new(10.0, 20.0);
     let coord3 = PixelCoordinate::new(10.1, 20.0);
-    
+
     let metadata = Metadata::default().with_label("Test Point".to_string());
     let style = Style::default().with_color(egui::Color32::RED);
     let metadata_with_style = Metadata::default()
       .with_label("Test Point".to_string())
       .with_style(style);
-    
+
     let geom1 = Geometry::Point(coord1, metadata.clone());
     let geom2 = Geometry::Point(coord2, metadata.clone());
     let geom3 = Geometry::Point(coord3, metadata.clone());
     let geom4 = Geometry::Point(coord1, metadata_with_style);
-    
-    assert_eq!(geom1, geom2, "Geometries with same coordinates and metadata should be equal");
-    assert_ne!(geom1, geom3, "Geometries with different coordinates should not be equal");
-    assert_ne!(geom1, geom4, "Geometries with different metadata should not be equal");
-    
-    let collection1 = Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
-    let collection2 = Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
-    let collection3 = Geometry::GeometryCollection(vec![geom1.clone(), geom3.clone()], Metadata::default());
-    
-    assert_eq!(collection1, collection2, "Collections with same geometries should be equal");
-    assert_ne!(collection1, collection3, "Collections with different geometries should not be equal");
+
+    assert_eq!(
+      geom1, geom2,
+      "Geometries with same coordinates and metadata should be equal"
+    );
+    assert_ne!(
+      geom1, geom3,
+      "Geometries with different coordinates should not be equal"
+    );
+    assert_ne!(
+      geom1, geom4,
+      "Geometries with different metadata should not be equal"
+    );
+
+    let collection1 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
+    let collection2 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
+    let collection3 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom3.clone()], Metadata::default());
+
+    assert_eq!(
+      collection1, collection2,
+      "Collections with same geometries should be equal"
+    );
+    assert_ne!(
+      collection1, collection3,
+      "Collections with different geometries should not be equal"
+    );
   }
 }

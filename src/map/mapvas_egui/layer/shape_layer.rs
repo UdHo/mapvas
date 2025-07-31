@@ -650,8 +650,11 @@ impl ShapeLayer {
     metadata: &Metadata,
   ) {
     let collection_key = (layer_id.to_string(), shape_idx, vec![]);
-    let is_expanded = self.collection_expansion.get(&collection_key).unwrap_or(&false);
-    
+    let is_expanded = self
+      .collection_expansion
+      .get(&collection_key)
+      .unwrap_or(&false);
+
     let collection_label = if let Some(label) = &metadata.label {
       format!("📁 {} ({} items)", label, geometries.len())
     } else {
@@ -674,17 +677,25 @@ impl ShapeLayer {
 
     // Update expansion state based on the body response (if body was shown, header was open)
     let is_currently_open = header_response.body_response.is_some();
-    self.collection_expansion.insert(collection_key, is_currently_open);
+    self
+      .collection_expansion
+      .insert(collection_key, is_currently_open);
 
     // Add context menu for collection
     header_response.header_response.context_menu(|ui| {
       // Collection visibility control
       let geometry_key = (layer_id.to_string(), shape_idx);
       let geometry_visible = *self.geometry_visibility.get(&geometry_key).unwrap_or(&true);
-      let visibility_text = if geometry_visible { "Hide Collection" } else { "Show Collection" };
-      
+      let visibility_text = if geometry_visible {
+        "Hide Collection"
+      } else {
+        "Show Collection"
+      };
+
       if ui.button(visibility_text).clicked() {
-        self.geometry_visibility.insert(geometry_key.clone(), !geometry_visible);
+        self
+          .geometry_visibility
+          .insert(geometry_key.clone(), !geometry_visible);
         ui.close();
       }
 
@@ -695,12 +706,16 @@ impl ShapeLayer {
         let collection_info = format!(
           "📁 Geometry Collection\nItems: {}\nNested geometries: {}",
           geometries.len(),
-          geometries.iter().map(|g| match g {
-            Geometry::Point(_, _) => "Point".to_string(),
-            Geometry::LineString(_, _) => "LineString".to_string(), 
-            Geometry::Polygon(_, _) => "Polygon".to_string(),
-            Geometry::GeometryCollection(nested, _) => format!("Collection ({})", nested.len()),
-          }).collect::<Vec<_>>().join(", ")
+          geometries
+            .iter()
+            .map(|g| match g {
+              Geometry::Point(_, _) => "Point".to_string(),
+              Geometry::LineString(_, _) => "LineString".to_string(),
+              Geometry::Polygon(_, _) => "Polygon".to_string(),
+              Geometry::GeometryCollection(nested, _) => format!("Collection ({})", nested.len()),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
         );
         ui.memory_mut(|mem| mem.data.insert_temp(popup_id, collection_info));
         ui.close();
@@ -714,9 +729,13 @@ impl ShapeLayer {
             shapes.remove(shape_idx);
             self.geometry_visibility.remove(&geometry_key);
             // Clean up any nested visibility state for this collection
-            self.nested_geometry_visibility.retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
-            self.collection_expansion.retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
-            
+            self
+              .nested_geometry_visibility
+              .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+            self
+              .collection_expansion
+              .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+
             // Update indices for remaining geometries
             let keys_to_update: Vec<_> = self
               .geometry_visibility
@@ -737,6 +756,7 @@ impl ShapeLayer {
     });
   }
 
+  #[allow(clippy::too_many_lines)]
   fn show_nested_geometry_content(
     &mut self,
     ui: &mut egui::Ui,
@@ -746,20 +766,28 @@ impl ShapeLayer {
     geometry: &Geometry<PixelCoordinate>,
   ) {
     let nested_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-    let nested_visible = *self.nested_geometry_visibility.get(&nested_key).unwrap_or(&true);
-    
+    let nested_visible = *self
+      .nested_geometry_visibility
+      .get(&nested_key)
+      .unwrap_or(&true);
+
     if let Geometry::GeometryCollection(nested_geometries, nested_metadata) = geometry {
       // Collections get CollapsingHeader without extra spacing - egui handles the indentation
       let collection_key = nested_key.clone();
-      let is_expanded = *self.collection_expansion.get(&collection_key).unwrap_or(&false);
-      
+      let is_expanded = *self
+        .collection_expansion
+        .get(&collection_key)
+        .unwrap_or(&false);
+
       let collection_label = if let Some(label) = &nested_metadata.label {
         format!("📁 {} ({} items)", label, nested_geometries.len())
       } else {
         format!("📁 Collection ({} items)", nested_geometries.len())
       };
 
-      let header_id = egui::Id::new(format!("nested_collection_{layer_id}_{shape_idx}_{nested_path:?}"));
+      let header_id = egui::Id::new(format!(
+        "nested_collection_{layer_id}_{shape_idx}_{nested_path:?}"
+      ));
       let header_response = egui::CollapsingHeader::new(collection_label)
         .id_salt(header_id)
         .default_open(is_expanded)
@@ -776,32 +804,43 @@ impl ShapeLayer {
 
       // Update expansion state
       let is_currently_open = header_response.body_response.is_some();
-      self.collection_expansion.insert(collection_key, is_currently_open);
+      self
+        .collection_expansion
+        .insert(collection_key, is_currently_open);
 
-      // Add context menu for nested collection  
+      // Add context menu for nested collection
       header_response.header_response.context_menu(|ui| {
-        let visibility_text = if nested_visible { "Hide Collection" } else { "Show Collection" };
+        let visibility_text = if nested_visible {
+          "Hide Collection"
+        } else {
+          "Show Collection"
+        };
         if ui.button(visibility_text).clicked() {
-          self.nested_geometry_visibility.insert(nested_key, !nested_visible);
+          self
+            .nested_geometry_visibility
+            .insert(nested_key, !nested_visible);
           ui.close();
         }
       });
     } else {
       // Individual geometries get eye icon + content with indentation
       let mut toggle_visibility = false;
-      
+
       let horizontal_response = ui.horizontal(|ui| {
         // Add minimal indentation based on nesting level (only for individual geometries)
         let indent_level = nested_path.len();
         #[allow(clippy::cast_precision_loss)]
         ui.add_space(4.0 * (indent_level as f32));
-        
+
         // Visibility toggle button for individual geometries
         let visibility_icon = if nested_visible { "👁" } else { "🚫" };
-        if ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon)).clicked() {
+        if ui
+          .add_sized([24.0, 20.0], egui::Button::new(visibility_icon))
+          .clicked()
+        {
           toggle_visibility = true;
         }
-        
+
         // Show individual geometry content
         match geometry {
           Geometry::Point(coord, nested_metadata) => {
@@ -840,14 +879,18 @@ impl ShapeLayer {
 
       // Handle visibility toggle after the horizontal closure
       if toggle_visibility {
-        self.nested_geometry_visibility.insert(nested_key.clone(), !nested_visible);
+        self
+          .nested_geometry_visibility
+          .insert(nested_key.clone(), !nested_visible);
       }
-      
+
       // Add context menu to individual geometries
       horizontal_response.response.context_menu(|ui| {
         let visibility_text = if nested_visible { "Hide" } else { "Show" };
         if ui.button(format!("{visibility_text} Geometry")).clicked() {
-          self.nested_geometry_visibility.insert(nested_key, !nested_visible);
+          self
+            .nested_geometry_visibility
+            .insert(nested_key, !nested_visible);
           ui.close();
         }
       });
@@ -979,7 +1022,10 @@ impl ShapeLayer {
     geometry: &Geometry<PixelCoordinate>,
   ) {
     let nested_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-    let is_visible = self.nested_geometry_visibility.get(&nested_key).unwrap_or(&true);
+    let is_visible = self
+      .nested_geometry_visibility
+      .get(&nested_key)
+      .unwrap_or(&true);
 
     if !is_visible {
       return;
@@ -990,7 +1036,14 @@ impl ShapeLayer {
         for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
           let mut new_path = nested_path.to_vec();
           new_path.push(nested_idx);
-          self.draw_geometry_with_visibility(painter, transform, layer_id, shape_idx, &new_path, nested_geometry);
+          self.draw_geometry_with_visibility(
+            painter,
+            transform,
+            layer_id,
+            shape_idx,
+            &new_path,
+            nested_geometry,
+          );
         }
       }
       _ => {
@@ -1023,13 +1076,19 @@ impl Layer for ShapeLayer {
         for (shape_idx, shape) in shapes.iter().enumerate() {
           let geometry_key = (layer_id.clone(), shape_idx);
           if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-            self.draw_geometry_with_visibility(ui.painter(), transform, layer_id, shape_idx, &[], shape);
+            self.draw_geometry_with_visibility(
+              ui.painter(),
+              transform,
+              layer_id,
+              shape_idx,
+              &[],
+              shape,
+            );
           }
         }
       }
     }
   }
-
 
   fn bounding_box(&self) -> Option<BoundingBox> {
     let bb = self

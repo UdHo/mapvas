@@ -4,7 +4,9 @@ use std::str::FromStr;
 use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
-use mapvas::parser::{FileParser, GpxParser, GrepParser, JsonParser, KmlParser, TTJsonParser};
+use mapvas::parser::{
+  FileParser, GeoJsonParser, GpxParser, GrepParser, JsonParser, KmlParser, TTJsonParser,
+};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -13,7 +15,7 @@ mod sender;
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, ttjson, json, gpx, kml.
+  /// Which parser to use. Values: grep, ttjson, json, geojson, gpx, kml.
   #[arg(short, long, default_value = "grep")]
   parser: String,
 
@@ -68,7 +70,7 @@ async fn main() {
   env_logger::init();
 
   let (initial_sender, mapvas_was_spawned) = sender::MapSender::new().await;
-  
+
   if args.reset && !mapvas_was_spawned {
     initial_sender.send_event(MapEvent::Clear);
     initial_sender.finalize().await;
@@ -81,6 +83,7 @@ async fn main() {
     match args.parser.as_str() {
       "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
       "json" => Box::new(JsonParser::new()),
+      "geojson" => Box::new(GeoJsonParser::new()),
       "gpx" => Box::new(GpxParser::new()),
       "kml" => Box::new(KmlParser::new()),
       "grep" => Box::new(

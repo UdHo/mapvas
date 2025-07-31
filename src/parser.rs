@@ -12,10 +12,16 @@ use serde::{Deserialize, Serialize};
 pub use tt_json::TTJsonParser;
 mod json;
 pub use json::JsonParser;
+mod geojson;
+pub use geojson::GeoJsonParser;
 mod gpx;
 pub use gpx::GpxParser;
 mod kml;
 pub use kml::KmlParser;
+mod style;
+
+#[cfg(test)]
+pub mod test_utils;
 
 use crate::map::map_event::MapEvent;
 
@@ -36,6 +42,7 @@ pub enum Parsers {
   Grep(GrepParser),
   TTJson(TTJsonParser),
   Json(JsonParser),
+  GeoJson(GeoJsonParser),
   Gpx(GpxParser),
   Kml(KmlParser),
 }
@@ -46,6 +53,7 @@ impl Parser for Parsers {
       Parsers::Grep(parser) => parser.parse_line(line),
       Parsers::TTJson(parser) => parser.parse_line(line),
       Parsers::Json(parser) => parser.parse_line(line),
+      Parsers::GeoJson(parser) => parser.parse_line(line),
       Parsers::Gpx(parser) => parser.parse_line(line),
       Parsers::Kml(parser) => parser.parse_line(line),
     }
@@ -56,6 +64,7 @@ impl Parser for Parsers {
       Parsers::Grep(parser) => parser.finalize(),
       Parsers::TTJson(parser) => parser.finalize(),
       Parsers::Json(parser) => parser.finalize(),
+      Parsers::GeoJson(parser) => parser.finalize(),
       Parsers::Gpx(parser) => parser.finalize(),
       Parsers::Kml(parser) => parser.finalize(),
     }

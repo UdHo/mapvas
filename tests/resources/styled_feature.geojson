@@ -1,0 +1,13 @@
+{
+  "type": "Feature",
+  "properties": {
+    "name": "Test Feature",
+    "stroke": "#ff0000",
+    "fill": "#00ff00",
+    "stroke-width": 2
+  },
+  "geometry": {
+    "type": "Point",
+    "coordinates": [10.0, 52.0]
+  }
+}

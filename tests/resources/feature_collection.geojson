@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Red Point",
+        "color": "red"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.0, 52.0]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Blue Line",
+        "stroke": "#0000ff",
+        "stroke-width": 3
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [10.1, 52.1],
+          [10.2, 52.2],
+          [10.3, 52.3]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Green Polygon",
+        "fill": "#00ff00",
+        "fillColor": "#008000"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [10.4, 52.4],
+          [10.5, 52.4],
+          [10.5, 52.5],
+          [10.4, 52.5],
+          [10.4, 52.4]
+        ]]
+      }
+    }
+  ]
+}

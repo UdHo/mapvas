@@ -155,7 +155,7 @@ impl MapSender {
     {
       debug!("Healthcheck {e}");
     }
-    
+
     true
   }
 
