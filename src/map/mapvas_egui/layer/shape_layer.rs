@@ -14,6 +14,9 @@ use std::{
   },
 };
 
+const MAX_ITEMS_PER_COLLECTION: usize = 100;
+const ITEMS_PER_PAGE: usize = 50;
+
 /// A layer that draws shapes on the map.
 pub struct ShapeLayer {
   shape_map: HashMap<String, Vec<Geometry<PixelCoordinate>>>,
@@ -21,6 +24,8 @@ pub struct ShapeLayer {
   geometry_visibility: HashMap<(String, usize), bool>,
   collection_expansion: HashMap<(String, usize, Vec<usize>), bool>,
   nested_geometry_visibility: HashMap<(String, usize, Vec<usize>), bool>,
+  collection_pagination: HashMap<(String, usize, Vec<usize>), usize>,
+  layer_pagination: HashMap<String, usize>,
   recv: Arc<Receiver<MapEvent>>,
   send: Sender<MapEvent>,
   layer_properties: LayerProperties,
@@ -111,6 +116,8 @@ impl ShapeLayer {
       geometry_visibility: HashMap::new(),
       collection_expansion: HashMap::new(),
       nested_geometry_visibility: HashMap::new(),
+      collection_pagination: HashMap::new(),
+      layer_pagination: HashMap::new(),
       recv: recv.into(),
       send,
       layer_properties: LayerProperties::default(),
@@ -142,7 +149,11 @@ impl ShapeLayer {
     self.send.clone()
   }
 
+  #[allow(clippy::too_many_lines)]
   fn show_shape_layers(&mut self, ui: &mut egui::Ui) {
+    // Update pagination to show highlighted geometry if needed
+    self.update_pagination_for_highlight();
+    
     let layer_ids: Vec<String> = self.shape_map.keys().cloned().collect();
 
     for layer_id in layer_ids {
@@ -170,7 +181,7 @@ impl ShapeLayer {
       let mut header =
         egui::CollapsingHeader::new(format!("📁 {truncated_layer_id} ({shapes_count})"))
           .id_salt(header_id)
-          .default_open(has_highlighted_geometry);
+          .default_open(has_highlighted_geometry && shapes_count <= MAX_ITEMS_PER_COLLECTION);
 
       if was_truncated {
         header = header.show_background(true);
@@ -182,10 +193,52 @@ impl ShapeLayer {
 
       let header_response = header.show(ui, |ui| {
         if let Some(shapes) = self.shape_map.get(&layer_id).cloned() {
-          for (shape_idx, shape) in shapes.iter().enumerate() {
-            self.show_shape_ui(ui, &layer_id, shape_idx, shape);
-            if shape_idx < shapes.len() - 1 {
-              ui.separator();
+          let total_shapes = shapes.len();
+          
+          if total_shapes > MAX_ITEMS_PER_COLLECTION {
+            ui.label(format!("⚠️ Large layer with {total_shapes} geometries - showing paginated view"));
+            ui.separator();
+            
+            let current_page = *self.layer_pagination.get(&layer_id).unwrap_or(&0);
+            let total_pages = total_shapes.div_ceil(ITEMS_PER_PAGE);
+            let start_idx = current_page * ITEMS_PER_PAGE;
+            let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_shapes);
+            
+            ui.horizontal(|ui| {
+              ui.label(format!("Page {} of {} (showing {}-{} of {})", 
+                current_page + 1, total_pages, start_idx + 1, end_idx, total_shapes));
+            });
+            
+            ui.horizontal(|ui| {
+              if ui.button("◀ Previous").clicked() && current_page > 0 {
+                self.layer_pagination.insert(layer_id.clone(), current_page - 1);
+              }
+              
+              if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
+                self.layer_pagination.insert(layer_id.clone(), current_page + 1);
+              }
+              
+              if ui.button("🎯 Show All on Map").clicked() {
+                for shape_idx in start_idx..end_idx {
+                  self.geometry_visibility.insert((layer_id.clone(), shape_idx), true);
+                }
+              }
+            });
+            
+            ui.separator();
+            
+            for (idx, shape) in shapes.iter().enumerate().skip(start_idx).take(ITEMS_PER_PAGE) {
+              self.show_shape_ui(ui, &layer_id, idx, shape);
+              if idx < end_idx - 1 { 
+                ui.separator();
+              }
+            }
+          } else {
+            for (shape_idx, shape) in shapes.iter().enumerate() {
+              self.show_shape_ui(ui, &layer_id, shape_idx, shape);
+              if shape_idx < shapes.len() - 1 {
+                ui.separator();
+              }
             }
           }
         }
@@ -790,14 +843,52 @@ impl ShapeLayer {
       ));
       let header_response = egui::CollapsingHeader::new(collection_label)
         .id_salt(header_id)
-        .default_open(is_expanded)
+        .default_open(is_expanded && nested_geometries.len() <= MAX_ITEMS_PER_COLLECTION)
         .show(ui, |ui| {
-          for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
-            let mut sub_path = nested_path.to_vec();
-            sub_path.push(sub_idx);
-            self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
-            if sub_idx < nested_geometries.len() - 1 {
-              ui.separator();
+          let total_items = nested_geometries.len();
+          
+          if total_items > MAX_ITEMS_PER_COLLECTION {
+            ui.label(format!("⚠️ Large collection with {total_items} items - showing paginated view"));
+            ui.separator();
+            
+            let current_page = *self.collection_pagination.get(&collection_key).unwrap_or(&0);
+            let total_pages = total_items.div_ceil(ITEMS_PER_PAGE);
+            let start_idx = current_page * ITEMS_PER_PAGE;
+            let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_items);
+            
+            ui.horizontal(|ui| {
+              ui.label(format!("Page {} of {} (showing {}-{} of {})", 
+                current_page + 1, total_pages, start_idx + 1, end_idx, total_items));
+            });
+            
+            ui.horizontal(|ui| {
+              if ui.button("◀ Previous").clicked() && current_page > 0 {
+                self.collection_pagination.insert(collection_key.clone(), current_page - 1);
+              }
+              
+              if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
+                self.collection_pagination.insert(collection_key.clone(), current_page + 1);
+              }
+            });
+            
+            ui.separator();
+            
+            for (idx, sub_geometry) in nested_geometries.iter().enumerate().skip(start_idx).take(ITEMS_PER_PAGE) {
+              let mut sub_path = nested_path.to_vec();
+              sub_path.push(idx);
+              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
+              if idx < end_idx - 1 {
+                ui.separator();
+              }
+            }
+          } else {
+            for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
+              let mut sub_path = nested_path.to_vec();
+              sub_path.push(sub_idx);
+              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
+              if sub_idx < nested_geometries.len() - 1 {
+                ui.separator();
+              }
             }
           }
         });
@@ -1051,6 +1142,22 @@ impl ShapeLayer {
       }
     }
   }
+
+  /// Calculate which page contains the given index
+  fn calculate_page_for_index(index: usize) -> usize {
+    index / ITEMS_PER_PAGE
+  }
+
+  /// Update pagination to show the highlighted geometry if just highlighted
+  fn update_pagination_for_highlight(&mut self) {
+    if self.just_highlighted {
+      if let Some((layer_id, shape_idx)) = &self.highlighted_geometry {
+        // Update layer pagination to show the highlighted geometry
+        let target_page = Self::calculate_page_for_index(*shape_idx);
+        self.layer_pagination.insert(layer_id.clone(), target_page);
+      }
+    }
+  }
 }
 
 const NAME: &str = "Shape Layer";
@@ -1170,6 +1277,7 @@ impl Layer for ShapeLayer {
   fn has_highlighted_geometry(&self) -> bool {
     self.highlighted_geometry.is_some()
   }
+
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
     let click_coord = transform.invert().apply(pos.into());
