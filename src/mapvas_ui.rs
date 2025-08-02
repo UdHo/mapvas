@@ -15,6 +15,7 @@ pub struct MapApp {
   map: Map,
   sidebar: Sidebar,
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
+  previous_had_highlighted: bool,
 }
 
 impl MapApp {
@@ -31,6 +32,7 @@ impl MapApp {
       map,
       sidebar,
       settings_dialog,
+      previous_had_highlighted: false,
     }
   }
 
@@ -125,10 +127,12 @@ impl eframe::App for MapApp {
       self.show_sidebar_toggle_button(ctx);
     }
 
-    // Show sidebar if there's a highlighted geometry (from double-click)
-    if self.map.has_highlighted_geometry() {
+    // Show sidebar when geometry becomes newly highlighted (from double-click)
+    let has_highlighted = self.map.has_highlighted_geometry();
+    if has_highlighted && !self.previous_had_highlighted {
       self.sidebar.show();
     }
+    self.previous_had_highlighted = has_highlighted;
 
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
@@ -140,7 +144,6 @@ impl eframe::App for MapApp {
 }
 
 struct Sidebar {
-  visible: bool,
   target_visible: bool,
   width: f32,
   animation_progress: f32,
@@ -169,7 +172,6 @@ impl Sidebar {
     };
 
     Self {
-      visible: true,
       target_visible: true,
       width: 300.0,
       animation_progress: 1.0,
@@ -219,7 +221,6 @@ impl Sidebar {
       ctx.request_repaint();
     }
 
-    self.visible = self.animation_progress > 0.0;
   }
 
   /// Get the current animated width for the sidebar

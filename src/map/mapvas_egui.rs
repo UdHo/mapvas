@@ -15,7 +15,7 @@ use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
 use layer::Layer;
-use log::{debug, info};
+use log::debug;
 
 use super::{
   coordinates::{BoundingBox, PixelPosition},
@@ -135,17 +135,10 @@ impl Map {
       }
 
       // If a layer handled the selection, we're done
-      if let Some(layer_idx) = closest_layer_idx {
-        let layer_name = layers[layer_idx].name();
-        log::debug!(
-          "Map: Layer '{layer_name}' handled the selection at distance {closest_distance:.2}"
-        );
+      if let Some(_layer_idx) = closest_layer_idx {
         return;
       }
     }
-
-    log::debug!("Map: No layer handled the double-click");
-    // If no layer handled the event, clear geometry info
     self.geometry_info = None;
   }
 
@@ -520,10 +513,6 @@ impl Widget for &mut Map {
     });
     self.handle_keys(events.into_iter(), rect);
 
-    if response.clicked() {
-      info!("Clicked at: {:?}", response.hover_pos());
-    }
-
     if response.double_clicked() {
       if let Some(pos) = response.hover_pos() {
         self.handle_double_click(pos);
@@ -594,11 +583,8 @@ impl Widget for &mut Map {
         }
       }
     }
-    // Handle map events last (and request repaint if there were any) to have all the other input
-    // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
 
-    // Show geometry info popup if available
     self.show_geometry_info(ui);
 
     response
