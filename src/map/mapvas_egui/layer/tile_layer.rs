@@ -6,7 +6,8 @@ use log::error;
 use crate::{
   map::{
     coordinates::{
-      TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles, tiles_in_box,
+      TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
+      tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
   },

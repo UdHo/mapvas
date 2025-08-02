@@ -69,4 +69,3 @@ pub fn new_frame() {
 pub const fn is_profiling_enabled() -> bool {
   cfg!(feature = "profiling")
 }
-

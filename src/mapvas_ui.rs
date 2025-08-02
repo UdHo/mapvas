@@ -90,7 +90,7 @@ impl eframe::App for MapApp {
     profile_scope!("MapApp::update");
     // Mark frame for profiling
     crate::profiling::new_frame();
-    
+
     // Handle keyboard shortcut for sidebar toggle
     ctx.input(|i| {
       if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
@@ -220,7 +220,6 @@ impl Sidebar {
       self.animation_progress = (self.animation_progress - delta_per_second).max(0.0);
       ctx.request_repaint();
     }
-
   }
 
   /// Get the current animated width for the sidebar

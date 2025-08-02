@@ -3205,6 +3205,7 @@ dependencies = [
  "egui_kittest",
  "env_logger",
  "flexpolyline",
+ "futures",
  "geo-types",
  "gpx",
  "image",
@@ -3231,6 +3232,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+ "wgpu",
 ]
 
 [[package]]

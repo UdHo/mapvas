@@ -1,12 +1,8 @@
-use mapvas::{
-  config::Config,
-  map::mapvas_egui::Map,
-  mapvas_ui::MapApp,
-};
+use eframe::App;
+use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use egui::accesskit::Role;
-use eframe::App;
+use mapvas::{config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp};
 
 fn create_test_app() -> MapApp {
   let config = Config::new();
@@ -18,7 +14,7 @@ fn create_test_app() -> MapApp {
 #[tokio::test]
 async fn sidebar_toggle_functionality() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -29,7 +25,7 @@ async fn sidebar_toggle_functionality() {
 
   // Initially, sidebar should be visible
   harness.run();
-  
+
   // Look for sidebar elements - should find layers heading
   harness.get_by_label("Layers");
 
@@ -42,7 +38,7 @@ async fn sidebar_toggle_functionality() {
 #[tokio::test]
 async fn sidebar_close_button_functionality() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -52,7 +48,7 @@ async fn sidebar_close_button_functionality() {
   );
 
   harness.run();
-  
+
   // Test that basic UI elements are present
   harness.get_by_label("Layers");
 }
@@ -60,7 +56,7 @@ async fn sidebar_close_button_functionality() {
 #[tokio::test]
 async fn map_layers_display() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -70,10 +66,10 @@ async fn map_layers_display() {
   );
 
   harness.run();
-  
+
   // Should find the Map Layers collapsing header
   harness.get_by_label("Map Layers");
-  
+
   // Should find the Tile Layer
   harness.get_by_label("Tile Layer");
 }
@@ -81,7 +77,7 @@ async fn map_layers_display() {
 #[tokio::test]
 async fn location_search_section() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -91,7 +87,7 @@ async fn location_search_section() {
   );
 
   harness.run();
-  
+
   // Should find the Location Search section
   harness.get_by_label("🔍Location Search");
 }
@@ -99,7 +95,7 @@ async fn location_search_section() {
 #[tokio::test]
 async fn tile_layer_settings() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -109,13 +105,13 @@ async fn tile_layer_settings() {
   );
 
   harness.run();
-  
+
   // Find and click on tile layer to expand its settings
   let tile_layer = harness.get_by_label("Tile Layer");
   tile_layer.click();
-  
+
   harness.run();
-  
+
   // Should now see tile provider combo box (specifically the combo box, not the label)
   let combo_boxes: Vec<_> = harness.get_all_by_role(Role::ComboBox).collect();
   // Just verify we have at least one combo box after expanding
@@ -125,7 +121,7 @@ async fn tile_layer_settings() {
 #[tokio::test]
 async fn empty_shape_layer() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -135,18 +131,18 @@ async fn empty_shape_layer() {
   );
 
   harness.run();
-  
+
   // Should have a shapes section (even if empty)
   // The shapes section is in the shape layer UI
   // For now, just verify the basic UI structure is there
-  
+
   harness.get_by_label("Layers");
 }
 
 #[tokio::test]
 async fn settings_dialog_button() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -156,7 +152,7 @@ async fn settings_dialog_button() {
   );
 
   harness.run();
-  
+
   // Should find the Settings button
   harness.get_by_label("Settings");
 }
@@ -172,7 +168,7 @@ mod pagination_tests {
     // This test would require injecting geometries into the shape layer
     // For now, just test the basic UI without data
     let app = create_test_app();
-    
+
     let mut harness = Harness::new_state(
       |ctx, app: &mut MapApp| {
         let mut frame = eframe::Frame::_new_kittest();
@@ -182,7 +178,7 @@ mod pagination_tests {
     );
 
     harness.run();
-    
+
     // Basic verification that UI renders without crashing
     harness.get_by_label("Layers");
   }
@@ -192,7 +188,7 @@ mod pagination_tests {
 #[tokio::test]
 async fn full_ui_integration_test() {
   let app = create_test_app();
-  
+
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
@@ -202,20 +198,20 @@ async fn full_ui_integration_test() {
   );
 
   harness.run();
-  
+
   // Verify all major UI sections are present
   harness.get_by_label("Layers");
   harness.get_by_label("🔍Location Search");
   harness.get_by_label("Map Layers");
   harness.get_by_label("Tile Layer");
   harness.get_by_label("Settings");
-  
+
   // Test clicking on tile layer
   let tile_layer = harness.get_by_label("Tile Layer");
   tile_layer.click();
-  
+
   harness.run();
-  
+
   // After clicking, should be able to find combo boxes
   let combo_boxes: Vec<_> = harness.get_all_by_role(Role::ComboBox).collect();
   // We should have at least 2 combo boxes (tile provider and tile source)
