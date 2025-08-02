@@ -6,10 +6,13 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 use super::Parser;
-use crate::map::{
-  coordinates::WGS84Coordinate,
-  geometry_collection::{Geometry, Metadata, Style},
-  map_event::{Color, FillStyle, Layer, MapEvent},
+use crate::{
+  map::{
+    coordinates::WGS84Coordinate,
+    geometry_collection::{Geometry, Metadata, Style},
+    map_event::{Color, FillStyle, Layer, MapEvent},
+  },
+  profile_scope,
 };
 
 static COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -53,6 +56,7 @@ pub struct GrepParser {
 
 impl Parser for GrepParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    profile_scope!("GrepParser::parse_line");
     if let Some(event) = Self::parse_clear(line) {
       return Some(event);
     }

@@ -5,6 +5,7 @@ use egui::Widget as _;
 use crate::{
   config::{Config, TileProvider},
   map::mapvas_egui::{Map, MapLayerHolder},
+  profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
@@ -84,6 +85,10 @@ impl MapApp {
 
 impl eframe::App for MapApp {
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    profile_scope!("MapApp::update");
+    // Mark frame for profiling
+    crate::profiling::new_frame();
+    
     // Handle keyboard shortcut for sidebar toggle
     ctx.input(|i| {
       if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
@@ -101,6 +106,7 @@ impl eframe::App for MapApp {
     let effective_width = self.sidebar.get_animated_width();
 
     if effective_width > 1.0 {
+      profile_scope!("MapApp::sidebar");
       egui::SidePanel::left("sidebar")
         .default_width(self.sidebar.width)
         .width_range(200.0..=600.0)
@@ -127,6 +133,7 @@ impl eframe::App for MapApp {
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
       .show(ctx, |ui| {
+        profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
       });
   }

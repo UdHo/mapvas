@@ -3,10 +3,13 @@ use super::{Parser, style::StyleParser};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::map::{
-  coordinates::{PixelCoordinate, WGS84Coordinate},
-  geometry_collection::{Geometry, Metadata},
-  map_event::{Layer, MapEvent},
+use crate::{
+  map::{
+    coordinates::{PixelCoordinate, WGS84Coordinate},
+    geometry_collection::{Geometry, Metadata},
+    map_event::{Layer, MapEvent},
+  },
+  profile_scope,
 };
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -25,6 +28,7 @@ impl GeoJsonParser {
 
   /// Parse `GeoJSON` data and extract geometries with style information
   fn parse_geojson(&mut self, value: &Value) -> Result<(), String> {
+    profile_scope!("GeoJsonParser::parse_geojson");
     match value {
       Value::Object(obj) => {
         if let Some(geotype) = obj.get("type").and_then(Value::as_str) {
@@ -225,6 +229,7 @@ impl GeoJsonParser {
 
 impl Parser for GeoJsonParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    profile_scope!("GeoJsonParser::parse_line");
     let trimmed = line.trim();
 
     if trimmed.is_empty() {
@@ -242,6 +247,7 @@ impl Parser for GeoJsonParser {
   }
 
   fn finalize(&mut self) -> Option<MapEvent> {
+    profile_scope!("GeoJsonParser::finalize");
     if !self.data.is_empty() {
       if let Ok(parsed) = serde_json::from_str::<Value>(&self.data) {
         if let Err(e) = self.parse_geojson(&parsed) {

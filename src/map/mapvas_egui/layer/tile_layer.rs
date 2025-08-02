@@ -3,11 +3,14 @@ use std::{collections::HashMap, sync::Arc};
 use egui::{Color32, ColorImage, Pos2, Rect, Ui, Widget};
 use log::error;
 
-use crate::map::{
-  coordinates::{
-    TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles, tiles_in_box,
+use crate::{
+  map::{
+    coordinates::{
+      TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles, tiles_in_box,
+    },
+    tile_loader::{CachedTileLoader, TileLoader, TileSource},
   },
-  tile_loader::{CachedTileLoader, TileLoader, TileSource},
+  profile_scope,
 };
 
 use super::{Layer, LayerProperties};
@@ -256,6 +259,7 @@ impl TileLayer {
 impl Layer for TileLayer {
   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+    profile_scope!("TileLayer::draw");
     self.collect_new_tile_data(ui);
     if self.tile_loader_index != self.tile_loader_old_index {
       self.loaded_tiles.clear();

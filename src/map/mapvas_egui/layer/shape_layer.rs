@@ -1,9 +1,12 @@
 use super::{Layer, LayerProperties, drawable::Drawable as _};
-use crate::map::{
-  coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
-  distance,
-  geometry_collection::{Geometry, Metadata, Style},
-  map_event::{Layer as EventLayer, MapEvent},
+use crate::{
+  map::{
+    coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
+    distance,
+    geometry_collection::{Geometry, Metadata, Style},
+    map_event::{Layer as EventLayer, MapEvent},
+  },
+  profile_scope,
 };
 use egui::{Color32, Pos2, Rect, Ui};
 use std::{
@@ -153,7 +156,7 @@ impl ShapeLayer {
   fn show_shape_layers(&mut self, ui: &mut egui::Ui) {
     // Update pagination to show highlighted geometry if needed
     self.update_pagination_for_highlight();
-    
+
     let layer_ids: Vec<String> = self.shape_map.keys().cloned().collect();
 
     for layer_id in layer_ids {
@@ -194,42 +197,61 @@ impl ShapeLayer {
       let header_response = header.show(ui, |ui| {
         if let Some(shapes) = self.shape_map.get(&layer_id).cloned() {
           let total_shapes = shapes.len();
-          
+
           if total_shapes > MAX_ITEMS_PER_COLLECTION {
-            ui.label(format!("⚠️ Large layer with {total_shapes} geometries - showing paginated view"));
+            ui.label(format!(
+              "⚠️ Large layer with {total_shapes} geometries - showing paginated view"
+            ));
             ui.separator();
-            
+
             let current_page = *self.layer_pagination.get(&layer_id).unwrap_or(&0);
             let total_pages = total_shapes.div_ceil(ITEMS_PER_PAGE);
             let start_idx = current_page * ITEMS_PER_PAGE;
             let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_shapes);
-            
+
             ui.horizontal(|ui| {
-              ui.label(format!("Page {} of {} (showing {}-{} of {})", 
-                current_page + 1, total_pages, start_idx + 1, end_idx, total_shapes));
+              ui.label(format!(
+                "Page {} of {} (showing {}-{} of {})",
+                current_page + 1,
+                total_pages,
+                start_idx + 1,
+                end_idx,
+                total_shapes
+              ));
             });
-            
+
             ui.horizontal(|ui| {
               if ui.button("◀ Previous").clicked() && current_page > 0 {
-                self.layer_pagination.insert(layer_id.clone(), current_page - 1);
+                self
+                  .layer_pagination
+                  .insert(layer_id.clone(), current_page - 1);
               }
-              
+
               if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
-                self.layer_pagination.insert(layer_id.clone(), current_page + 1);
+                self
+                  .layer_pagination
+                  .insert(layer_id.clone(), current_page + 1);
               }
-              
+
               if ui.button("🎯 Show All on Map").clicked() {
                 for shape_idx in start_idx..end_idx {
-                  self.geometry_visibility.insert((layer_id.clone(), shape_idx), true);
+                  self
+                    .geometry_visibility
+                    .insert((layer_id.clone(), shape_idx), true);
                 }
               }
             });
-            
+
             ui.separator();
-            
-            for (idx, shape) in shapes.iter().enumerate().skip(start_idx).take(ITEMS_PER_PAGE) {
+
+            for (idx, shape) in shapes
+              .iter()
+              .enumerate()
+              .skip(start_idx)
+              .take(ITEMS_PER_PAGE)
+            {
               self.show_shape_ui(ui, &layer_id, idx, shape);
-              if idx < end_idx - 1 { 
+              if idx < end_idx - 1 {
                 ui.separator();
               }
             }
@@ -846,34 +868,54 @@ impl ShapeLayer {
         .default_open(is_expanded && nested_geometries.len() <= MAX_ITEMS_PER_COLLECTION)
         .show(ui, |ui| {
           let total_items = nested_geometries.len();
-          
+
           if total_items > MAX_ITEMS_PER_COLLECTION {
-            ui.label(format!("⚠️ Large collection with {total_items} items - showing paginated view"));
+            ui.label(format!(
+              "⚠️ Large collection with {total_items} items - showing paginated view"
+            ));
             ui.separator();
-            
-            let current_page = *self.collection_pagination.get(&collection_key).unwrap_or(&0);
+
+            let current_page = *self
+              .collection_pagination
+              .get(&collection_key)
+              .unwrap_or(&0);
             let total_pages = total_items.div_ceil(ITEMS_PER_PAGE);
             let start_idx = current_page * ITEMS_PER_PAGE;
             let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_items);
-            
+
             ui.horizontal(|ui| {
-              ui.label(format!("Page {} of {} (showing {}-{} of {})", 
-                current_page + 1, total_pages, start_idx + 1, end_idx, total_items));
+              ui.label(format!(
+                "Page {} of {} (showing {}-{} of {})",
+                current_page + 1,
+                total_pages,
+                start_idx + 1,
+                end_idx,
+                total_items
+              ));
             });
-            
+
             ui.horizontal(|ui| {
               if ui.button("◀ Previous").clicked() && current_page > 0 {
-                self.collection_pagination.insert(collection_key.clone(), current_page - 1);
+                self
+                  .collection_pagination
+                  .insert(collection_key.clone(), current_page - 1);
               }
-              
+
               if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
-                self.collection_pagination.insert(collection_key.clone(), current_page + 1);
+                self
+                  .collection_pagination
+                  .insert(collection_key.clone(), current_page + 1);
               }
             });
-            
+
             ui.separator();
-            
-            for (idx, sub_geometry) in nested_geometries.iter().enumerate().skip(start_idx).take(ITEMS_PER_PAGE) {
+
+            for (idx, sub_geometry) in nested_geometries
+              .iter()
+              .enumerate()
+              .skip(start_idx)
+              .take(ITEMS_PER_PAGE)
+            {
               let mut sub_path = nested_path.to_vec();
               sub_path.push(idx);
               self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
@@ -1172,6 +1214,7 @@ impl Layer for ShapeLayer {
   }
 
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
+    profile_scope!("ShapeLayer::draw");
     self.handle_new_shapes();
 
     if !self.visible() {
@@ -1180,6 +1223,7 @@ impl Layer for ShapeLayer {
 
     for (layer_id, shapes) in &self.shape_map {
       if *self.layer_visibility.get(layer_id).unwrap_or(&true) {
+        profile_scope!("ShapeLayer::draw_layer", layer_id);
         for (shape_idx, shape) in shapes.iter().enumerate() {
           let geometry_key = (layer_id.clone(), shape_idx);
           if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
@@ -1256,6 +1300,7 @@ impl Layer for ShapeLayer {
   }
 
   fn ui_content(&mut self, ui: &mut Ui) {
+    profile_scope!("ShapeLayer::ui_content");
     let has_highlighted_geometry = self.highlighted_geometry.is_some();
     let shapes_header_id = egui::Id::new("shapes_header");
 
@@ -1277,7 +1322,6 @@ impl Layer for ShapeLayer {
   fn has_highlighted_geometry(&self) -> bool {
     self.highlighted_geometry.is_some()
   }
-
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
     let click_coord = transform.invert().apply(pos.into());

@@ -6,6 +6,7 @@ use std::{
 use crate::{
   map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   parser::{FileParser, GrepParser, JsonParser, Parser},
+  profile_scope,
   remote::Remote,
 };
 use arboard::Clipboard;
@@ -380,6 +381,7 @@ impl Map {
   }
 
   fn handle_map_events(&mut self, rect: Rect) {
+    profile_scope!("Map::handle_map_events");
     let events = self.recv.try_iter().collect::<Vec<_>>();
 
     // Process Clear events first (they should happen before new data)
@@ -487,6 +489,7 @@ impl Map {
 
 impl Widget for &mut Map {
   fn ui(self, ui: &mut Ui) -> Response {
+    profile_scope!("Map::ui");
     let size = ui.available_size();
     let (rect, /*mut*/ response) = ui.allocate_exact_size(size, Sense::click_and_drag());
 
@@ -581,10 +584,12 @@ impl Widget for &mut Map {
     fit_to_screen(&mut self.transform, &rect);
 
     if ui.is_rect_visible(rect) {
+      profile_scope!("Map::draw_layers");
       if let Ok(mut layer_guard) = self.layers.try_lock().inspect_err(|e| {
         log::error!("Failed to lock layers: {e:?}");
       }) {
         for layer in layer_guard.iter_mut() {
+          profile_scope!("Layer::draw", layer.name());
           layer.draw(ui, &self.transform, rect);
         }
       }

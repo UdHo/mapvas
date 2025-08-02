@@ -3,10 +3,13 @@ use super::{Parser, style::StyleParser};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::map::{
-  coordinates::{PixelCoordinate, WGS84Coordinate},
-  geometry_collection::Geometry,
-  map_event::{Layer, MapEvent},
+use crate::{
+  map::{
+    coordinates::{PixelCoordinate, WGS84Coordinate},
+    geometry_collection::Geometry,
+    map_event::{Layer, MapEvent},
+  },
+  profile_scope,
 };
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -25,6 +28,7 @@ impl JsonParser {
 
   #[expect(clippy::cast_possible_truncation)]
   fn find_coordinates(&mut self, v: &Value) -> Option<PixelCoordinate> {
+    profile_scope!("JsonParser::find_coordinates");
     match v {
       Value::Array(vec) => {
         if vec.len() == 2 {
@@ -81,11 +85,13 @@ impl JsonParser {
 
 impl Parser for JsonParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    profile_scope!("JsonParser::parse_line");
     self.data.push_str(line);
     None
   }
 
   fn finalize(&mut self) -> Option<MapEvent> {
+    profile_scope!("JsonParser::finalize");
     let parsed: Value = serde_json::from_str(&self.data).ok()?;
     self.find_coordinates(&parsed);
     if !self.geometry.is_empty() {

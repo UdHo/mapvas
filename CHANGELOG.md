@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add optional puffin profiling with `--features profiling`
+- Add GeoJSON parser with style support
+- Add linewise GeoJSON parsing support
+- Add sidebar pagination for large datasets
+- Fix jump functionality for highlighted geometries
+
 ## 0.2.5
 
 - Sidebar, double click, ux improvements.

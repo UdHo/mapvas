@@ -176,6 +176,17 @@ To use tiles from a different provider than [openstreetmap] you can set a templa
     export MAPVAS_TILE_URL='https://maps.hereapi.com/v3/background/mc/{zoom}/{x}/{y}/png8?size=512&apiKey=***'
 ```
 
+#### Performance Profiling
+
+```bash
+# Run with profiling enabled
+cargo run --bin mapvas --features profiling
+
+# View profiling data
+cargo install puffin_viewer
+puffin_viewer --url=http://127.0.0.1:8585
+```
+
 #### Environment Variables
 
 | Variable | Description | Default |
