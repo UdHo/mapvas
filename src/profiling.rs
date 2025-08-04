@@ -18,7 +18,8 @@ pub fn init_profiling() {
 
         // Try to launch puffin_viewer if available
         std::process::Command::new("puffin_viewer")
-          .arg(format!("--url=http://{server_addr}"))
+          .arg("--url")
+          .arg(server_addr)
           .spawn()
           .ok(); // Don't fail if puffin_viewer isn't installed
 

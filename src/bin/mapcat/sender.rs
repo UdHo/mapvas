@@ -6,9 +6,10 @@ use mapvas::remote::DEFAULT_PORT;
 use std::process::Stdio;
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::{Mutex, Notify};
 
 pub struct MapSender {
   sender: UnboundedSender<Option<MapEvent>>,
@@ -18,7 +19,8 @@ pub struct MapSender {
 struct SenderInner {
   receiver: UnboundedReceiver<Option<MapEvent>>,
   queue: VecDeque<MapEvent>,
-  send_mutex: Arc<(std::sync::Mutex<usize>, Condvar)>,
+  send_counter: Arc<Mutex<usize>>,
+  notify: Arc<Notify>,
 }
 
 impl SenderInner {
@@ -27,7 +29,8 @@ impl SenderInner {
       Self {
         receiver,
         queue: VecDeque::new(),
-        send_mutex: Arc::new((Mutex::new(0), Condvar::new())),
+        send_counter: Arc::new(Mutex::new(0)),
+        notify: Arc::new(Notify::new()),
       }
       .run()
     })
@@ -39,15 +42,13 @@ impl SenderInner {
       tokio::select! {
         Some(event) = self.receiver.recv() => {
            if let Some(event) = event {self.receive(event);} else {
-                 self.send_queue();
-                 drop(self.send_mutex.1.wait_while(
-                   self.send_mutex.0.lock().unwrap(), |count| { *count != 0 })
-                 );
+                 self.send_queue().await;
+                 self.wait_for_completion().await;
                  return;
               }
             }
         _ = interval.tick() => {
-            self.send_queue();
+            self.send_queue().await;
           },
       }
     }
@@ -57,25 +58,36 @@ impl SenderInner {
     self.queue.push_back(event);
   }
 
-  fn add_task(&self) {
-    let mut send_count = self.send_mutex.0.lock().expect("can aquire lock");
+  async fn add_task(&self) {
+    let mut send_count = self.send_counter.lock().await;
     *send_count += 1;
   }
 
-  fn send_queue(&mut self) {
-    self.add_task();
+  async fn send_queue(&mut self) {
+    self.add_task().await;
     let mut queue = VecDeque::new();
     std::mem::swap(&mut queue, &mut self.queue);
 
-    let send_mut_condv = self.send_mutex.clone();
-    rayon::spawn(move || {
-      async_std::task::block_on(Self::compact_and_send(queue));
-      let lock_stuff = send_mut_condv;
-      let mut count = lock_stuff.0.lock().expect("can aquire lock");
+    let send_counter = self.send_counter.clone();
+    let notify = self.notify.clone();
+    tokio::spawn(async move {
+      Self::compact_and_send(queue).await;
+      let mut count = send_counter.lock().await;
       *count -= 1;
-      drop(count);
-      lock_stuff.1.notify_one();
+      if *count == 0 {
+        notify.notify_waiters();
+      }
     });
+  }
+
+  async fn wait_for_completion(&self) {
+    loop {
+      let count = *self.send_counter.lock().await;
+      if count == 0 {
+        break;
+      }
+      self.notify.notified().await;
+    }
   }
 
   async fn compact_and_send(queue: VecDeque<MapEvent>) {
