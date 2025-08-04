@@ -131,7 +131,9 @@ impl Config {
     }
 
     // Use other's heading style if we don't have one set (or if other is not default)
-    if self.heading_style == HeadingStyle::default() || other.heading_style != HeadingStyle::default() {
+    if self.heading_style == HeadingStyle::default()
+      || other.heading_style != HeadingStyle::default()
+    {
       self.heading_style = other.heading_style;
     }
 

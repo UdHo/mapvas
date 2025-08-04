@@ -6,7 +6,7 @@ use std::{
 use crate::{
   config::Config,
   map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
-  parser::{FileParser, GrepParser, JsonParser, Parser},
+  parser::{GrepParser, JsonParser, Parser},
   profile_scope,
   remote::Remote,
 };
@@ -457,20 +457,15 @@ impl Map {
 
   fn handle_dropped_files(&self, ctx: &egui::Context) {
     for file in ctx.input(|i| i.raw.dropped_files.clone()) {
-      if let Some(file) = file.path {
+      if let Some(file_path) = file.path {
         let sender = self.remote.layer.clone();
         let update = self.remote.update.clone();
         tokio::spawn(async move {
-          // Buf Reader of file:
-          let file = std::fs::File::open(file).inspect_err(|e| {
-            log::error!("Failed to open file: {e:?}");
-          });
-          if let Ok(file) = file {
-            let read = Box::new(std::io::BufReader::new(file));
-            for map_event in GrepParser::new(false).parse(read) {
-              let _ = sender.send(map_event);
-              update.request_repaint();
-            }
+          // Use auto parser for dropped files
+          let mut auto_parser = crate::parser::AutoFileParser::new(file_path);
+          for map_event in auto_parser.parse() {
+            let _ = sender.send(map_event);
+            update.request_repaint();
           }
         });
       }
@@ -610,7 +605,7 @@ impl Map {
   /// Update the config for the map and all its layers
   pub fn update_config(&mut self, new_config: crate::config::Config) {
     self.config = new_config.clone();
-    
+
     // Update all layers that need config updates
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {

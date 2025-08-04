@@ -162,7 +162,12 @@ impl<C: Coordinate> Geometry<C> {
 }
 
 /// Create a heading arrow shape pointing in the specified direction
-fn create_heading_arrow(center: egui::Pos2, heading_degrees: f32, color: egui::Color32, style: HeadingStyle) -> Shape {
+fn create_heading_arrow(
+  center: egui::Pos2,
+  heading_degrees: f32,
+  color: egui::Color32,
+  style: HeadingStyle,
+) -> Shape {
   // Convert heading from degrees to radians (0° = North, clockwise)
   let heading_rad = (heading_degrees - 90.0).to_radians(); // Adjust so 0° points up
 
@@ -207,11 +212,11 @@ fn create_arrow_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32
 /// Create simple line shape
 fn create_line_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32) -> Shape {
   let length = DEFAULT_POINT_RADIUS + 6.0;
-  
+
   let end_x = center.x + length * heading_rad.cos();
   let end_y = center.y + length * heading_rad.sin();
   let end = egui::Pos2::new(end_x, end_y);
-  
+
   Shape::LineSegment {
     points: [center, end],
     stroke: Stroke::new(2.0, color),
@@ -222,23 +227,23 @@ fn create_line_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32)
 fn create_chevron_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32) -> Shape {
   let length = DEFAULT_POINT_RADIUS + 4.0;
   let angle_offset = 0.5; // ~30 degrees
-  
+
   let tip_x = center.x + length * heading_rad.cos();
   let tip_y = center.y + length * heading_rad.sin();
   let tip = egui::Pos2::new(tip_x, tip_y);
-  
+
   let left_angle = heading_rad - angle_offset;
   let right_angle = heading_rad + angle_offset;
   let back_length = length * 0.6;
-  
+
   let left_x = tip.x - back_length * left_angle.cos();
   let left_y = tip.y - back_length * left_angle.sin();
   let left = egui::Pos2::new(left_x, left_y);
-  
+
   let right_x = tip.x - back_length * right_angle.cos();
   let right_y = tip.y - back_length * right_angle.sin();
   let right = egui::Pos2::new(right_x, right_y);
-  
+
   Shape::Path(PathShape {
     points: vec![left, tip, right],
     closed: false,
@@ -251,11 +256,11 @@ fn create_chevron_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color
 fn create_needle_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32) -> Shape {
   let length = DEFAULT_POINT_RADIUS + 8.0;
   let head_size = 2.0;
-  
+
   let tip_x = center.x + length * heading_rad.cos();
   let tip_y = center.y + length * heading_rad.sin();
   let tip = egui::Pos2::new(tip_x, tip_y);
-  
+
   let perpendicular = heading_rad + std::f32::consts::PI / 2.0;
   let head_left = egui::Pos2::new(
     tip.x - head_size * heading_rad.cos() + head_size * 0.5 * perpendicular.cos(),
@@ -265,7 +270,7 @@ fn create_needle_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color3
     tip.x - head_size * heading_rad.cos() - head_size * 0.5 * perpendicular.cos(),
     tip.y - head_size * heading_rad.sin() - head_size * 0.5 * perpendicular.sin(),
   );
-  
+
   Shape::Path(PathShape {
     points: vec![center, tip, head_left, tip, head_right],
     closed: false,
@@ -278,12 +283,12 @@ fn create_needle_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color3
 fn create_sector_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32) -> Shape {
   let radius = DEFAULT_POINT_RADIUS + 4.0;
   let sector_angle = 0.6; // ~35 degrees total width
-  
+
   let start_angle = heading_rad - sector_angle / 2.0;
   let end_angle = heading_rad + sector_angle / 2.0;
-  
+
   let mut points = vec![center];
-  
+
   // Create arc points
   for i in 0..=8 {
     let angle = start_angle + (end_angle - start_angle) * i as f32 / 8.0;
@@ -291,7 +296,7 @@ fn create_sector_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color3
     let y = center.y + radius * angle.sin();
     points.push(egui::Pos2::new(x, y));
   }
-  
+
   Shape::Path(PathShape {
     points,
     closed: true,
@@ -304,20 +309,20 @@ fn create_sector_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color3
 fn create_rectangle_shape(center: egui::Pos2, heading_rad: f32, color: egui::Color32) -> Shape {
   let length = DEFAULT_POINT_RADIUS + 6.0;
   let width = 3.0;
-  
+
   let forward = egui::Vec2::new(heading_rad.cos(), heading_rad.sin());
   let right = egui::Vec2::new(-heading_rad.sin(), heading_rad.cos());
-  
+
   let half_length = length / 2.0;
   let half_width = width / 2.0;
-  
+
   let corners = [
     center + forward * half_length + right * half_width,
     center + forward * half_length - right * half_width,
     center - forward * half_length - right * half_width,
     center - forward * half_length + right * half_width,
   ];
-  
+
   Shape::Path(PathShape {
     points: corners.to_vec(),
     closed: true,

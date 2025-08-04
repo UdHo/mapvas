@@ -5,7 +5,8 @@ use clap::Parser as CliParser;
 use log::error;
 use mapvas::map::map_event::{Color, MapEvent};
 use mapvas::parser::{
-  FileParser, GeoJsonParser, GpxParser, GrepParser, JsonParser, KmlParser, TTJsonParser,
+  AutoFileParser, FileParser, GeoJsonParser, GpxParser, GrepParser, JsonParser, KmlParser,
+  TTJsonParser,
 };
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -15,8 +16,8 @@ mod sender;
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-  /// Which parser to use. Values: grep, ttjson, json, geojson, gpx, kml.
-  #[arg(short, long, default_value = "grep")]
+  /// Which parser to use. Values: auto (file extension based with fallbacks), grep, ttjson, json, geojson, gpx, kml.
+  #[arg(short, long, default_value = "auto")]
   parser: String,
 
   /// Inverts the normal lat/lon when using grep as parser.
@@ -79,29 +80,51 @@ async fn main() {
   }
 
   let (sender, _) = sender::MapSender::new().await;
-  let parser = || -> Box<dyn FileParser> {
-    match args.parser.as_str() {
-      "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
-      "json" => Box::new(JsonParser::new()),
-      "geojson" => Box::new(GeoJsonParser::new()),
-      "gpx" => Box::new(GpxParser::new()),
-      "kml" => Box::new(KmlParser::new()),
-      "grep" => Box::new(
-        GrepParser::new(args.invert_coordinates)
-          .with_color(color)
-          .with_label_pattern(&args.label_pattern),
-      ),
-      _ => {
-        error!("Unkown parser: {}. Falling back to grep.", args.parser);
-        Box::new(GrepParser::new(args.invert_coordinates))
-      }
-    }
-  };
 
-  let readers = readers(&args.files);
-  for reader in readers {
-    let mut parser = parser();
-    parser.parse(reader).for_each(|e| sender.send_event(e));
+  if args.parser == "auto" && !args.files.is_empty() {
+    // Use auto-parser for each file
+    for file_path in &args.files {
+      let mut auto_parser = AutoFileParser::new(file_path.clone());
+      auto_parser.parse().for_each(|e| sender.send_event(e));
+    }
+  } else {
+    // Use specified parser for all inputs (including stdin)
+    // For auto with stdin, fall back to grep parser
+    let effective_parser = if args.parser == "auto" {
+      if args.files.is_empty() {
+        log::info!("Auto parser with stdin: falling back to grep parser");
+      }
+      "grep"
+    } else {
+      &args.parser
+    };
+    let parser = || -> Box<dyn FileParser> {
+      match effective_parser {
+        "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
+        "json" => Box::new(JsonParser::new()),
+        "geojson" => Box::new(GeoJsonParser::new()),
+        "gpx" => Box::new(GpxParser::new()),
+        "kml" => Box::new(KmlParser::new()),
+        "grep" => Box::new(
+          GrepParser::new(args.invert_coordinates)
+            .with_color(color)
+            .with_label_pattern(&args.label_pattern),
+        ),
+        _ => {
+          error!(
+            "Unknown parser: {}. Falling back to grep.",
+            effective_parser
+          );
+          Box::new(GrepParser::new(args.invert_coordinates))
+        }
+      }
+    };
+
+    let readers = readers(&args.files);
+    for reader in readers {
+      let mut parser = parser();
+      parser.parse(reader).for_each(|e| sender.send_event(e));
+    }
   }
 
   if args.focus {

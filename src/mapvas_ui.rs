@@ -105,7 +105,7 @@ impl eframe::App for MapApp {
 
     // Show settings dialog if open and check for config changes
     self.settings_dialog.borrow_mut().ui(ctx);
-    
+
     // Update map config if heading style has changed (for real-time updates)
     let current_config = self.settings_dialog.borrow().get_current_config();
     if current_config.heading_style != self.last_heading_style {
@@ -474,7 +474,10 @@ impl SettingsDialog {
           .selected_text(self.config.heading_style.name())
           .show_ui(ui, |ui| {
             for style in HeadingStyle::all() {
-              if ui.selectable_value(&mut self.config.heading_style, *style, style.name()).clicked() {
+              if ui
+                .selectable_value(&mut self.config.heading_style, *style, style.name())
+                .clicked()
+              {
                 self.settings_changed = true;
               }
             }
