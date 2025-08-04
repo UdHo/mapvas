@@ -603,13 +603,13 @@ impl Map {
   }
 
   /// Update the config for the map and all its layers
-  pub fn update_config(&mut self, new_config: crate::config::Config) {
+  pub fn update_config(&mut self, new_config: &crate::config::Config) {
     self.config = new_config.clone();
 
     // Update all layers that need config updates
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        layer.update_config(&new_config);
+        layer.update_config(new_config);
       }
     }
   }

@@ -9,7 +9,7 @@ use mapvas::parser::{
   TTJsonParser,
 };
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 
 mod sender;
 
@@ -81,25 +81,30 @@ async fn main() {
 
   let (sender, _) = sender::MapSender::new().await;
 
-  if args.parser == "auto" && !args.files.is_empty() {
-    // Use auto-parser for each file
-    for file_path in &args.files {
-      let mut auto_parser = AutoFileParser::new(file_path.clone());
-      auto_parser.parse().for_each(|e| sender.send_event(e));
+  if args.parser == "auto" {
+    if args.files.is_empty() {
+      // Use content-based auto-parser for stdin
+      log::info!("Auto parser analyzing stdin content...");
+      let mut content = String::new();
+      std::io::stdin()
+        .read_to_string(&mut content)
+        .expect("Failed to read from stdin");
+
+      let content_parser = mapvas::parser::ContentAutoParser::new(content);
+      for event in content_parser.parse() {
+        sender.send_event(event);
+      }
+    } else {
+      // Use file-based auto-parser for each file
+      for file_path in &args.files {
+        let mut auto_parser = AutoFileParser::new(file_path.clone());
+        auto_parser.parse().for_each(|e| sender.send_event(e));
+      }
     }
   } else {
-    // Use specified parser for all inputs (including stdin)
-    // For auto with stdin, fall back to grep parser
-    let effective_parser = if args.parser == "auto" {
-      if args.files.is_empty() {
-        log::info!("Auto parser with stdin: falling back to grep parser");
-      }
-      "grep"
-    } else {
-      &args.parser
-    };
+    // Use specified parser for all inputs
     let parser = || -> Box<dyn FileParser> {
-      match effective_parser {
+      match args.parser.as_str() {
         "ttjson" => Box::new(TTJsonParser::new().with_color(color)),
         "json" => Box::new(JsonParser::new()),
         "geojson" => Box::new(GeoJsonParser::new()),
@@ -111,10 +116,7 @@ async fn main() {
             .with_label_pattern(&args.label_pattern),
         ),
         _ => {
-          error!(
-            "Unknown parser: {}. Falling back to grep.",
-            effective_parser
-          );
+          error!("Unknown parser: {}. Falling back to grep.", args.parser);
           Box::new(GrepParser::new(args.invert_coordinates))
         }
       }

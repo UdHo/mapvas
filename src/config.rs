@@ -5,8 +5,9 @@ use log::error;
 
 use crate::search::SearchProviderConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum HeadingStyle {
+  #[default]
   Arrow,
   Line,
   Chevron,
@@ -15,13 +16,8 @@ pub enum HeadingStyle {
   Rectangle,
 }
 
-impl Default for HeadingStyle {
-  fn default() -> Self {
-    HeadingStyle::Arrow
-  }
-}
-
 impl HeadingStyle {
+  #[must_use]
   pub fn name(&self) -> &'static str {
     match self {
       HeadingStyle::Arrow => "Arrow",
@@ -33,6 +29,7 @@ impl HeadingStyle {
     }
   }
 
+  #[must_use]
   pub fn all() -> &'static [HeadingStyle] {
     &[
       HeadingStyle::Arrow,

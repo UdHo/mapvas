@@ -29,7 +29,10 @@ impl StyleParser {
         .or_else(|| props.get("bearing"))
         .or_else(|| props.get("direction"))
         .or_else(|| props.get("course"))
-        .and_then(|v| v.as_f64().map(|f| f as f32));
+        .and_then(|v| v.as_f64().map(|f| {
+          #[allow(clippy::cast_possible_truncation)]
+          { f as f32 }
+        }));
 
       if let Some(heading) = heading {
         metadata = metadata.with_heading(heading);

@@ -155,11 +155,6 @@ impl ShapeLayer {
     self.send.clone()
   }
 
-  /// Update the config for this shape layer
-  pub fn update_config(&mut self, new_config: Config) {
-    self.config = new_config;
-  }
-
   #[allow(clippy::too_many_lines)]
   fn show_shape_layers(&mut self, ui: &mut egui::Ui) {
     // Update pagination to show highlighted geometry if needed

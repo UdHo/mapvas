@@ -20,6 +20,7 @@ pub struct MapApp {
 }
 
 impl MapApp {
+  #[allow(clippy::needless_pass_by_value)]
   pub fn new(
     map: Map,
     remote: Remote,
@@ -109,7 +110,7 @@ impl eframe::App for MapApp {
     // Update map config if heading style has changed (for real-time updates)
     let current_config = self.settings_dialog.borrow().get_current_config();
     if current_config.heading_style != self.last_heading_style {
-      self.map.update_config(current_config.clone());
+      self.map.update_config(&current_config);
       self.last_heading_style = current_config.heading_style;
     }
 
