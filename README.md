@@ -50,10 +50,41 @@ Start `mapvas` and a map window will appear.
 
 ### mapcat
 
-Mapcat currently reads only input from stdin and reads it line by line and pipes and uses it using various [parser](https://github.com/UdHo/mapvas/tree/master/src/parser).
-It then shows the parsed result on a single instance of mapvas, which it spawns if none is running.
+Mapcat reads input from stdin or files and uses intelligent auto-parsing to detect the format, or you can specify a parser explicitly. It uses various [parsers](https://github.com/UdHo/mapvas/tree/master/src/parser) to handle different data formats.
+It shows the parsed result on a single instance of mapvas, which it spawns if none is running.
 
-#### Grep (default)
+#### Auto Parser (default)
+
+The auto parser (default since v0.2.6) intelligently detects input format:
+- **File extension detection**: Uses `.geojson`, `.json`, `.gpx`, `.kml`, `.xml` extensions with fallback chains
+- **Content analysis**: For stdin/piped data, analyzes content patterns to determine format
+- **Smart fallbacks**: TTJson → JSON → GeoJSON → Grep for JSON files, with format-specific chains for others
+
+```bash
+# Auto-detect format from file extension
+mapcat data.geojson
+mapcat routes.gpx
+mapcat points.kml
+
+# Auto-detect format from piped content
+curl 'https://api.example.com/geojson' | mapcat
+cat coordinates.txt | mapcat
+```
+
+#### Explicit Parser Selection
+
+You can override auto-detection and specify a parser explicitly:
+
+```bash
+# Force specific parser
+mapcat -p grep data.txt
+mapcat -p geojson data.json
+mapcat -p ttjson routes.json
+```
+
+Available parsers: `auto` (default), `grep`, `ttjson`, `json`, `geojson`, `gpx`, `kml`
+
+#### Grep Parser
 
 This parser greps for coordinates latitude and longitude as float in a line. In addition it supports colors and filling of polygons.
 
@@ -145,6 +176,25 @@ Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.co
 curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 ```
 
+#### Directional Data Support
+
+MapVas supports displaying directional information for point geometries:
+
+**Heading support:**
+- Supported fields: `heading`, `bearing`, `direction`, `course` (in order of precedence)
+- Works with GeoJSON, JSON, and TTJson formats
+- Heading values in degrees (0° = North, clockwise)
+- Configurable arrow styles in settings
+
+```json
+// GeoJSON example with heading
+{
+  "type": "Feature",
+  "geometry": {"type": "Point", "coordinates": [13.4, 52.5]},
+  "properties": {"heading": 45.0, "label": "Northeast direction"}
+}
+```
+
 ### Advanced usage
 
 #### UI Customization
@@ -156,6 +206,9 @@ curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 - **Resizable**: Drag the right edge to resize between 200-600px width
 - **Scrollable Content**: Layer list and settings scroll when content exceeds height
 - **Hover Effects**: All interactive elements provide visual feedback
+
+**Visual Settings:**
+- **Heading Arrow Styles**: 6 configurable arrow styles for directional points (Arrow, Line, Chevron, Needle, Sector, Rectangle)
 
 #### Offline usage
 

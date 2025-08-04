@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add intelligent auto-parser system for automatic format detection
+  - File extension-based parser selection with smart fallback chains
+  - Content analysis for stdin/piped data with pattern detection
+  - Default auto-parser replaces manual parser selection for improved UX
+- Add 6 configurable heading arrow styles for directional points (Arrow, Line, Chevron, Needle, Sector, Rectangle)
+- Add comprehensive parser test suite validating auto-parser accuracy
 - Add optional puffin profiling with `--features profiling`
 - Add GeoJSON parser with style support
 - Add linewise GeoJSON parsing support
