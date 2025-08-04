@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+  config::Config,
   map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   parser::{FileParser, GrepParser, JsonParser, Parser},
   profile_scope,
@@ -47,6 +48,7 @@ pub struct Map {
   right_click: Option<PixelCoordinate>,
   keys: Vec<String>,
   geometry_info: Option<GeometryInfo>,
+  config: Config,
 }
 
 impl Map {
@@ -55,7 +57,7 @@ impl Map {
     let cfg = crate::config::Config::new();
 
     let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
-    let shape_layer = layer::ShapeLayer::new();
+    let shape_layer = layer::ShapeLayer::new(cfg.clone());
     let shape_layer_sender = shape_layer.get_sender();
 
     let (command, command_sender) = layer::CommandLayer::new();
@@ -99,6 +101,7 @@ impl Map {
         right_click: None,
         keys,
         geometry_info: None,
+        config: cfg,
       },
       remote,
       map_data_holder,
@@ -602,6 +605,18 @@ impl Map {
       }
     }
     false
+  }
+
+  /// Update the config for the map and all its layers
+  pub fn update_config(&mut self, new_config: crate::config::Config) {
+    self.config = new_config.clone();
+    
+    // Update all layers that need config updates
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.update_config(&new_config);
+      }
+    }
   }
 }
 

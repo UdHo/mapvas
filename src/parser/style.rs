@@ -23,6 +23,18 @@ impl StyleParser {
         metadata = metadata.with_label(label);
       }
 
+      // Extract heading from properties
+      let heading = props
+        .get("heading")
+        .or_else(|| props.get("bearing"))
+        .or_else(|| props.get("direction"))
+        .or_else(|| props.get("course"))
+        .and_then(|v| v.as_f64().map(|f| f as f32));
+
+      if let Some(heading) = heading {
+        metadata = metadata.with_heading(heading);
+      }
+
       let style = Self::extract_style_from_properties(props);
       if let Some(style) = style {
         metadata = metadata.with_style(style);
@@ -204,5 +216,38 @@ mod tests {
     if let Some(style) = &metadata.style {
       assert_eq!(style.color(), Color32::RED);
     }
+  }
+
+  #[test]
+  fn test_heading_extraction() {
+    let data = json!({
+      "name": "Aircraft",
+      "heading": 45.5,
+      "stroke": "#0000ff"
+    });
+
+    let metadata = StyleParser::extract_metadata_from_json(Some(&data));
+    assert_eq!(metadata.label, Some("Aircraft".to_string()));
+    assert_eq!(metadata.heading, Some(45.5));
+    assert!(metadata.style.is_some());
+
+    // Test different heading property names
+    let data2 = json!({
+      "bearing": 180.0
+    });
+    let metadata2 = StyleParser::extract_metadata_from_json(Some(&data2));
+    assert_eq!(metadata2.heading, Some(180.0));
+
+    let data3 = json!({
+      "direction": 270.0
+    });
+    let metadata3 = StyleParser::extract_metadata_from_json(Some(&data3));
+    assert_eq!(metadata3.heading, Some(270.0));
+
+    let data4 = json!({
+      "course": 90.0
+    });
+    let metadata4 = StyleParser::extract_metadata_from_json(Some(&data4));
+    assert_eq!(metadata4.heading, Some(90.0));
   }
 }

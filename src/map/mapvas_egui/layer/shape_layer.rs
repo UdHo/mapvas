@@ -1,5 +1,6 @@
 use super::{Layer, LayerProperties, drawable::Drawable as _};
 use crate::{
+  config::Config,
   map::{
     coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
     distance,
@@ -34,6 +35,7 @@ pub struct ShapeLayer {
   layer_properties: LayerProperties,
   highlighted_geometry: Option<(String, usize)>,
   just_highlighted: bool,
+  config: Config,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -110,7 +112,7 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
 
 impl ShapeLayer {
   #[must_use]
-  pub fn new() -> Self {
+  pub fn new(config: Config) -> Self {
     let (send, recv) = std::sync::mpsc::channel();
 
     Self {
@@ -126,6 +128,7 @@ impl ShapeLayer {
       layer_properties: LayerProperties::default(),
       highlighted_geometry: None,
       just_highlighted: false,
+      config,
     }
   }
 
@@ -150,6 +153,11 @@ impl ShapeLayer {
   #[must_use]
   pub fn get_sender(&self) -> Sender<MapEvent> {
     self.send.clone()
+  }
+
+  /// Update the config for this shape layer
+  pub fn update_config(&mut self, new_config: Config) {
+    self.config = new_config;
   }
 
   #[allow(clippy::too_many_lines)]
@@ -1180,7 +1188,7 @@ impl ShapeLayer {
         }
       }
       _ => {
-        geometry.draw(painter, transform);
+        geometry.draw_with_style(painter, transform, self.config.heading_style);
       }
     }
   }
@@ -1359,5 +1367,9 @@ impl Layer for ShapeLayer {
     self.highlighted_geometry = None;
     self.just_highlighted = false;
     None
+  }
+
+  fn update_config(&mut self, config: &crate::config::Config) {
+    self.config = config.clone();
   }
 }

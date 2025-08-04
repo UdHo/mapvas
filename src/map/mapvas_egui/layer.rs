@@ -52,6 +52,10 @@ pub trait Layer {
   fn closest_geometry_with_selection(&mut self, _pos: Pos2, _transform: &Transform) -> Option<f64> {
     None
   }
+  /// Update the layer's configuration
+  fn update_config(&mut self, _config: &crate::config::Config) {
+    // Default implementation does nothing - layers can override if they need config updates
+  }
 }
 
 /// Common properties for all layers.

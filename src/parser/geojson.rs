@@ -612,4 +612,49 @@ mod tests {
       "Multiline document point should match"
     );
   }
+
+  #[test]
+  fn test_geojson_point_with_heading() {
+    let events = load_and_parse::<GeoJsonParser>("point_with_heading.geojson");
+    let actual_layer = extract_layer(&events, "geojson");
+
+    assert_eq!(
+      actual_layer.geometries.len(),
+      4,
+      "Should have 4 points with different heading properties"
+    );
+
+    // Test point with "heading" property
+    if let Geometry::Point(_, metadata) = &actual_layer.geometries[0] {
+      assert_eq!(metadata.label, Some("Aircraft".to_string()));
+      assert_eq!(metadata.heading, Some(45.0));
+      assert!(metadata.style.is_some());
+    } else {
+      panic!("First geometry should be a Point");
+    }
+
+    // Test point with "bearing" property
+    if let Geometry::Point(_, metadata) = &actual_layer.geometries[1] {
+      assert_eq!(metadata.label, Some("Ship".to_string()));
+      assert_eq!(metadata.heading, Some(180.0));
+    } else {
+      panic!("Second geometry should be a Point");
+    }
+
+    // Test point with "direction" property
+    if let Geometry::Point(_, metadata) = &actual_layer.geometries[2] {
+      assert_eq!(metadata.label, Some("Vehicle".to_string()));
+      assert_eq!(metadata.heading, Some(270.0));
+    } else {
+      panic!("Third geometry should be a Point");
+    }
+
+    // Test point with "course" property
+    if let Geometry::Point(_, metadata) = &actual_layer.geometries[3] {
+      assert_eq!(metadata.label, Some("Compass".to_string()));
+      assert_eq!(metadata.heading, Some(90.0));
+    } else {
+      panic!("Fourth geometry should be a Point");
+    }
+  }
 }

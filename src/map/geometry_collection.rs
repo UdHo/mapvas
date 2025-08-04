@@ -69,10 +69,11 @@ impl Style {
   }
 }
 
-#[derive(Clone, Default, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Metadata {
   pub label: Option<String>,
   pub style: Option<Style>,
+  pub heading: Option<f32>,
 }
 
 impl Metadata {
@@ -87,9 +88,15 @@ impl Metadata {
     self.style = Some(style);
     self
   }
+
+  #[must_use]
+  pub fn with_heading(mut self, heading: f32) -> Self {
+    self.heading = Some(heading);
+    self
+  }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum Geometry<C: Coordinate> {
   GeometryCollection(Vec<Geometry<C>>, Metadata),
   Point(C, Metadata),
@@ -218,6 +225,7 @@ mod tests {
         fill_color: None,
         visible: false,
       }),
+      heading: None,
     };
     let blue = Metadata {
       label: None,
@@ -226,6 +234,7 @@ mod tests {
         fill_color: Some(Color32::BLUE),
         visible: true,
       }),
+      heading: None,
     };
     let green = Metadata {
       label: None,
@@ -234,6 +243,7 @@ mod tests {
         fill_color: Some(Color32::GREEN),
         visible: true,
       }),
+      heading: None,
     };
 
     let geom_coll = Geometry::GeometryCollection(
@@ -265,6 +275,7 @@ mod tests {
             fill_color: Some(Color::GREEN),
             visible: false,
           }),
+          heading: None,
         },
       ),
       Geometry::LineString(
@@ -276,6 +287,7 @@ mod tests {
             fill_color: Some(Color::BLUE),
             visible: true,
           }),
+          heading: None,
         },
       ),
       Geometry::Point(
@@ -287,6 +299,7 @@ mod tests {
             fill_color: Some(Color::GREEN),
             visible: false,
           }),
+          heading: None,
         },
       ),
     ];

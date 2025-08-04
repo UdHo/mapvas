@@ -1,0 +1,53 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.4194, 37.7749]
+      },
+      "properties": {
+        "name": "Aircraft",
+        "heading": 45.0,
+        "color": "#ff0000"
+      }
+    },
+    {
+      "type": "Feature", 
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.4094, 37.7849]
+      },
+      "properties": {
+        "name": "Ship",
+        "bearing": 180.0,
+        "color": "#00ff00"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point", 
+        "coordinates": [-122.3994, 37.7949]
+      },
+      "properties": {
+        "name": "Vehicle",
+        "direction": 270.0,
+        "color": "#0000ff"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.3894, 37.8049]
+      },
+      "properties": {
+        "name": "Compass",
+        "course": 90.0,
+        "color": "#ffff00"
+      }
+    }
+  ]
+}

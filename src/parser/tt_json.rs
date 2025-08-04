@@ -60,6 +60,7 @@ impl TTJsonParser {
               Metadata {
                 label: Some(format!("Leg {i}")),
                 style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
+                heading: None,
               },
             )
           })
@@ -90,6 +91,7 @@ impl TTJsonParser {
             .with_color(Into::<Color32>::into(self.color))
             .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
         ),
+        heading: None,
       },
     )];
     if let Some(c) = center {
@@ -102,6 +104,7 @@ impl TTJsonParser {
               .with_color(Into::<Color32>::into(self.color))
               .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
           ),
+          heading: None,
         },
       ));
     }

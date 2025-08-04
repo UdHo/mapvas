@@ -5,6 +5,46 @@ use log::error;
 
 use crate::search::SearchProviderConfig;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HeadingStyle {
+  Arrow,
+  Line,
+  Chevron,
+  Needle,
+  Sector,
+  Rectangle,
+}
+
+impl Default for HeadingStyle {
+  fn default() -> Self {
+    HeadingStyle::Arrow
+  }
+}
+
+impl HeadingStyle {
+  pub fn name(&self) -> &'static str {
+    match self {
+      HeadingStyle::Arrow => "Arrow",
+      HeadingStyle::Line => "Line",
+      HeadingStyle::Chevron => "Chevron",
+      HeadingStyle::Needle => "Needle",
+      HeadingStyle::Sector => "Sector",
+      HeadingStyle::Rectangle => "Rectangle",
+    }
+  }
+
+  pub fn all() -> &'static [HeadingStyle] {
+    &[
+      HeadingStyle::Arrow,
+      HeadingStyle::Line,
+      HeadingStyle::Chevron,
+      HeadingStyle::Needle,
+      HeadingStyle::Sector,
+      HeadingStyle::Rectangle,
+    ]
+  }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TileProvider {
   pub name: String,
@@ -18,6 +58,7 @@ pub struct Config {
   pub tile_cache_dir: Option<PathBuf>,
   pub commands_dir: Option<PathBuf>,
   pub search_providers: Vec<SearchProviderConfig>,
+  pub heading_style: HeadingStyle,
 }
 
 const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
@@ -67,6 +108,7 @@ impl Config {
       tile_cache_dir,
       commands_dir,
       search_providers: Vec::new(),
+      heading_style: HeadingStyle::default(),
     }
   }
 
@@ -86,6 +128,11 @@ impl Config {
       if !self.search_providers.iter().any(|p| p == provider) {
         self.search_providers.push(provider.clone());
       }
+    }
+
+    // Use other's heading style if we don't have one set (or if other is not default)
+    if self.heading_style == HeadingStyle::default() || other.heading_style != HeadingStyle::default() {
+      self.heading_style = other.heading_style;
     }
 
     self
@@ -159,6 +206,7 @@ impl Default for Config {
         SearchProviderConfig::Coordinate,
         SearchProviderConfig::Nominatim { base_url: None },
       ],
+      heading_style: HeadingStyle::default(),
     }
   }
 }

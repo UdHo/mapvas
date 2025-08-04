@@ -75,6 +75,7 @@ impl Parser for GrepParser {
           Metadata {
             label: label.clone(),
             style: Some(Style::default().with_color(self.color.into())),
+            heading: None,
           },
         )),
         _ => {
@@ -84,6 +85,7 @@ impl Parser for GrepParser {
               Metadata {
                 label: label.clone(),
                 style: Some(Style::default().with_color(self.color.into())),
+                heading: None,
               },
             ));
           } else {
@@ -96,6 +98,7 @@ impl Parser for GrepParser {
                     .with_color(self.color.into())
                     .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
                 ),
+                heading: None,
               },
             ));
           }
@@ -110,6 +113,7 @@ impl Parser for GrepParser {
             Metadata {
               label: label.clone(),
               style: Some(Style::default().with_color(self.color.into())),
+              heading: None,
             },
           )
         }));
@@ -122,6 +126,7 @@ impl Parser for GrepParser {
             Metadata {
               label: label.clone(),
               style: Some(Style::default().with_color(self.color.into())),
+              heading: None,
             },
           )
         }));

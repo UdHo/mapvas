@@ -3,7 +3,7 @@ use std::rc::Rc;
 use egui::Widget as _;
 
 use crate::{
-  config::{Config, TileProvider},
+  config::{Config, HeadingStyle, TileProvider},
   map::mapvas_egui::{Map, MapLayerHolder},
   profile_scope,
   remote::Remote,
@@ -16,6 +16,7 @@ pub struct MapApp {
   sidebar: Sidebar,
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
   previous_had_highlighted: bool,
+  last_heading_style: HeadingStyle,
 }
 
 impl MapApp {
@@ -27,12 +28,13 @@ impl MapApp {
   ) -> Self {
     let settings_dialog =
       std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
-    let sidebar = Sidebar::new(remote, map_content, config, settings_dialog.clone());
+    let sidebar = Sidebar::new(remote, map_content, config.clone(), settings_dialog.clone());
     Self {
       map,
       sidebar,
       settings_dialog,
       previous_had_highlighted: false,
+      last_heading_style: config.heading_style,
     }
   }
 
@@ -101,8 +103,15 @@ impl eframe::App for MapApp {
     // Update sidebar animation
     self.sidebar.update_animation(ctx);
 
-    // Show settings dialog if open
+    // Show settings dialog if open and check for config changes
     self.settings_dialog.borrow_mut().ui(ctx);
+    
+    // Update map config if heading style has changed (for real-time updates)
+    let current_config = self.settings_dialog.borrow().get_current_config();
+    if current_config.heading_style != self.last_heading_style {
+      self.map.update_config(current_config.clone());
+      self.last_heading_style = current_config.heading_style;
+    }
 
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
@@ -382,6 +391,11 @@ impl SettingsDialog {
     }
   }
 
+  /// Get the current config (this will include any unsaved changes made in the UI)
+  fn get_current_config(&self) -> Config {
+    self.config.clone()
+  }
+
   fn open(&mut self) {
     self.open = true;
   }
@@ -450,6 +464,23 @@ impl SettingsDialog {
         }
       });
       ui.small("Path where screenshots will be saved (use 'Desktop' for default)");
+    });
+
+    ui.group(|ui| {
+      ui.label("Heading Arrow Style:");
+      ui.horizontal(|ui| {
+        ui.label("Arrow style for points with heading:");
+        egui::ComboBox::from_id_salt("heading_style")
+          .selected_text(self.config.heading_style.name())
+          .show_ui(ui, |ui| {
+            for style in HeadingStyle::all() {
+              if ui.selectable_value(&mut self.config.heading_style, *style, style.name()).clicked() {
+                self.settings_changed = true;
+              }
+            }
+          });
+      });
+      ui.small("Visual style for directional arrows on points with heading data");
     });
 
     ui.group(|ui| {
