@@ -26,7 +26,7 @@ use super::{
 
 mod helpers;
 
-mod layer;
+pub mod layer;
 pub use layer::ParameterUpdate;
 
 #[derive(Debug, Clone)]
@@ -610,6 +610,19 @@ impl Map {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
         layer.update_config(new_config);
+      }
+    }
+  }
+
+  /// Set temporal filtering for all layers
+  pub fn set_temporal_filter(
+    &mut self,
+    current_time: Option<chrono::DateTime<chrono::Utc>>,
+    time_window: Option<chrono::Duration>,
+  ) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.set_temporal_filter(current_time, time_window);
       }
     }
   }

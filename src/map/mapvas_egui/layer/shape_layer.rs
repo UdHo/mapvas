@@ -9,6 +9,7 @@ use crate::{
   },
   profile_scope,
 };
+use chrono::{DateTime, Duration, Utc};
 use egui::{Color32, Pos2, Rect, Ui};
 use std::{
   collections::HashMap,
@@ -36,6 +37,9 @@ pub struct ShapeLayer {
   highlighted_geometry: Option<(String, usize)>,
   just_highlighted: bool,
   config: Config,
+  // Temporal filtering state
+  temporal_current_time: Option<DateTime<Utc>>,
+  temporal_time_window: Option<Duration>,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -129,6 +133,8 @@ impl ShapeLayer {
       highlighted_geometry: None,
       just_highlighted: false,
       config,
+      temporal_current_time: None,
+      temporal_time_window: None,
     }
   }
 
@@ -1183,6 +1189,12 @@ impl ShapeLayer {
         }
       }
       _ => {
+        // Apply temporal filtering to individual nested geometries
+        if let Some(current_time) = self.temporal_current_time {
+          if !self.is_individual_geometry_visible_at_time(geometry, current_time) {
+            return; // Skip this geometry if it's not visible at current time
+          }
+        }
         geometry.draw_with_style(painter, transform, self.config.heading_style);
       }
     }
@@ -1208,6 +1220,19 @@ impl ShapeLayer {
 const NAME: &str = "Shape Layer";
 
 impl Layer for ShapeLayer {
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+
+  /// Get temporal range from all geometries in this layer
+  fn get_temporal_range(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
+    self.get_temporal_range()
+  }
   fn process_pending_events(&mut self) {
     self.handle_new_shapes();
   }
@@ -1230,6 +1255,13 @@ impl Layer for ShapeLayer {
         for (shape_idx, shape) in shapes.iter().enumerate() {
           let geometry_key = (layer_id.clone(), shape_idx);
           if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
+            // Apply temporal filtering
+            if let Some(current_time) = self.temporal_current_time {
+              if !self.is_geometry_visible_at_time(shape, current_time) {
+                continue; // Skip this geometry if it's not visible at current time
+              }
+            }
+
             self.draw_geometry_with_visibility(
               ui.painter(),
               transform,
@@ -1366,5 +1398,122 @@ impl Layer for ShapeLayer {
 
   fn update_config(&mut self, config: &crate::config::Config) {
     self.config = config.clone();
+  }
+
+  fn set_temporal_filter(
+    &mut self,
+    current_time: Option<DateTime<Utc>>,
+    time_window: Option<Duration>,
+  ) {
+    self.temporal_current_time = current_time;
+    self.temporal_time_window = time_window;
+  }
+}
+
+impl ShapeLayer {
+  /// Get temporal range from all geometries in this layer
+  pub fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    let mut earliest: Option<DateTime<Utc>> = None;
+    let mut latest: Option<DateTime<Utc>> = None;
+
+    for shapes in self.shape_map.values() {
+      for shape in shapes {
+        self.extract_temporal_from_geometry(shape, &mut earliest, &mut latest);
+      }
+    }
+
+    (earliest, latest)
+  }
+
+  /// Recursively extract temporal data from a geometry and its children
+  fn extract_temporal_from_geometry(
+    &self,
+    geometry: &Geometry<PixelCoordinate>,
+    earliest: &mut Option<DateTime<Utc>>,
+    latest: &mut Option<DateTime<Utc>>,
+  ) {
+    let metadata = match geometry {
+      Geometry::Point(_, meta) => meta,
+      Geometry::LineString(_, meta) => meta,
+      Geometry::Polygon(_, meta) => meta,
+      Geometry::GeometryCollection(children, meta) => {
+        // Recursively process child geometries first
+        for child in children {
+          self.extract_temporal_from_geometry(child, earliest, latest);
+        }
+        meta
+      }
+    };
+
+    // Extract temporal data from this geometry's metadata
+    if let Some(time_data) = &metadata.time_data {
+      if let Some(timestamp) = time_data.timestamp {
+        *earliest = Some(earliest.map_or(timestamp, |e| e.min(timestamp)));
+        *latest = Some(latest.map_or(timestamp, |l| l.max(timestamp)));
+      }
+
+      if let Some(time_span) = &time_data.time_span {
+        if let Some(begin) = time_span.begin {
+          *earliest = Some(earliest.map_or(begin, |e| e.min(begin)));
+        }
+        if let Some(end) = time_span.end {
+          *latest = Some(latest.map_or(end, |l| l.max(end)));
+        }
+      }
+    }
+  }
+
+  /// Check if a top-level geometry should be visible at the given time
+  fn is_geometry_visible_at_time(
+    &self,
+    geometry: &Geometry<PixelCoordinate>,
+    current_time: DateTime<Utc>,
+  ) -> bool {
+    match geometry {
+      Geometry::Point(_, meta) | Geometry::LineString(_, meta) | Geometry::Polygon(_, meta) => {
+        // For individual geometries, check their metadata
+        if let Some(time_window) = self.temporal_time_window {
+          meta.is_visible_in_time_window(current_time, time_window)
+        } else {
+          meta.is_visible_at_time(current_time)
+        }
+      }
+      Geometry::GeometryCollection(children, meta) => {
+        // For GeometryCollections, first check if the collection itself has temporal data
+        if meta.time_data.is_some() {
+          if let Some(time_window) = self.temporal_time_window {
+            meta.is_visible_in_time_window(current_time, time_window)
+          } else {
+            meta.is_visible_at_time(current_time)
+          }
+        } else {
+          // If collection has no temporal data, check if ANY child is visible
+          // We still show the collection if at least one child is visible
+          children
+            .iter()
+            .any(|child| self.is_geometry_visible_at_time(child, current_time))
+        }
+      }
+    }
+  }
+
+  /// Check if an individual geometry (not a collection) should be visible at the given time
+  fn is_individual_geometry_visible_at_time(
+    &self,
+    geometry: &Geometry<PixelCoordinate>,
+    current_time: DateTime<Utc>,
+  ) -> bool {
+    let meta = match geometry {
+      Geometry::Point(_, meta) => meta,
+      Geometry::LineString(_, meta) => meta,
+      Geometry::Polygon(_, meta) => meta,
+      Geometry::GeometryCollection(_, meta) => meta, // Collections shouldn't reach here, but handle gracefully
+    };
+
+    if let Some(time_window) = self.temporal_time_window {
+      meta.is_visible_in_time_window(current_time, time_window)
+    } else {
+      meta.is_visible_at_time(current_time)
+    }
   }
 }

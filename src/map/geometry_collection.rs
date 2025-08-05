@@ -1,5 +1,6 @@
 use std::iter::once;
 
+use chrono::{DateTime, Utc};
 use egui::Color32;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -69,11 +70,24 @@ impl Style {
   }
 }
 
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct TimeData {
+  pub timestamp: Option<DateTime<Utc>>,
+  pub time_span: Option<TimeSpan>,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct TimeSpan {
+  pub begin: Option<DateTime<Utc>>,
+  pub end: Option<DateTime<Utc>>,
+}
+
 #[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Metadata {
   pub label: Option<String>,
   pub style: Option<Style>,
   pub heading: Option<f32>,
+  pub time_data: Option<TimeData>,
 }
 
 impl Metadata {
@@ -93,6 +107,91 @@ impl Metadata {
   pub fn with_heading(mut self, heading: f32) -> Self {
     self.heading = Some(heading);
     self
+  }
+
+  #[must_use]
+  pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
+    if let Some(ref mut time_data) = self.time_data {
+      time_data.timestamp = Some(timestamp);
+    } else {
+      self.time_data = Some(TimeData {
+        timestamp: Some(timestamp),
+        time_span: None,
+      });
+    }
+    self
+  }
+
+  #[must_use]
+  pub fn with_time_span(
+    mut self,
+    begin: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+  ) -> Self {
+    if let Some(ref mut time_data) = self.time_data {
+      time_data.time_span = Some(TimeSpan { begin, end });
+    } else {
+      self.time_data = Some(TimeData {
+        timestamp: None,
+        time_span: Some(TimeSpan { begin, end }),
+      });
+    }
+    self
+  }
+
+  #[must_use]
+  pub fn with_time_data(mut self, time_data: TimeData) -> Self {
+    self.time_data = Some(time_data);
+    self
+  }
+
+  /// Check if this geometry should be visible at the given time
+  pub fn is_visible_at_time(&self, current_time: DateTime<Utc>) -> bool {
+    if let Some(time_data) = &self.time_data {
+      // Check timestamp - exact match or very close (within 1 second)
+      if let Some(timestamp) = time_data.timestamp {
+        let diff = (current_time - timestamp).num_seconds().abs();
+        return diff <= 1;
+      }
+
+      // Check time span - current time is within the span
+      if let Some(time_span) = &time_data.time_span {
+        let after_begin = time_span.begin.map_or(true, |begin| current_time >= begin);
+        let before_end = time_span.end.map_or(true, |end| current_time <= end);
+        return after_begin && before_end;
+      }
+    }
+
+    // No temporal data means always visible
+    true
+  }
+
+  /// Check if this geometry should be visible within a time window around the current time
+  pub fn is_visible_in_time_window(
+    &self,
+    current_time: DateTime<Utc>,
+    window_duration: chrono::Duration,
+  ) -> bool {
+    if let Some(time_data) = &self.time_data {
+      let window_start = current_time - window_duration / 2;
+      let window_end = current_time + window_duration / 2;
+
+      // Check timestamp
+      if let Some(timestamp) = time_data.timestamp {
+        return timestamp >= window_start && timestamp <= window_end;
+      }
+
+      // Check time span - geometry is visible if any part of its time span overlaps with the window
+      if let Some(time_span) = &time_data.time_span {
+        let span_start = time_span.begin.unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let span_end = time_span.end.unwrap_or(DateTime::<Utc>::MAX_UTC);
+
+        // Check for overlap: spans overlap if start1 <= end2 && start2 <= end1
+        return window_start <= span_end && span_start <= window_end;
+      }
+    }
+    // If no temporal data, always visible
+    true
   }
 }
 
@@ -167,6 +266,24 @@ impl<C: Coordinate> Geometry<C> {
     }
   }
 
+  /// Check if this geometry should be visible at the given time
+  pub fn is_visible_at_time(&self, current_time: DateTime<Utc>) -> bool {
+    match self {
+      Geometry::GeometryCollection(geometries, metadata) => {
+        // For collections, check both the collection metadata and that at least one child is visible
+        metadata.is_visible_at_time(current_time)
+          && geometries
+            .iter()
+            .any(|g| g.is_visible_at_time(current_time))
+      }
+      Geometry::Point(_, metadata)
+      | Geometry::LineString(_, metadata)
+      | Geometry::Polygon(_, metadata) => {
+        self.is_visible() && metadata.is_visible_at_time(current_time)
+      }
+    }
+  }
+
   pub fn flat_iterate_with_merged_style(
     &self,
     base_style: &Style,
@@ -226,6 +343,7 @@ mod tests {
         visible: false,
       }),
       heading: None,
+      time_data: None,
     };
     let blue = Metadata {
       label: None,
@@ -235,6 +353,7 @@ mod tests {
         visible: true,
       }),
       heading: None,
+      time_data: None,
     };
     let green = Metadata {
       label: None,
@@ -244,6 +363,7 @@ mod tests {
         visible: true,
       }),
       heading: None,
+      time_data: None,
     };
 
     let geom_coll = Geometry::GeometryCollection(
@@ -276,6 +396,7 @@ mod tests {
             visible: false,
           }),
           heading: None,
+          time_data: None,
         },
       ),
       Geometry::LineString(
@@ -288,6 +409,7 @@ mod tests {
             visible: true,
           }),
           heading: None,
+          time_data: None,
         },
       ),
       Geometry::Point(
@@ -300,6 +422,7 @@ mod tests {
             visible: false,
           }),
           heading: None,
+          time_data: None,
         },
       ),
     ];

@@ -9,6 +9,7 @@ use crate::{
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
+use chrono::{DateTime, TimeZone, Utc};
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
@@ -114,6 +115,12 @@ impl eframe::App for MapApp {
       self.last_heading_style = current_config.heading_style;
     }
 
+    // Update temporal filtering on the map
+    self.map.set_temporal_filter(
+      self.sidebar.temporal_controls.current_time,
+      self.sidebar.temporal_controls.time_window,
+    );
+
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
 
@@ -163,6 +170,100 @@ struct Sidebar {
   map_content: Rc<dyn MapLayerHolder>,
   search_ui: SearchUI,
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
+  temporal_controls: TemporalControls,
+}
+
+/// Controls for temporal visualization
+#[derive(Default)]
+struct TemporalControls {
+  /// Whether timeline is currently playing
+  is_playing: bool,
+  /// Current time position in the timeline
+  current_time: Option<DateTime<Utc>>,
+  /// Start of the time range
+  time_start: Option<DateTime<Utc>>,
+  /// End of the time range
+  time_end: Option<DateTime<Utc>>,
+  /// Playback speed multiplier (1.0 = real time)
+  playback_speed: f32,
+  /// Time window duration (None = point in time, Some = duration window)
+  time_window: Option<chrono::Duration>,
+  /// Last update time for animation
+  last_update: f64,
+}
+
+impl TemporalControls {
+  /// Update the timeline during playback
+  fn update_timeline(&mut self, current_ui_time: f64) {
+    if !self.is_playing {
+      return;
+    }
+
+    if let (Some(start), Some(end), Some(current)) =
+      (self.time_start, self.time_end, self.current_time)
+    {
+      let dt = if self.last_update == 0.0 {
+        0.016 // First frame, assume 60fps
+      } else {
+        (current_ui_time - self.last_update).min(0.1) // Cap at 100ms
+      };
+
+      let speed_factor = self.playback_speed * 60.0; // 60x faster than real time by default
+      let time_advance = chrono::Duration::milliseconds((dt * 1000.0 * speed_factor as f64) as i64);
+
+      let new_time = current + time_advance;
+
+      if new_time > end {
+        // Loop back to start
+        self.current_time = Some(start);
+      } else {
+        self.current_time = Some(new_time);
+      }
+    }
+
+    self.last_update = current_ui_time;
+  }
+
+  /// Initialize time range from layer data, with demo fallback
+  fn init_from_layers(&mut self, map_content: &dyn MapLayerHolder) {
+    let mut earliest: Option<DateTime<Utc>> = None;
+    let mut latest: Option<DateTime<Utc>> = None;
+
+    // We need to access the actual geometries to extract temporal data
+    // Since the layer system doesn't directly expose geometries, we'll use a different approach
+    // For now, we'll extract temporal range through the shapelayer if possible
+
+    // Scan for temporal data by accessing the layers
+    let mut layer_reader = map_content.get_reader();
+    for layer in layer_reader.get_layers() {
+      // Get temporal range directly from the layer trait method
+      let (layer_earliest, layer_latest) = layer.get_temporal_range();
+
+      if let Some(layer_earliest) = layer_earliest {
+        earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
+      }
+
+      if let Some(layer_latest) = layer_latest {
+        latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
+      }
+    }
+
+    // If we found temporal data, use it
+    if let (Some(start), Some(end)) = (earliest, latest) {
+      self.time_start = Some(start);
+      self.time_end = Some(end);
+      if self.current_time.is_none() {
+        self.current_time = Some(start);
+      }
+    } else {
+      // Fallback to timeline that matches our KML test data (2024-01-01 10:00 to 14:00)
+      let demo_start = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(); // Start before first point
+      let demo_end = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 15, 0, 0).unwrap(); // End after last point
+      self.time_start = Some(demo_start);
+      self.time_end = Some(demo_end);
+      self.current_time = Some(demo_start);
+    }
+  }
 }
 
 impl Sidebar {
@@ -190,6 +291,10 @@ impl Sidebar {
       map_content,
       search_ui: SearchUI::new(search_manager),
       settings_dialog,
+      temporal_controls: TemporalControls {
+        playback_speed: 1.0,
+        ..Default::default()
+      },
     }
   }
 
@@ -217,6 +322,12 @@ impl Sidebar {
       (current_time - self.last_frame_time).min(0.1) // Cap at 100ms
     };
     self.last_frame_time = current_time;
+
+    // Update temporal controls
+    self.temporal_controls.update_timeline(current_time);
+    if self.temporal_controls.is_playing {
+      ctx.request_repaint();
+    }
 
     // Animation speed (duration in seconds)
     let animation_speed = 4.0; // Complete animation in 0.25 seconds
@@ -319,6 +430,17 @@ impl Sidebar {
               self.search_ui.ui(ui, &self.remote.sender());
             });
 
+          // Temporal controls
+          egui::CollapsingHeader::new("⏰ Timeline")
+            .default_open(false)
+            .show(ui, |ui| {
+              // Initialize timeline if not already done
+              if self.temporal_controls.time_start.is_none() {
+                self.temporal_controls.init_from_layers(&*self.map_content);
+              }
+              self.temporal_controls_ui(ui);
+            });
+
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
             .show(ui, |ui| {
@@ -336,6 +458,107 @@ impl Sidebar {
     if ui.button("Settings").clicked() {
       self.settings_dialog.borrow_mut().open();
     }
+  }
+
+  fn temporal_controls_ui(&mut self, ui: &mut egui::Ui) {
+    ui.vertical(|ui| {
+      // Play/Pause button
+      ui.horizontal(|ui| {
+        let play_button_text = if self.temporal_controls.is_playing {
+          "⏸ Pause"
+        } else {
+          "▶ Play"
+        };
+        if ui.button(play_button_text).clicked() {
+          self.temporal_controls.is_playing = !self.temporal_controls.is_playing;
+        }
+
+        // Stop button (resets to start)
+        if ui.button("⏹ Stop").clicked() {
+          self.temporal_controls.is_playing = false;
+          self.temporal_controls.current_time = self.temporal_controls.time_start;
+        }
+      });
+
+      ui.separator();
+
+      // Timeline scrubber
+      if let (Some(start), Some(end), Some(current)) = (
+        self.temporal_controls.time_start,
+        self.temporal_controls.time_end,
+        self.temporal_controls.current_time,
+      ) {
+        let total_duration = end.signed_duration_since(start);
+        let current_offset = current.signed_duration_since(start);
+
+        let total_seconds = total_duration.num_seconds() as f32;
+        let current_seconds = current_offset.num_seconds() as f32;
+
+        ui.label("Timeline Position:");
+        let mut position = current_seconds;
+        if ui
+          .add(
+            egui::Slider::new(&mut position, 0.0..=total_seconds)
+              .text("Time")
+              .show_value(false),
+          )
+          .changed()
+        {
+          let new_offset = chrono::Duration::seconds(position as i64);
+          self.temporal_controls.current_time = Some(start + new_offset);
+        }
+
+        // Display current time
+        ui.label(format!(
+          "Current: {}",
+          current.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+        ui.label(format!(
+          "Range: {} to {}",
+          start.format("%Y-%m-%d %H:%M:%S UTC"),
+          end.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+      }
+
+      ui.separator();
+
+      // Playback speed control
+      ui.horizontal(|ui| {
+        ui.label("Speed:");
+        ui.add(
+          egui::Slider::new(&mut self.temporal_controls.playback_speed, 0.1..=10.0)
+            .text("x")
+            .logarithmic(true),
+        );
+      });
+
+      // Time window control
+      ui.horizontal(|ui| {
+        ui.label("Time Window:");
+        let mut has_window = self.temporal_controls.time_window.is_some();
+        if ui.checkbox(&mut has_window, "Moving window").changed() {
+          if has_window {
+            self.temporal_controls.time_window = Some(chrono::Duration::hours(1));
+          } else {
+            self.temporal_controls.time_window = None;
+          }
+        }
+      });
+
+      if let Some(window_duration) = &mut self.temporal_controls.time_window {
+        let mut window_hours = window_duration.num_hours() as f32;
+        if ui
+          .add(
+            egui::Slider::new(&mut window_hours, 0.1..=168.0) // Up to 1 week
+              .text("hours")
+              .logarithmic(true),
+          )
+          .changed()
+        {
+          *window_duration = chrono::Duration::minutes((window_hours * 60.0) as i64);
+        }
+      }
+    });
   }
 }
 

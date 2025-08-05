@@ -21,7 +21,12 @@ const DEFAULT_POINT_RADIUS: f32 = 4.0;
 /// transformation.
 pub trait Drawable {
   fn draw(&self, painter: &Painter, transform: &Transform);
-  fn draw_with_style(&self, painter: &Painter, transform: &Transform, _heading_style: HeadingStyle) {
+  fn draw_with_style(
+    &self,
+    painter: &Painter,
+    transform: &Transform,
+    _heading_style: HeadingStyle,
+  ) {
     // Default implementation falls back to the old draw method
     self.draw(painter, transform);
   }

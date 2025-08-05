@@ -56,6 +56,29 @@ pub trait Layer {
   fn update_config(&mut self, _config: &crate::config::Config) {
     // Default implementation does nothing - layers can override if they need config updates
   }
+  /// Set temporal filtering for this layer
+  fn set_temporal_filter(
+    &mut self,
+    _current_time: Option<chrono::DateTime<chrono::Utc>>,
+    _time_window: Option<chrono::Duration>,
+  ) {
+    // Default implementation does nothing - layers can override if they support temporal filtering
+  }
+  /// Allow downcasting to concrete layer types
+  fn as_any(&self) -> &dyn std::any::Any {
+    // Default implementation - layers should override this
+    panic!("as_any not implemented for this layer type")
+  }
+
+  /// Get temporal range from this layer if it supports temporal data
+  fn get_temporal_range(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
+    (None, None) // Default implementation returns no temporal data
+  }
 }
 
 /// Common properties for all layers.
