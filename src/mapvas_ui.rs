@@ -9,7 +9,7 @@ use crate::{
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
@@ -209,7 +209,9 @@ impl TemporalControls {
       };
 
       let speed_factor = self.playback_speed * 60.0; // 60x faster than real time by default
-      let time_advance = chrono::Duration::milliseconds((dt * 1000.0 * speed_factor as f64) as i64);
+      #[allow(clippy::cast_possible_truncation)]
+      let time_advance =
+        chrono::Duration::milliseconds((dt * 1000.0 * f64::from(speed_factor)) as i64);
 
       let new_time = current + time_advance;
 
@@ -362,6 +364,48 @@ impl Sidebar {
     self.animation_progress >= 0.99
   }
 
+  /// Check if the timeline should be refreshed due to new temporal data
+  fn should_refresh_timeline(&self) -> bool {
+    // Get current temporal range from layers
+    let mut layer_reader = self.map_content.get_reader();
+
+    for layer in layer_reader.get_layers() {
+      let (earliest, latest) = layer.get_temporal_range();
+
+      if earliest.is_some() && latest.is_some() {
+        // If we have temporal data but no timeline, refresh
+        if self.temporal_controls.time_start.is_none() {
+          return true;
+        }
+
+        // If we currently have demo data (2024) but now have real temporal data, refresh
+        if let Some(current_start) = self.temporal_controls.time_start {
+          if current_start.year() == 2024 && current_start.month() == 1 && current_start.day() == 1
+          {
+            return true;
+          }
+        }
+
+        // Check if the actual temporal range differs from current timeline
+        if let (Some(current_start), Some(current_end), Some(layer_start), Some(layer_end)) = (
+          self.temporal_controls.time_start,
+          self.temporal_controls.time_end,
+          earliest,
+          latest,
+        ) {
+          // If the ranges don't match exactly, refresh
+          if current_start != layer_start || current_end != layer_end {
+            return true;
+          }
+        }
+
+        break;
+      }
+    }
+
+    false
+  }
+
   /// Easing function for smooth animations
   fn ease_out_cubic(t: f32) -> f32 {
     let t = t - 1.0;
@@ -434,8 +478,8 @@ impl Sidebar {
           egui::CollapsingHeader::new("⏰ Timeline")
             .default_open(false)
             .show(ui, |ui| {
-              // Initialize timeline if not already done
-              if self.temporal_controls.time_start.is_none() {
+              // Always check if timeline needs refresh
+              if self.temporal_controls.time_start.is_none() || self.should_refresh_timeline() {
                 self.temporal_controls.init_from_layers(&*self.map_content);
               }
               self.temporal_controls_ui(ui);
@@ -491,7 +535,9 @@ impl Sidebar {
         let total_duration = end.signed_duration_since(start);
         let current_offset = current.signed_duration_since(start);
 
+        #[allow(clippy::cast_precision_loss)]
         let total_seconds = total_duration.num_seconds() as f32;
+        #[allow(clippy::cast_precision_loss)]
         let current_seconds = current_offset.num_seconds() as f32;
 
         ui.label("Timeline Position:");
@@ -504,8 +550,11 @@ impl Sidebar {
           )
           .changed()
         {
-          let new_offset = chrono::Duration::seconds(position as i64);
-          self.temporal_controls.current_time = Some(start + new_offset);
+          #[allow(clippy::cast_possible_truncation)]
+          {
+            let new_offset = chrono::Duration::seconds(position as i64);
+            self.temporal_controls.current_time = Some(start + new_offset);
+          }
         }
 
         // Display current time
@@ -538,7 +587,7 @@ impl Sidebar {
         let mut has_window = self.temporal_controls.time_window.is_some();
         if ui.checkbox(&mut has_window, "Moving window").changed() {
           if has_window {
-            self.temporal_controls.time_window = Some(chrono::Duration::hours(1));
+            self.temporal_controls.time_window = Some(chrono::Duration::minutes(10));
           } else {
             self.temporal_controls.time_window = None;
           }
@@ -546,16 +595,20 @@ impl Sidebar {
       });
 
       if let Some(window_duration) = &mut self.temporal_controls.time_window {
-        let mut window_hours = window_duration.num_hours() as f32;
+        #[allow(clippy::cast_precision_loss)]
+        let mut window_minutes = window_duration.num_minutes() as f32;
         if ui
           .add(
-            egui::Slider::new(&mut window_hours, 0.1..=168.0) // Up to 1 week
-              .text("hours")
+            egui::Slider::new(&mut window_minutes, 1.0..=1440.0) // Up to 1 day
+              .text("minutes")
               .logarithmic(true),
           )
           .changed()
         {
-          *window_duration = chrono::Duration::minutes((window_hours * 60.0) as i64);
+          #[allow(clippy::cast_possible_truncation)]
+          {
+            *window_duration = chrono::Duration::minutes(window_minutes as i64);
+          }
         }
       }
     });

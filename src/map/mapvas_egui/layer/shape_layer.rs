@@ -391,6 +391,11 @@ impl ShapeLayer {
             })
             .response;
 
+          // Handle double-click to expand deeply nested collections
+          if content_response.double_clicked() {
+            self.expand_to_deepest_level(layer_id, shape_idx, shape);
+          }
+
           content_response.context_menu(|ui| {
             let visibility_text = if geometry_visible { "Hide" } else { "Show" };
 
@@ -402,6 +407,15 @@ impl ShapeLayer {
             }
 
             ui.separator();
+
+            // Add "Expand All" option for collections
+            if matches!(shape, Geometry::GeometryCollection(_, _)) {
+              if ui.button("📂 Expand All Nested").clicked() {
+                self.expand_to_deepest_level(layer_id, shape_idx, shape);
+                ui.close();
+              }
+              ui.separator();
+            }
 
             if ui.button("🗑 Delete Geometry").clicked() {
               if let Some(shapes) = self.shape_map.get_mut(layer_id) {
@@ -428,6 +442,15 @@ impl ShapeLayer {
         });
       }
     });
+
+    // Handle nested collection label popups (recursive for deeply nested structures)
+    for (layer_id, shapes) in &self.shape_map {
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        if let Geometry::GeometryCollection(geometries, _) = shape {
+          Self::check_nested_popups_recursive(ui, layer_id, shape_idx, geometries, &mut Vec::new());
+        }
+      }
+    }
   }
 
   #[allow(clippy::too_many_lines)]
@@ -444,13 +467,13 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📍", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, was_truncated) =
-            truncate_label_by_width(ui, label, available_width);
+            truncate_label_by_width(ui, &label.short(), available_width);
           let response = ui.strong(truncated_label);
           if was_truncated && response.clicked() {
             let popup_id = egui::Id::new(format!("point_popup_{layer_id}_{shape_idx}"));
-            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.full()));
           }
           let coord_text = format!("({:.3}, {:.3})", wgs84.lat, wgs84.lon);
           let available_width = (ui.available_width() - 20.0).max(30.0);
@@ -468,13 +491,13 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "📏", metadata, false);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, was_truncated) =
-            truncate_label_by_width(ui, label, available_width);
+            truncate_label_by_width(ui, &label.short(), available_width);
           let response = ui.strong(truncated_label);
           if was_truncated && response.clicked() {
             let popup_id = egui::Id::new(format!("line_popup_{layer_id}_{shape_idx}"));
-            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.full()));
           }
         } else {
           let response = ui.strong("Line");
@@ -529,13 +552,13 @@ impl ShapeLayer {
         self.show_colored_icon(ui, layer_id, shape_idx, "⬟", metadata, true);
 
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, was_truncated) =
-            truncate_label_by_width(ui, label, available_width);
+            truncate_label_by_width(ui, &label.short(), available_width);
           let response = ui.strong(truncated_label);
           if was_truncated && response.clicked() {
             let popup_id = egui::Id::new(format!("polygon_popup_{layer_id}_{shape_idx}"));
-            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.clone()));
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.full()));
           }
         } else {
           ui.label("Polygon");
@@ -587,6 +610,7 @@ impl ShapeLayer {
       format!("line_coords_popup_{layer_id}_{shape_idx}"),
       format!("polygon_popup_{layer_id}_{shape_idx}"),
       format!("collection_popup_{layer_id}_{shape_idx}"),
+      format!("collection_label_popup_{layer_id}_{shape_idx}"),
     ];
 
     for popup_id_str in geometry_popup_ids {
@@ -740,7 +764,7 @@ impl ShapeLayer {
       .unwrap_or(&false);
 
     let collection_label = if let Some(label) = &metadata.label {
-      format!("📁 {} ({} items)", label, geometries.len())
+      format!("📁 {} ({} items)", label.short(), geometries.len())
     } else {
       format!("📁 Collection ({} items)", geometries.len())
     };
@@ -784,6 +808,19 @@ impl ShapeLayer {
       }
 
       ui.separator();
+
+      // Show full label option
+      ui.separator();
+
+      if let Some(label) = &metadata.label {
+        if ui.button("📄 Show Full Label").clicked() {
+          let popup_id = egui::Id::new(format!("collection_label_popup_{layer_id}_{shape_idx}"));
+          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.full()));
+          ui.close();
+        }
+      } else {
+        ui.label("(No label available)");
+      }
 
       if ui.button("📋 Collection Info").clicked() {
         let popup_id = egui::Id::new(format!("collection_popup_{layer_id}_{shape_idx}"));
@@ -864,7 +901,7 @@ impl ShapeLayer {
         .unwrap_or(&false);
 
       let collection_label = if let Some(label) = &nested_metadata.label {
-        format!("📁 {} ({} items)", label, nested_geometries.len())
+        format!("📁 {} ({} items)", label.short(), nested_geometries.len())
       } else {
         format!("📁 Collection ({} items)", nested_geometries.len())
       };
@@ -963,6 +1000,30 @@ impl ShapeLayer {
             .insert(nested_key, !nested_visible);
           ui.close();
         }
+
+        ui.separator();
+
+        // Show full label option for nested collections
+        if let Some(label) = &nested_metadata.label {
+          if ui.button("📄 Show Full Label").clicked() {
+            let popup_id_str = format!(
+              "nested_label_{layer_id}_{shape_idx}_{}",
+              nested_path
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("_")
+            );
+            let popup_id = egui::Id::new(&popup_id_str);
+            let full_text = label.full();
+            println!("POPUP: Setting data for ID: {popup_id_str}");
+            println!("POPUP: Data length: {}", full_text.len());
+            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+            ui.close();
+          }
+        } else {
+          ui.label("(No label available)");
+        }
       });
     } else {
       // Individual geometries get eye icon + content with indentation
@@ -989,7 +1050,10 @@ impl ShapeLayer {
             let wgs84 = coord.as_wgs84();
             ui.label("📍");
             if let Some(label) = &nested_metadata.label {
-              ui.strong(label);
+              let available_width = (ui.available_width() - 40.0).max(100.0);
+              let (truncated_label, _was_truncated) =
+                truncate_label_by_width(ui, &label.short(), available_width);
+              ui.strong(truncated_label);
             } else {
               ui.label("Point");
             }
@@ -998,7 +1062,10 @@ impl ShapeLayer {
           Geometry::LineString(coords, nested_metadata) => {
             ui.label("📏");
             if let Some(label) = &nested_metadata.label {
-              ui.strong(label);
+              let available_width = (ui.available_width() - 40.0).max(100.0);
+              let (truncated_label, _was_truncated) =
+                truncate_label_by_width(ui, &label.short(), available_width);
+              ui.strong(truncated_label);
             } else {
               ui.label("Line");
             }
@@ -1007,7 +1074,10 @@ impl ShapeLayer {
           Geometry::Polygon(coords, nested_metadata) => {
             ui.label("⬟");
             if let Some(label) = &nested_metadata.label {
-              ui.strong(label);
+              let available_width = (ui.available_width() - 40.0).max(100.0);
+              let (truncated_label, _was_truncated) =
+                truncate_label_by_width(ui, &label.short(), available_width);
+              ui.strong(truncated_label);
             } else {
               ui.label("Polygon");
             }
@@ -1173,30 +1243,27 @@ impl ShapeLayer {
       return;
     }
 
-    match geometry {
-      Geometry::GeometryCollection(geometries, _) => {
-        for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
-          let mut new_path = nested_path.to_vec();
-          new_path.push(nested_idx);
-          self.draw_geometry_with_visibility(
-            painter,
-            transform,
-            layer_id,
-            shape_idx,
-            &new_path,
-            nested_geometry,
-          );
+    if let Geometry::GeometryCollection(geometries, _) = geometry {
+      for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
+        let mut new_path = nested_path.to_vec();
+        new_path.push(nested_idx);
+        self.draw_geometry_with_visibility(
+          painter,
+          transform,
+          layer_id,
+          shape_idx,
+          &new_path,
+          nested_geometry,
+        );
+      }
+    } else {
+      // Apply temporal filtering to individual nested geometries
+      if let Some(current_time) = self.temporal_current_time {
+        if !self.is_individual_geometry_visible_at_time(geometry, current_time) {
+          return; // Skip this geometry if it's not visible at current time
         }
       }
-      _ => {
-        // Apply temporal filtering to individual nested geometries
-        if let Some(current_time) = self.temporal_current_time {
-          if !self.is_individual_geometry_visible_at_time(geometry, current_time) {
-            return; // Skip this geometry if it's not visible at current time
-          }
-        }
-        geometry.draw_with_style(painter, transform, self.config.heading_style);
-      }
+      geometry.draw_with_style(painter, transform, self.config.heading_style);
     }
   }
 
@@ -1212,6 +1279,106 @@ impl ShapeLayer {
         // Update layer pagination to show the highlighted geometry
         let target_page = Self::calculate_page_for_index(*shape_idx);
         self.layer_pagination.insert(layer_id.clone(), target_page);
+      }
+    }
+  }
+
+  /// Check for nested collection popups at any depth
+  fn check_nested_popups_recursive(
+    ui: &mut egui::Ui,
+    layer_id: &str,
+    shape_idx: usize,
+    geometries: &[Geometry<PixelCoordinate>],
+    current_path: &mut Vec<usize>,
+  ) {
+    for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
+      current_path.push(nested_idx);
+
+      if let Geometry::GeometryCollection(sub_geometries, metadata) = nested_geometry {
+        // Check if this collection has a label and could be a popup target
+        if metadata.label.is_some() {
+          let popup_id_str = format!(
+            "nested_label_{layer_id}_{shape_idx}_{}",
+            current_path
+              .iter()
+              .map(std::string::ToString::to_string)
+              .collect::<Vec<_>>()
+              .join("_")
+          );
+          let popup_id = egui::Id::new(&popup_id_str);
+
+          if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+            let mut is_open = true;
+            egui::Window::new("Full Label")
+              .id(popup_id)
+              .open(&mut is_open)
+              .collapsible(false)
+              .resizable(true)
+              .movable(true)
+              .default_width(500.0)
+              .min_width(400.0)
+              .max_width(800.0)
+              .max_height(400.0)
+              .show(ui.ctx(), |ui| {
+                egui::ScrollArea::vertical()
+                  .max_height(300.0)
+                  .show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                      ui.add(egui::Label::new(&full_text).wrap());
+                    });
+                  });
+              });
+
+            if !is_open {
+              ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+            }
+          }
+        }
+
+        // Recursively check deeper nesting levels
+        Self::check_nested_popups_recursive(ui, layer_id, shape_idx, sub_geometries, current_path);
+      }
+
+      current_path.pop();
+    }
+  }
+
+  /// Expand all nested collections in a geometry to the deepest level
+  fn expand_to_deepest_level(
+    &mut self,
+    layer_id: &str,
+    shape_idx: usize,
+    geometry: &Geometry<PixelCoordinate>,
+  ) {
+    if let Geometry::GeometryCollection(_, _) = geometry {
+      let mut paths_to_expand = Vec::new();
+      Self::collect_nested_paths(geometry, &mut Vec::new(), &mut paths_to_expand);
+
+      // Expand all collected paths
+      for path in paths_to_expand {
+        let collection_key = (layer_id.to_string(), shape_idx, path);
+        self.collection_expansion.insert(collection_key, true);
+      }
+    }
+  }
+
+  /// Recursively collect all paths that lead to nested collections
+  pub fn collect_nested_paths(
+    geometry: &Geometry<PixelCoordinate>,
+    current_path: &mut Vec<usize>,
+    paths_to_expand: &mut Vec<Vec<usize>>,
+  ) {
+    if let Geometry::GeometryCollection(geometries, _) = geometry {
+      // Add current path to expansion list (empty path for root level)
+      if !current_path.is_empty() {
+        paths_to_expand.push(current_path.clone());
+      }
+
+      // Recurse into nested geometries
+      for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
+        current_path.push(nested_idx);
+        Self::collect_nested_paths(nested_geometry, current_path, paths_to_expand);
+        current_path.pop();
       }
     }
   }
@@ -1412,13 +1579,14 @@ impl Layer for ShapeLayer {
 
 impl ShapeLayer {
   /// Get temporal range from all geometries in this layer
+  #[must_use]
   pub fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
     let mut earliest: Option<DateTime<Utc>> = None;
     let mut latest: Option<DateTime<Utc>> = None;
 
     for shapes in self.shape_map.values() {
       for shape in shapes {
-        self.extract_temporal_from_geometry(shape, &mut earliest, &mut latest);
+        Self::extract_temporal_from_geometry(shape, &mut earliest, &mut latest);
       }
     }
 
@@ -1427,19 +1595,16 @@ impl ShapeLayer {
 
   /// Recursively extract temporal data from a geometry and its children
   fn extract_temporal_from_geometry(
-    &self,
     geometry: &Geometry<PixelCoordinate>,
     earliest: &mut Option<DateTime<Utc>>,
     latest: &mut Option<DateTime<Utc>>,
   ) {
     let metadata = match geometry {
-      Geometry::Point(_, meta) => meta,
-      Geometry::LineString(_, meta) => meta,
-      Geometry::Polygon(_, meta) => meta,
+      Geometry::Point(_, meta) | Geometry::LineString(_, meta) | Geometry::Polygon(_, meta) => meta,
       Geometry::GeometryCollection(children, meta) => {
         // Recursively process child geometries first
         for child in children {
-          self.extract_temporal_from_geometry(child, earliest, latest);
+          Self::extract_temporal_from_geometry(child, earliest, latest);
         }
         meta
       }
@@ -1504,10 +1669,10 @@ impl ShapeLayer {
     current_time: DateTime<Utc>,
   ) -> bool {
     let meta = match geometry {
-      Geometry::Point(_, meta) => meta,
-      Geometry::LineString(_, meta) => meta,
-      Geometry::Polygon(_, meta) => meta,
-      Geometry::GeometryCollection(_, meta) => meta, // Collections shouldn't reach here, but handle gracefully
+      Geometry::Point(_, meta)
+      | Geometry::LineString(_, meta)
+      | Geometry::Polygon(_, meta)
+      | Geometry::GeometryCollection(_, meta) => meta, // Collections shouldn't reach here, but handle gracefully
     };
 
     if let Some(time_window) = self.temporal_time_window {

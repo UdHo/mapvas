@@ -24,6 +24,7 @@ pub struct CommandLayer {
 }
 
 impl CommandLayer {
+  #[must_use]
   pub fn new() -> (Self, Sender<ParameterUpdate>) {
     let (send, recv) = std::sync::mpsc::channel();
 
@@ -47,6 +48,7 @@ impl CommandLayer {
     )
   }
 
+  #[must_use]
   pub fn register_keys(&self) -> Box<dyn Iterator<Item = &str> + '_> {
     Box::new(
       self

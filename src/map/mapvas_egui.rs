@@ -177,7 +177,13 @@ impl Map {
           if let Some(label) = &info.metadata.label {
             ui.horizontal(|ui| {
               ui.label("Label:");
-              ui.strong(label);
+              let short_label = label.short();
+              let truncated_label = if short_label.len() > 30 {
+                format!("{}...", &short_label[..27])
+              } else {
+                short_label
+              };
+              ui.strong(truncated_label);
             });
           }
 

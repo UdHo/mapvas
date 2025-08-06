@@ -58,7 +58,7 @@ impl TTJsonParser {
             Geometry::LineString(
               points,
               Metadata {
-                label: Some(format!("Leg {i}")),
+                label: Some(format!("Leg {i}").into()),
                 style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
                 heading: None,
                 time_data: None,

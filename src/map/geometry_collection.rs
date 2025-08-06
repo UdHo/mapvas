@@ -82,9 +82,85 @@ pub struct TimeSpan {
   pub end: Option<DateTime<Utc>>,
 }
 
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Label {
+  pub name: String,
+  pub description: Option<String>,
+}
+
+impl Label {
+  #[must_use]
+  pub fn new(name: String) -> Self {
+    Self {
+      name,
+      description: None,
+    }
+  }
+
+  #[must_use]
+  pub fn with_description(mut self, description: String) -> Self {
+    self.description = Some(description);
+    self
+  }
+
+  /// Get a short display version (just the name, truncated if too long)
+  #[must_use]
+  pub fn short(&self) -> String {
+    // For very long names, create a more compact version
+    if self.name.len() > 25 {
+      if let Some(arrow_pos) = self.name.find(" → ") {
+        // Extract just the NodeId part: "Label NodeId: 284325" -> "NodeId: 284325"
+        let before_arrow = &self.name[..arrow_pos];
+        if let Some(node_pos) = before_arrow.find("NodeId: ") {
+          let node_part = &before_arrow[node_pos..];
+          if node_part.len() <= 20 {
+            return node_part.to_string();
+          }
+        }
+        if before_arrow.len() <= 20 {
+          return before_arrow.to_string();
+        }
+      }
+
+      // If no arrow or still too long, just truncate
+      format!("{}...", &self.name[..22])
+    } else {
+      self.name.clone()
+    }
+  }
+
+  /// Get a full display version (name + description if available)
+  #[must_use]
+  pub fn full(&self) -> String {
+    if let Some(ref desc) = self.description {
+      format!("{}\n\n{}", self.name, desc)
+    } else {
+      self.name.clone()
+    }
+  }
+}
+
+impl std::fmt::Display for Label {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", self.name)
+  }
+}
+
+impl From<String> for Label {
+  fn from(name: String) -> Self {
+    Self::new(name)
+  }
+}
+
+impl From<&str> for Label {
+  fn from(name: &str) -> Self {
+    Self::new(name.to_string())
+  }
+}
+
 #[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Metadata {
-  pub label: Option<String>,
+  pub label: Option<Label>,
   pub style: Option<Style>,
   pub heading: Option<f32>,
   pub time_data: Option<TimeData>,
@@ -92,7 +168,13 @@ pub struct Metadata {
 
 impl Metadata {
   #[must_use]
-  pub fn with_label(mut self, label: String) -> Self {
+  pub fn with_label(mut self, label: impl Into<Label>) -> Self {
+    self.label = Some(label.into());
+    self
+  }
+
+  #[must_use]
+  pub fn with_structured_label(mut self, label: Label) -> Self {
     self.label = Some(label);
     self
   }
@@ -146,6 +228,7 @@ impl Metadata {
   }
 
   /// Check if this geometry should be visible at the given time
+  #[must_use]
   pub fn is_visible_at_time(&self, current_time: DateTime<Utc>) -> bool {
     if let Some(time_data) = &self.time_data {
       // Check timestamp - exact match or very close (within 1 second)
@@ -156,8 +239,8 @@ impl Metadata {
 
       // Check time span - current time is within the span
       if let Some(time_span) = &time_data.time_span {
-        let after_begin = time_span.begin.map_or(true, |begin| current_time >= begin);
-        let before_end = time_span.end.map_or(true, |end| current_time <= end);
+        let after_begin = time_span.begin.is_none_or(|begin| current_time >= begin);
+        let before_end = time_span.end.is_none_or(|end| current_time <= end);
         return after_begin && before_end;
       }
     }
@@ -167,6 +250,7 @@ impl Metadata {
   }
 
   /// Check if this geometry should be visible within a time window around the current time
+  #[must_use]
   pub fn is_visible_in_time_window(
     &self,
     current_time: DateTime<Utc>,

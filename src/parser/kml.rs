@@ -97,8 +97,37 @@ impl KmlParser {
     let style = self.extract_style_from_placemark(placemark);
     let mut metadata = Metadata::default().with_style(style);
 
+    // Create structured label with name and description
     if let Some(name) = &placemark.name {
-      metadata = metadata.with_label(name.clone());
+      let mut label = crate::map::geometry_collection::Label::new(name.clone());
+
+      if let Some(description) = &placemark.description {
+        // Clean up HTML tags and format the description nicely
+        let cleaned_description = description
+          .replace("<br/>", "\n")
+          .replace("<br>", "\n")
+          .replace("&lt;", "<")
+          .replace("&gt;", ">")
+          .replace("&amp;", "&");
+
+        // Remove HTML tags using a simple approach
+        let mut clean_text = String::new();
+        let mut in_tag = false;
+        for ch in cleaned_description.chars() {
+          match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => clean_text.push(ch),
+            _ => {}
+          }
+        }
+
+        if !clean_text.trim().is_empty() {
+          label = label.with_description(clean_text.trim().to_string());
+        }
+      }
+
+      metadata = metadata.with_structured_label(label);
     }
 
     // Extract temporal information from the raw KML data
@@ -110,10 +139,54 @@ impl KmlParser {
   }
 
   fn extract_temporal_data(&self, placemark: &kml::types::Placemark<f64>) -> Option<TimeData> {
-    // Since the KML crate doesn't support temporal elements, we need to parse them manually
-    // from the original XML data. Look for TimeStamp and TimeSpan elements within this placemark.
+    // Extract temporal data directly from placemark children elements
+    // Look for TimeStamp and TimeSpan elements in the placemark's children
 
-    // Find this placemark's section in the original XML data
+    for child in &placemark.children {
+      if child.name == "TimeStamp" {
+        // Look for <when> element in TimeStamp children
+        for timestamp_child in &child.children {
+          if timestamp_child.name == "when" {
+            if let Some(ref when_content) = timestamp_child.content {
+              if let Some(parsed_time) = Self::parse_kml_datetime(when_content) {
+                return Some(TimeData {
+                  timestamp: Some(parsed_time),
+                  time_span: None,
+                });
+              }
+            }
+          }
+        }
+      } else if child.name == "TimeSpan" {
+        // Look for <begin> and <end> elements in TimeSpan children
+        let mut begin_time = None;
+        let mut end_time = None;
+
+        for timespan_child in &child.children {
+          if timespan_child.name == "begin" {
+            if let Some(ref begin_content) = timespan_child.content {
+              begin_time = Self::parse_kml_datetime(begin_content);
+            }
+          } else if timespan_child.name == "end" {
+            if let Some(ref end_content) = timespan_child.content {
+              end_time = Self::parse_kml_datetime(end_content);
+            }
+          }
+        }
+
+        if begin_time.is_some() || end_time.is_some() {
+          return Some(TimeData {
+            timestamp: None,
+            time_span: Some(TimeSpan {
+              begin: begin_time,
+              end: end_time,
+            }),
+          });
+        }
+      }
+    }
+
+    // Fallback: Find this placemark's section in the original XML data
     if let Some(name) = &placemark.name {
       if let Some(timestamp) = self.find_timestamp_in_xml(name) {
         return Some(TimeData {
@@ -135,7 +208,7 @@ impl KmlParser {
 
   fn find_timestamp_in_xml(&self, placemark_name: &str) -> Option<DateTime<Utc>> {
     // Look for <TimeStamp><when>...</when></TimeStamp> in a placemark with this name
-    let name_pattern = format!("<name>{}</name>", placemark_name);
+    let name_pattern = format!("<name>{placemark_name}</name>");
 
     if let Some(placemark_start) = self.data.find(&name_pattern) {
       // Find the end of this placemark
@@ -161,7 +234,7 @@ impl KmlParser {
 
   fn find_timespan_in_xml(&self, placemark_name: &str) -> Option<TimeSpan> {
     // Look for <TimeSpan><begin>...</begin><end>...</end></TimeSpan> in a placemark with this name
-    let name_pattern = format!("<name>{}</name>", placemark_name);
+    let name_pattern = format!("<name>{placemark_name}</name>");
 
     if let Some(placemark_start) = self.data.find(&name_pattern) {
       let placemark_section = &self.data[placemark_start..];
@@ -224,12 +297,20 @@ impl KmlParser {
       return Some(dt.with_timezone(&Utc));
     }
 
+    // Try datetime without timezone (assume UTC)
+    if trimmed.len() >= 19 && trimmed.contains('T') {
+      let with_z = format!("{trimmed}Z");
+      if let Ok(dt) = DateTime::parse_from_rfc3339(&with_z) {
+        return Some(dt.with_timezone(&Utc));
+      }
+    }
+
     // Try date only (add default time)
     if trimmed.len() == 10
       && trimmed.chars().nth(4) == Some('-')
       && trimmed.chars().nth(7) == Some('-')
     {
-      let datetime_str = format!("{}T00:00:00Z", trimmed);
+      let datetime_str = format!("{trimmed}T00:00:00Z");
       if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
         return Some(dt.with_timezone(&Utc));
       }
@@ -237,7 +318,7 @@ impl KmlParser {
 
     // Try year-month only
     if trimmed.len() == 7 && trimmed.chars().nth(4) == Some('-') {
-      let datetime_str = format!("{}-01T00:00:00Z", trimmed);
+      let datetime_str = format!("{trimmed}-01T00:00:00Z");
       if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
         return Some(dt.with_timezone(&Utc));
       }
@@ -245,13 +326,13 @@ impl KmlParser {
 
     // Try year only
     if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
-      let datetime_str = format!("{}-01-01T00:00:00Z", trimmed);
+      let datetime_str = format!("{trimmed}-01-01T00:00:00Z");
       if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
         return Some(dt.with_timezone(&Utc));
       }
     }
 
-    log::warn!("Failed to parse KML datetime: {}", date_str);
+    log::warn!("Failed to parse KML datetime: {date_str}");
     None
   }
 
@@ -434,6 +515,24 @@ impl KmlParser {
           } else {
             None
           }
+        }
+      }
+      kml::types::Geometry::MultiGeometry(multi_geom) => {
+        // Convert MultiGeometry to GeometryCollection
+        let mut child_geometries = Vec::new();
+
+        for child_geom in &multi_geom.geometries {
+          if let Some(converted) =
+            Self::convert_geometry_with_metadata(child_geom, metadata.clone())
+          {
+            child_geometries.push(converted);
+          }
+        }
+
+        if child_geometries.is_empty() {
+          None
+        } else {
+          Some(Geometry::GeometryCollection(child_geometries, metadata))
         }
       }
       _ => None,
@@ -648,6 +747,24 @@ mod tests {
     } else {
       panic!("First event should be a Layer event");
     }
+  }
+
+  #[test]
+  fn test_kml_datetime_without_timezone() {
+    use chrono::{Datelike, Timelike};
+
+    // Test the exact format from the user's debug output
+    let datetime_without_tz = "1970-01-01T00:20:37";
+    let parsed = KmlParser::parse_kml_datetime(datetime_without_tz);
+
+    assert!(parsed.is_some(), "Should parse datetime without timezone");
+    let dt = parsed.unwrap();
+    assert_eq!(dt.year(), 1970);
+    assert_eq!(dt.month(), 1);
+    assert_eq!(dt.day(), 1);
+    assert_eq!(dt.hour(), 0);
+    assert_eq!(dt.minute(), 20);
+    assert_eq!(dt.second(), 37);
   }
 
   #[test]

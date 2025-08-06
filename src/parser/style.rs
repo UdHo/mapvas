@@ -217,7 +217,10 @@ mod tests {
     });
 
     let metadata = StyleParser::extract_metadata_from_json(Some(&data));
-    assert_eq!(metadata.label, Some("Test Feature".to_string()));
+    assert_eq!(
+      metadata.label.as_ref().map(|l| &l.name),
+      Some(&"Test Feature".to_string())
+    );
     assert!(metadata.style.is_some());
 
     if let Some(style) = &metadata.style {
@@ -234,7 +237,10 @@ mod tests {
     });
 
     let metadata = StyleParser::extract_metadata_from_json(Some(&data));
-    assert_eq!(metadata.label, Some("Aircraft".to_string()));
+    assert_eq!(
+      metadata.label.as_ref().map(|l| &l.name),
+      Some(&"Aircraft".to_string())
+    );
     assert_eq!(metadata.heading, Some(45.5));
     assert!(metadata.style.is_some());
 

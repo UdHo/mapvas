@@ -73,7 +73,7 @@ impl Parser for GrepParser {
         1 => layer.geometries.push(Geometry::Point(
           coordinates[0].into(),
           Metadata {
-            label: label.clone(),
+            label: label.clone().map(std::convert::Into::into),
             style: Some(Style::default().with_color(self.color.into())),
             heading: None,
             time_data: None,
@@ -84,7 +84,7 @@ impl Parser for GrepParser {
             layer.geometries.push(Geometry::LineString(
               coordinates.into_iter().map(Into::into).collect(),
               Metadata {
-                label: label.clone(),
+                label: label.clone().map(std::convert::Into::into),
                 style: Some(Style::default().with_color(self.color.into())),
                 heading: None,
                 time_data: None,
@@ -94,7 +94,7 @@ impl Parser for GrepParser {
             layer.geometries.push(Geometry::Polygon(
               coordinates.into_iter().map(Into::into).collect(),
               Metadata {
-                label: label.clone(),
+                label: label.clone().map(std::convert::Into::into),
                 style: Some(
                   Style::default()
                     .with_color(self.color.into())
@@ -114,7 +114,7 @@ impl Parser for GrepParser {
           Geometry::LineString(
             c.into_iter().map(Into::into).collect(),
             Metadata {
-              label: label.clone(),
+              label: label.clone().map(std::convert::Into::into),
               style: Some(Style::default().with_color(self.color.into())),
               heading: None,
               time_data: None,
@@ -128,7 +128,7 @@ impl Parser for GrepParser {
           Geometry::LineString(
             c.into_iter().map(Into::into).collect(),
             Metadata {
-              label: label.clone(),
+              label: label.clone().map(std::convert::Into::into),
               style: Some(Style::default().with_color(self.color.into())),
               heading: None,
               time_data: None,
