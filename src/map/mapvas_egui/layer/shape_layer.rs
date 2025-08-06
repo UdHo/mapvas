@@ -287,18 +287,12 @@ impl ShapeLayer {
 
       header_resp.context_menu(|ui| {
         let layer_visible = *self.layer_visibility.get(&layer_id).unwrap_or(&true);
-        let visibility_text = if layer_visible {
-          "Hide Layer"
-        } else {
-          "Show Layer"
-        };
 
-        if ui.button(visibility_text).clicked() {
-          self
+        self.show_visibility_button(ui, layer_visible, "Layer", |this| {
+          this
             .layer_visibility
             .insert(layer_id.clone(), !layer_visible);
-          ui.close();
-        }
+        });
 
         ui.separator();
 
@@ -392,38 +386,15 @@ impl ShapeLayer {
             .response;
 
           content_response.context_menu(|ui| {
-            let visibility_text = if geometry_visible { "Hide" } else { "Show" };
-
-            if ui.button(format!("{visibility_text} Geometry")).clicked() {
-              self
+            self.show_visibility_button(ui, geometry_visible, "Geometry", |this| {
+              this
                 .geometry_visibility
                 .insert(geometry_key.clone(), !geometry_visible);
-              ui.close();
-            }
+            });
 
             ui.separator();
 
-            if ui.button("🗑 Delete Geometry").clicked() {
-              if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-                if shape_idx < shapes.len() {
-                  shapes.remove(shape_idx);
-                  self.geometry_visibility.remove(&geometry_key);
-                  let keys_to_update: Vec<_> = self
-                    .geometry_visibility
-                    .keys()
-                    .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
-                    .cloned()
-                    .collect();
-
-                  for (lid, idx) in keys_to_update {
-                    if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
-                      self.geometry_visibility.insert((lid, idx - 1), visible);
-                    }
-                  }
-                }
-              }
-              ui.close();
-            }
+            self.show_delete_geometry_button(ui, layer_id, shape_idx, &geometry_key);
           });
         });
       }
@@ -777,89 +748,31 @@ impl ShapeLayer {
 
     // Add context menu for collection
     header_response.header_response.context_menu(|ui| {
-      // Collection visibility control
       let geometry_key = (layer_id.to_string(), shape_idx);
       let geometry_visible = *self.geometry_visibility.get(&geometry_key).unwrap_or(&true);
-      let visibility_text = if geometry_visible {
-        "Hide Collection"
-      } else {
-        "Show Collection"
-      };
 
-      if ui.button(visibility_text).clicked() {
-        self
+      self.show_visibility_button(ui, geometry_visible, "Collection", |this| {
+        this
           .geometry_visibility
           .insert(geometry_key.clone(), !geometry_visible);
-        ui.close();
-      }
+      });
 
       ui.separator();
-
-      // Show full label option
       ui.separator();
 
       if let Some(label) = &metadata.label {
-        if ui.button("📄 Show Full Label").clicked() {
-          let popup_id = egui::Id::new(format!("collection_label_popup_{layer_id}_{shape_idx}"));
-          ui.memory_mut(|mem| mem.data.insert_temp(popup_id, label.full()));
-          ui.close();
-        }
+        let popup_id = format!("collection_label_popup_{layer_id}_{shape_idx}");
+        Self::show_label_button(ui, label, &popup_id);
       } else {
         ui.label("(No label available)");
       }
 
-      if ui.button("📋 Collection Info").clicked() {
-        let popup_id = egui::Id::new(format!("collection_popup_{layer_id}_{shape_idx}"));
-        let collection_info = format!(
-          "📁 Geometry Collection\nItems: {}\nNested geometries: {}",
-          geometries.len(),
-          geometries
-            .iter()
-            .map(|g| match g {
-              Geometry::Point(_, _) => "Point".to_string(),
-              Geometry::LineString(_, _) => "LineString".to_string(),
-              Geometry::Polygon(_, _) => "Polygon".to_string(),
-              Geometry::GeometryCollection(nested, _) => format!("Collection ({})", nested.len()),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-        );
-        ui.memory_mut(|mem| mem.data.insert_temp(popup_id, collection_info));
-        ui.close();
-      }
+      let popup_id = format!("collection_popup_{layer_id}_{shape_idx}");
+      Self::show_collection_info_button(ui, geometries, &popup_id);
 
       ui.separator();
 
-      if ui.button("🗑 Delete Collection").clicked() {
-        if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-          if shape_idx < shapes.len() {
-            shapes.remove(shape_idx);
-            self.geometry_visibility.remove(&geometry_key);
-            // Clean up any nested visibility state for this collection
-            self
-              .nested_geometry_visibility
-              .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
-            self
-              .collection_expansion
-              .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
-
-            // Update indices for remaining geometries
-            let keys_to_update: Vec<_> = self
-              .geometry_visibility
-              .keys()
-              .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
-              .cloned()
-              .collect();
-
-            for (lid, idx) in keys_to_update {
-              if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
-                self.geometry_visibility.insert((lid, idx - 1), visible);
-              }
-            }
-          }
-        }
-        ui.close();
-      }
+      self.show_delete_collection_button(ui, layer_id, shape_idx, &geometry_key);
     });
   }
 
@@ -975,38 +888,25 @@ impl ShapeLayer {
 
       // Add context menu for nested collection
       header_response.header_response.context_menu(|ui| {
-        let visibility_text = if nested_visible {
-          "Hide Collection"
-        } else {
-          "Show Collection"
-        };
-        if ui.button(visibility_text).clicked() {
-          self
+        self.show_visibility_button(ui, nested_visible, "Collection", |this| {
+          this
             .nested_geometry_visibility
             .insert(nested_key, !nested_visible);
-          ui.close();
-        }
+        });
 
         ui.separator();
 
         // Show full label option for nested collections
         if let Some(label) = &nested_metadata.label {
-          if ui.button("📄 Show Full Label").clicked() {
-            let popup_id_str = format!(
-              "nested_label_{layer_id}_{shape_idx}_{}",
-              nested_path
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("_")
-            );
-            let popup_id = egui::Id::new(&popup_id_str);
-            let full_text = label.full();
-            println!("POPUP: Setting data for ID: {popup_id_str}");
-            println!("POPUP: Data length: {}", full_text.len());
-            ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
-            ui.close();
-          }
+          let popup_id_str = format!(
+            "nested_label_{layer_id}_{shape_idx}_{}",
+            nested_path
+              .iter()
+              .map(std::string::ToString::to_string)
+              .collect::<Vec<_>>()
+              .join("_")
+          );
+          Self::show_label_button(ui, label, &popup_id_str);
         } else {
           ui.label("(No label available)");
         }
@@ -1084,13 +984,11 @@ impl ShapeLayer {
 
       // Add context menu to individual geometries
       horizontal_response.response.context_menu(|ui| {
-        let visibility_text = if nested_visible { "Hide" } else { "Show" };
-        if ui.button(format!("{visibility_text} Geometry")).clicked() {
-          self
+        self.show_visibility_button(ui, nested_visible, "Geometry", |this| {
+          this
             .nested_geometry_visibility
             .insert(nested_key, !nested_visible);
-          ui.close();
-        }
+        });
       });
     }
   }
@@ -1326,6 +1224,133 @@ impl ShapeLayer {
       }
 
       current_path.pop();
+    }
+  }
+  // Context menu helpers
+  fn show_visibility_button(
+    &mut self,
+    ui: &mut egui::Ui,
+    is_visible: bool,
+    item_type: &str,
+    toggle_action: impl FnOnce(&mut Self),
+  ) {
+    let visibility_text = if is_visible { "Hide" } else { "Show" };
+    if ui
+      .button(format!("{visibility_text} {item_type}"))
+      .clicked()
+    {
+      toggle_action(self);
+      ui.close();
+    }
+  }
+
+  fn show_label_button(
+    ui: &mut egui::Ui,
+    label: &crate::map::geometry_collection::Label,
+    popup_id: &str,
+  ) {
+    if ui.button("📄 Show Full Label").clicked() {
+      let id = egui::Id::new(popup_id);
+      ui.memory_mut(|mem| mem.data.insert_temp(id, label.full()));
+      ui.close();
+    }
+  }
+
+  fn show_delete_geometry_button(
+    &mut self,
+    ui: &mut egui::Ui,
+    layer_id: &str,
+    shape_idx: usize,
+    geometry_key: &(String, usize),
+  ) {
+    if ui.button("🗑 Delete Geometry").clicked() {
+      if let Some(shapes) = self.shape_map.get_mut(layer_id) {
+        if shape_idx < shapes.len() {
+          shapes.remove(shape_idx);
+          self.geometry_visibility.remove(geometry_key);
+
+          // Update indices for remaining geometries
+          let keys_to_update: Vec<_> = self
+            .geometry_visibility
+            .keys()
+            .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
+            .cloned()
+            .collect();
+
+          for (lid, idx) in keys_to_update {
+            if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
+              self.geometry_visibility.insert((lid, idx - 1), visible);
+            }
+          }
+        }
+      }
+      ui.close();
+    }
+  }
+
+  fn show_collection_info_button(
+    ui: &mut egui::Ui,
+    geometries: &[Geometry<PixelCoordinate>],
+    popup_id: &str,
+  ) {
+    if ui.button("📋 Collection Info").clicked() {
+      let id = egui::Id::new(popup_id);
+      let collection_info = format!(
+        "📁 Geometry Collection\nItems: {}\nNested geometries: {}",
+        geometries.len(),
+        geometries
+          .iter()
+          .map(|g| match g {
+            Geometry::Point(_, _) => "Point".to_string(),
+            Geometry::LineString(_, _) => "LineString".to_string(),
+            Geometry::Polygon(_, _) => "Polygon".to_string(),
+            Geometry::GeometryCollection(nested, _) => format!("Collection ({})", nested.len()),
+          })
+          .collect::<Vec<_>>()
+          .join(", ")
+      );
+      ui.memory_mut(|mem| mem.data.insert_temp(id, collection_info));
+      ui.close();
+    }
+  }
+
+  fn show_delete_collection_button(
+    &mut self,
+    ui: &mut egui::Ui,
+    layer_id: &str,
+    shape_idx: usize,
+    geometry_key: &(String, usize),
+  ) {
+    if ui.button("🗑 Delete Collection").clicked() {
+      if let Some(shapes) = self.shape_map.get_mut(layer_id) {
+        if shape_idx < shapes.len() {
+          shapes.remove(shape_idx);
+          self.geometry_visibility.remove(geometry_key);
+
+          // Clean up any nested visibility state for this collection
+          self
+            .nested_geometry_visibility
+            .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+          self
+            .collection_expansion
+            .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+
+          // Update indices for remaining geometries
+          let keys_to_update: Vec<_> = self
+            .geometry_visibility
+            .keys()
+            .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
+            .cloned()
+            .collect();
+
+          for (lid, idx) in keys_to_update {
+            if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
+              self.geometry_visibility.insert((lid, idx - 1), visible);
+            }
+          }
+        }
+      }
+      ui.close();
     }
   }
 }
