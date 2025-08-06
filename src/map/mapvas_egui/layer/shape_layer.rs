@@ -391,11 +391,6 @@ impl ShapeLayer {
             })
             .response;
 
-          // Handle double-click to expand deeply nested collections
-          if content_response.double_clicked() {
-            self.expand_to_deepest_level(layer_id, shape_idx, shape);
-          }
-
           content_response.context_menu(|ui| {
             let visibility_text = if geometry_visible { "Hide" } else { "Show" };
 
@@ -407,15 +402,6 @@ impl ShapeLayer {
             }
 
             ui.separator();
-
-            // Add "Expand All" option for collections
-            if matches!(shape, Geometry::GeometryCollection(_, _)) {
-              if ui.button("📂 Expand All Nested").clicked() {
-                self.expand_to_deepest_level(layer_id, shape_idx, shape);
-                ui.close();
-              }
-              ui.separator();
-            }
 
             if ui.button("🗑 Delete Geometry").clicked() {
               if let Some(shapes) = self.shape_map.get_mut(layer_id) {
@@ -1340,46 +1326,6 @@ impl ShapeLayer {
       }
 
       current_path.pop();
-    }
-  }
-
-  /// Expand all nested collections in a geometry to the deepest level
-  fn expand_to_deepest_level(
-    &mut self,
-    layer_id: &str,
-    shape_idx: usize,
-    geometry: &Geometry<PixelCoordinate>,
-  ) {
-    if let Geometry::GeometryCollection(_, _) = geometry {
-      let mut paths_to_expand = Vec::new();
-      Self::collect_nested_paths(geometry, &mut Vec::new(), &mut paths_to_expand);
-
-      // Expand all collected paths
-      for path in paths_to_expand {
-        let collection_key = (layer_id.to_string(), shape_idx, path);
-        self.collection_expansion.insert(collection_key, true);
-      }
-    }
-  }
-
-  /// Recursively collect all paths that lead to nested collections
-  pub fn collect_nested_paths(
-    geometry: &Geometry<PixelCoordinate>,
-    current_path: &mut Vec<usize>,
-    paths_to_expand: &mut Vec<Vec<usize>>,
-  ) {
-    if let Geometry::GeometryCollection(geometries, _) = geometry {
-      // Add current path to expansion list (empty path for root level)
-      if !current_path.is_empty() {
-        paths_to_expand.push(current_path.clone());
-      }
-
-      // Recurse into nested geometries
-      for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
-        current_path.push(nested_idx);
-        Self::collect_nested_paths(nested_geometry, current_path, paths_to_expand);
-        current_path.pop();
-      }
     }
   }
 }
