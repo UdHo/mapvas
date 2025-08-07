@@ -3,14 +3,16 @@ use crate::{
   config::Config,
   map::{
     coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
-    distance,
     geometry_collection::{Geometry, Metadata, Style},
     map_event::{Layer as EventLayer, MapEvent},
   },
   profile_scope,
 };
 use chrono::{DateTime, Duration, Utc};
-use egui::{Color32, Pos2, Rect, Ui};
+use egui::{
+  Color32, Pos2, Rect, Ui, Shape, Stroke,
+  epaint::{CircleShape, PathShape, PathStroke},
+};
 use std::{
   collections::HashMap,
   sync::{
@@ -34,9 +36,12 @@ pub struct ShapeLayer {
   recv: Arc<Receiver<MapEvent>>,
   send: Sender<MapEvent>,
   layer_properties: LayerProperties,
-  highlighted_geometry: Option<(String, usize)>,
+  highlighted_geometry_id: Option<u64>, // Unique ID of highlighted geometry
   just_highlighted: bool,
   config: Config,
+  next_geometry_id: u64, // Global counter for unique IDs
+  // Mapping from (layer_id, shape_idx, nested_path) to unique geometry ID
+  geometry_id_map: HashMap<(String, usize, Vec<usize>), u64>,
   // Temporal filtering state
   temporal_current_time: Option<DateTime<Utc>>,
   temporal_time_window: Option<Duration>,
@@ -130,9 +135,11 @@ impl ShapeLayer {
       recv: recv.into(),
       send,
       layer_properties: LayerProperties::default(),
-      highlighted_geometry: None,
+      highlighted_geometry_id: None,
       just_highlighted: false,
       config,
+      next_geometry_id: 1,
+      geometry_id_map: HashMap::new(),
       temporal_current_time: None,
       temporal_time_window: None,
     }
@@ -171,10 +178,10 @@ impl ShapeLayer {
     for layer_id in layer_ids {
       let shapes_count = self.shape_map.get(&layer_id).map_or(0, Vec::len);
 
-      let has_highlighted_geometry = self
-        .highlighted_geometry
-        .as_ref()
-        .is_some_and(|(highlighted_layer_id, _)| highlighted_layer_id == &layer_id);
+      // Check if any geometry in this layer is highlighted
+      let has_highlighted_geometry = self.highlighted_geometry_id.is_some() && 
+        self.geometry_id_map.keys().any(|(key_layer_id, _, _)| key_layer_id == &layer_id) &&
+        self.geometry_id_map.values().any(|&id| self.highlighted_geometry_id == Some(id));
 
       let header_id = egui::Id::new(format!("shape_layer_{layer_id}"));
 
@@ -345,10 +352,15 @@ impl ShapeLayer {
   ) {
     let geometry_key = (layer_id.to_string(), shape_idx);
     let geometry_visible = *self.geometry_visibility.get(&geometry_key).unwrap_or(&true);
-    let is_highlighted = self.highlighted_geometry.as_ref() == Some(&geometry_key);
+    let geometry_key_for_highlight = (layer_id.to_string(), shape_idx, Vec::new());
+    let is_highlighted = if let Some(geometry_id) = self.geometry_id_map.get(&geometry_key_for_highlight) {
+      self.highlighted_geometry_id == Some(*geometry_id)
+    } else {
+      false
+    };
 
     let bg_color = if is_highlighted {
-      Some(egui::Color32::from_rgb(60, 80, 110))
+      Some(egui::Color32::from_rgb(180, 60, 60))
     } else {
       None
     };
@@ -384,6 +396,11 @@ impl ShapeLayer {
               self.show_shape_content(ui, layer_id, shape_idx, shape);
             })
             .response;
+
+          // Handle double-click to highlight geometry in sidebar
+          if content_response.double_clicked() {
+            self.highlight_geometry(layer_id.to_string(), shape_idx, Vec::new());
+          }
 
           content_response.context_menu(|ui| {
             self.show_visibility_button(ui, geometry_visible, "Geometry", |this| {
@@ -746,6 +763,11 @@ impl ShapeLayer {
       .collection_expansion
       .insert(collection_key, is_currently_open);
 
+    // Handle double-click to highlight collection
+    if header_response.header_response.double_clicked() {
+      self.highlight_geometry(layer_id.to_string(), shape_idx, Vec::new());
+    }
+
     // Add context menu for collection
     header_response.header_response.context_menu(|ui| {
       let geometry_key = (layer_id.to_string(), shape_idx);
@@ -886,6 +908,11 @@ impl ShapeLayer {
         .collection_expansion
         .insert(collection_key, is_currently_open);
 
+      // Handle double-click to highlight this nested collection
+      if header_response.header_response.double_clicked() {
+        self.highlight_geometry(layer_id.to_string(), shape_idx, nested_path.to_vec());
+      }
+
       // Add context menu for nested collection
       header_response.header_response.context_menu(|ui| {
         self.show_visibility_button(ui, nested_visible, "Collection", |this| {
@@ -975,11 +1002,30 @@ impl ShapeLayer {
         }
       });
 
+      // Check if this individual nested geometry is highlighted for sidebar background
+      let geometry_key_for_highlight = (layer_id.to_string(), shape_idx, nested_path.to_vec());
+      let is_highlighted = if let Some(geometry_id) = self.geometry_id_map.get(&geometry_key_for_highlight) {
+        self.highlighted_geometry_id == Some(*geometry_id)
+      } else {
+        false
+      };
+
+      // Add background color to the horizontal response if highlighted
+      if is_highlighted {
+        let rect = horizontal_response.response.rect;
+        ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(180, 60, 60));
+      }
+
       // Handle visibility toggle after the horizontal closure
       if toggle_visibility {
         self
           .nested_geometry_visibility
           .insert(nested_key.clone(), !nested_visible);
+      }
+
+      // Handle double-click to highlight this individual nested geometry
+      if horizontal_response.response.double_clicked() {
+        self.highlight_geometry(layer_id.to_string(), shape_idx, nested_path.to_vec());
       }
 
       // Add context menu to individual geometries
@@ -1147,24 +1193,36 @@ impl ShapeLayer {
           return; // Skip this geometry if it's not visible at current time
         }
       }
-      geometry.draw_with_style(painter, transform, self.config.heading_style);
+      // Check if this specific nested geometry is highlighted by ID
+      let geometry_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
+      let is_highlighted = if let Some(geometry_id) = self.geometry_id_map.get(&geometry_key) {
+        let highlighted = self.highlighted_geometry_id == Some(*geometry_id);
+        if highlighted {
+        }
+        highlighted
+      } else {
+        false
+      };
+      
+      if is_highlighted {
+        // Draw highlight background first (nested geometry - don't highlight collections)
+        self.draw_highlighted_geometry(geometry, painter, transform, false);
+        // Then draw the normal geometry on top
+        geometry.draw_with_style(painter, transform, self.config.heading_style);
+      } else {
+        geometry.draw_with_style(painter, transform, self.config.heading_style);
+      }
     }
   }
 
-  /// Calculate which page contains the given index
-  fn calculate_page_for_index(index: usize) -> usize {
-    index / ITEMS_PER_PAGE
-  }
 
   /// Update pagination to show the highlighted geometry if just highlighted
   fn update_pagination_for_highlight(&mut self) {
     if self.just_highlighted {
-      if let Some((layer_id, shape_idx)) = &self.highlighted_geometry {
-        // Update layer pagination to show the highlighted geometry
-        let target_page = Self::calculate_page_for_index(*shape_idx);
-        self.layer_pagination.insert(layer_id.clone(), target_page);
-      }
+      // For now, we'll skip pagination updates with the new ID system
+      // Could be enhanced later to maintain reverse mappings if needed
     }
+    self.just_highlighted = false;
   }
 
   /// Check for nested collection popups at any depth
@@ -1314,6 +1372,182 @@ impl ShapeLayer {
     }
   }
 
+  /// Generate a unique ID for a geometry
+  fn generate_geometry_id(&mut self) -> u64 {
+    let id = self.next_geometry_id;
+    self.next_geometry_id += 1;
+    id
+  }
+
+  /// Get or create a unique ID for a geometry at the given path
+  fn get_or_create_geometry_id(&mut self, layer_id: &str, shape_idx: usize, nested_path: &[usize]) -> u64 {
+    let key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
+    if let Some(&existing_id) = self.geometry_id_map.get(&key) {
+      existing_id
+    } else {
+      let new_id = self.generate_geometry_id();
+      self.geometry_id_map.insert(key.clone(), new_id);
+      new_id
+    }
+  }
+
+  /// Highlight a geometry by its path (converts to ID-based highlighting)
+  fn highlight_geometry(&mut self, layer_id: String, shape_idx: usize, nested_path: Vec<usize>) {
+    let geometry_id = self.get_or_create_geometry_id(&layer_id, shape_idx, &nested_path);
+    self.highlight_geometry_by_id(geometry_id);
+  }
+
+  /// Highlight a geometry by its unique ID
+  fn highlight_geometry_by_id(&mut self, geometry_id: u64) {
+    let was_different = self.highlighted_geometry_id != Some(geometry_id);
+    self.highlighted_geometry_id = Some(geometry_id);
+    self.just_highlighted = was_different;
+  }
+
+  /// Draw highlighting for a single specific geometry (never highlights collections)
+  fn draw_highlighted_geometry(
+    &self,
+    geometry: &Geometry<PixelCoordinate>,
+    painter: &egui::Painter,
+    transform: &Transform,
+    _highlight_all: bool, // Unused - we never highlight entire collections
+  ) {
+    // Handle only individual geometries, never highlight entire collections
+    match geometry {
+      Geometry::GeometryCollection(_, _) => {
+        // Never highlight collections - the caller should pass the specific nested geometry
+        return;
+      }
+      Geometry::Point(coord, metadata) => {
+        self.draw_highlighted_point(coord, metadata, painter, transform);
+        return;
+      }
+      Geometry::LineString(coords, metadata) => {
+        self.draw_highlighted_linestring(coords, metadata, painter, transform);
+        return;
+      }
+      Geometry::Polygon(coords, metadata) => {
+        self.draw_highlighted_polygon(coords, metadata, painter, transform);
+        return;
+      }
+    }
+  }
+
+  /// Draw a highlighted point
+  fn draw_highlighted_point(
+    &self,
+    coord: &PixelCoordinate,
+    metadata: &crate::map::geometry_collection::Metadata,
+    painter: &egui::Painter,
+    transform: &Transform,
+  ) {
+    use crate::map::geometry_collection::DEFAULT_STYLE;
+    
+    let center = transform.apply(*coord).into();
+    let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+    let [r, g, b, _] = base_color.to_array();
+    
+    let highlight_fill = Color32::from_rgba_premultiplied(
+      ((r as f32 * 0.7) as u8).max(120),
+      ((g as f32 * 0.7) as u8).max(120),
+      ((b as f32 * 0.7) as u8).max(120),
+      160  // More opaque
+    );
+    let highlight_stroke = Color32::from_rgba_premultiplied(
+      ((r as f32 * 0.6) as u8).max(100),
+      ((g as f32 * 0.6) as u8).max(100),
+      ((b as f32 * 0.6) as u8).max(100),
+      200  // Much more opaque
+    );
+    
+    let circle_shape = Shape::Circle(CircleShape {
+      center,
+      radius: 10.0,
+      fill: highlight_fill,
+      stroke: Stroke::new(2.0, highlight_stroke),
+    });
+    painter.add(circle_shape);
+  }
+
+  /// Draw a highlighted linestring
+  fn draw_highlighted_linestring(
+    &self,
+    coords: &[PixelCoordinate],
+    metadata: &crate::map::geometry_collection::Metadata,
+    painter: &egui::Painter,
+    transform: &Transform,
+  ) {
+    use crate::map::geometry_collection::DEFAULT_STYLE;
+    
+    let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+    let [r, g, b, _] = base_color.to_array();
+    
+    // Use bright yellow highlight for maximum visibility during testing
+    let highlight_color = Color32::from_rgba_premultiplied(255, 255, 0, 255);
+    
+    let shape = Shape::Path(PathShape {
+      points: coords
+        .iter()
+        .map(|c| transform.apply(*c).into())
+        .collect(),
+      closed: false,
+      fill: Color32::TRANSPARENT,
+      stroke: PathStroke::new(20.0, highlight_color),  // Extra thick for testing
+    });
+    painter.add(shape);
+  }
+
+  /// Draw a highlighted polygon
+  fn draw_highlighted_polygon(
+    &self,
+    coords: &[PixelCoordinate],
+    metadata: &crate::map::geometry_collection::Metadata,
+    painter: &egui::Painter,
+    transform: &Transform,
+  ) {
+    use crate::map::geometry_collection::DEFAULT_STYLE;
+    
+    let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+    let base_color = style.color();
+    let base_fill = style.fill_color();
+    
+    let [stroke_r, stroke_g, stroke_b, _] = base_color.to_array();
+    let highlight_stroke = Color32::from_rgba_premultiplied(
+      (stroke_r as f32 * 0.3) as u8,
+      (stroke_g as f32 * 0.3) as u8,
+      (stroke_b as f32 * 0.3) as u8,
+      80
+    );
+    
+    let highlight_fill = if base_fill == Color32::TRANSPARENT {
+      Color32::from_rgba_premultiplied(
+        (stroke_r as f32 * 0.4) as u8,
+        (stroke_g as f32 * 0.4) as u8,
+        (stroke_b as f32 * 0.4) as u8,
+        40
+      )
+    } else {
+      let [fill_r, fill_g, fill_b, _] = base_fill.to_array();
+      Color32::from_rgba_premultiplied(
+        (fill_r as f32 * 0.4) as u8,
+        (fill_g as f32 * 0.4) as u8,
+        (fill_b as f32 * 0.4) as u8,
+        80
+      )
+    };
+    
+    let shape = Shape::Path(PathShape {
+      points: coords
+        .iter()
+        .map(|c| transform.apply(*c).into())
+        .collect(),
+      closed: true,
+      fill: highlight_fill,
+      stroke: PathStroke::new(8.0, highlight_stroke),
+    });
+    painter.add(shape);
+  }
+
   fn show_delete_collection_button(
     &mut self,
     ui: &mut egui::Ui,
@@ -1400,14 +1634,36 @@ impl Layer for ShapeLayer {
               }
             }
 
-            self.draw_geometry_with_visibility(
-              ui.painter(),
-              transform,
-              layer_id,
-              shape_idx,
-              &[],
-              shape,
-            );
+            // Check if this top-level geometry is highlighted by ID
+            let geometry_key = (layer_id.to_string(), shape_idx, Vec::new());
+            let is_highlighted = if let Some(geometry_id) = self.geometry_id_map.get(&geometry_key) {
+              self.highlighted_geometry_id == Some(*geometry_id)
+            } else {
+              false
+            };
+            
+            if is_highlighted {
+              // Draw highlight background first (top-level geometry - only highlight individual geometries, not collections)
+              self.draw_highlighted_geometry(shape, ui.painter(), transform, false);
+              // Then draw the normal geometry on top
+              self.draw_geometry_with_visibility(
+                ui.painter(),
+                transform,
+                layer_id,
+                shape_idx,
+                &[],
+                shape,
+              );
+            } else {
+              self.draw_geometry_with_visibility(
+                ui.painter(),
+                transform,
+                layer_id,
+                shape_idx,
+                &[],
+                shape,
+              );
+            }
           }
         }
       }
@@ -1455,7 +1711,7 @@ impl Layer for ShapeLayer {
   }
 
   fn ui(&mut self, ui: &mut Ui) {
-    let has_highlighted_geometry = self.highlighted_geometry.is_some();
+    let has_highlighted_geometry = self.highlighted_geometry_id.is_some();
     let layer_id = egui::Id::new("shape_layer_header");
 
     let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned())
@@ -1474,7 +1730,7 @@ impl Layer for ShapeLayer {
 
   fn ui_content(&mut self, ui: &mut Ui) {
     profile_scope!("ShapeLayer::ui_content");
-    let has_highlighted_geometry = self.highlighted_geometry.is_some();
+    let has_highlighted_geometry = self.highlighted_geometry_id.is_some();
     let shapes_header_id = egui::Id::new("shapes_header");
 
     let mut shapes_header = egui::CollapsingHeader::new("Shapes")
@@ -1493,43 +1749,54 @@ impl Layer for ShapeLayer {
   }
 
   fn has_highlighted_geometry(&self) -> bool {
-    self.highlighted_geometry.is_some()
+    self.highlighted_geometry_id.is_some()
   }
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
-    let click_coord = transform.invert().apply(pos.into());
-    let tolerance_map_coords = f64::from(20.0 / transform.zoom);
+    // Find the closest geometry to the click position
     let mut closest_distance = f64::INFINITY;
-    let mut found_geometry: Option<(String, usize)> = None;
+    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
     for (layer_id, shapes) in &self.shape_map {
-      if !self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        continue;
+      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
+        continue; // Skip hidden layers
       }
-
+      
       for (shape_idx, shape) in shapes.iter().enumerate() {
         let geometry_key = (layer_id.clone(), shape_idx);
-        if !self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-          continue;
+        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
+          continue; // Skip hidden geometries
         }
-
-        if let Some(distance) = distance::distance_to_geometry(shape, click_coord) {
-          if distance < closest_distance && distance < tolerance_map_coords {
-            closest_distance = distance;
-            found_geometry = Some((layer_id.clone(), shape_idx));
+        
+        // Apply temporal filtering
+        if let Some(current_time) = self.temporal_current_time {
+          if !self.is_geometry_visible_at_time(shape, current_time) {
+            continue; // Skip temporally filtered geometries
           }
         }
+        
+        // Check distance to this geometry (recursively for collections)
+        self.find_closest_in_geometry(
+          layer_id,
+          shape_idx,
+          &Vec::new(),
+          shape,
+          pos,
+          transform,
+          &mut closest_distance,
+          &mut closest_geometry,
+        );
       }
     }
-
-    if let Some((layer_id, shape_idx)) = found_geometry {
-      let was_different = self.highlighted_geometry != Some((layer_id.clone(), shape_idx));
-      self.highlighted_geometry = Some((layer_id, shape_idx));
-      self.just_highlighted = was_different;
+    
+    // If we found a closest geometry, highlight it
+    if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
+      self.highlight_geometry(layer_id, shape_idx, nested_path);
       return Some(closest_distance);
     }
-
-    self.highlighted_geometry = None;
+    
+    // Clear any existing highlighting
+    self.highlighted_geometry_id = None;
     self.just_highlighted = false;
     None
   }
@@ -1546,6 +1813,53 @@ impl Layer for ShapeLayer {
     self.temporal_current_time = current_time;
     self.temporal_time_window = time_window;
   }
+
+  fn handle_double_click(&mut self, pos: Pos2, transform: &Transform) -> bool {
+    // Find the closest geometry to the click position
+    let mut closest_distance = f64::INFINITY;
+    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
+
+    for (layer_id, shapes) in &self.shape_map {
+      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
+        continue; // Skip hidden layers
+      }
+      
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        let geometry_key = (layer_id.clone(), shape_idx);
+        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
+          continue; // Skip hidden geometries
+        }
+        
+        // Apply temporal filtering
+        if let Some(current_time) = self.temporal_current_time {
+          if !self.is_geometry_visible_at_time(shape, current_time) {
+            continue; // Skip temporally filtered geometries
+          }
+        }
+        
+        // Check distance to this geometry (recursively for collections)
+        self.find_closest_in_geometry(
+          layer_id,
+          shape_idx,
+          &Vec::new(),
+          shape,
+          pos,
+          transform,
+          &mut closest_distance,
+          &mut closest_geometry,
+        );
+      }
+    }
+    
+    // If we found a closest geometry, highlight it
+    if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
+      self.highlight_geometry(layer_id, shape_idx, nested_path);
+      return true; // Indicate that we handled the double-click
+    }
+    
+    false // No geometry found to highlight
+  }
+
 }
 
 impl ShapeLayer {
@@ -1650,6 +1964,204 @@ impl ShapeLayer {
       meta.is_visible_in_time_window(current_time, time_window)
     } else {
       meta.is_visible_at_time(current_time)
+    }
+  }
+
+  /// Recursively find the closest individual geometry to a point
+  fn find_closest_in_geometry(
+    &self,
+    layer_id: &str,
+    shape_idx: usize,
+    nested_path: &[usize],
+    geometry: &Geometry<PixelCoordinate>,
+    click_pos: Pos2,
+    transform: &Transform,
+    closest_distance: &mut f64,
+    closest_geometry: &mut Option<(String, usize, Vec<usize>)>,
+  ) {
+    // CRITICAL FIX: Transform screen coordinates to world coordinates!
+    let click_pixel = transform.invert().apply(click_pos.into());
+
+    match geometry {
+      Geometry::GeometryCollection(geometries, _) => {
+        // Recursively check each nested geometry
+        for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
+          let mut new_path = nested_path.to_vec();
+          new_path.push(nested_idx);
+          
+          // Check if this nested geometry is visible
+          let nested_key = (layer_id.to_string(), shape_idx, new_path.clone());
+          if *self.nested_geometry_visibility.get(&nested_key).unwrap_or(&true) {
+            // Apply temporal filtering to nested geometry
+            if let Some(current_time) = self.temporal_current_time {
+              if !self.is_individual_geometry_visible_at_time(nested_geometry, current_time) {
+                continue; // Skip temporally filtered nested geometries
+              }
+            }
+            
+            self.find_closest_in_geometry(
+              layer_id,
+              shape_idx,
+              &new_path,
+              nested_geometry,
+              click_pos,
+              transform,
+              closest_distance,
+              closest_geometry,
+            );
+          }
+        }
+      }
+      _ => {
+        // For individual geometries (Point, LineString, Polygon), calculate distance
+        if let Some(distance) = crate::map::distance::distance_to_geometry(geometry, click_pixel) {
+          if distance < *closest_distance {
+            *closest_distance = distance;
+            *closest_geometry = Some((layer_id.to_string(), shape_idx, nested_path.to_vec()));
+          }
+        }
+      }
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::map::{
+    coordinates::{PixelCoordinate, Transform},
+    geometry_collection::{Geometry, Metadata},
+  };
+  use egui::Pos2;
+  use std::sync::mpsc;
+
+  #[test]
+  fn test_find_closest_nested_geometry() {
+    let mut shape_layer = ShapeLayer::new_with_test_receiver();
+    
+    // Create test geometries - a collection with nested individual geometries
+    let point1 = Geometry::Point(
+      PixelCoordinate { x: 100.0, y: 100.0 },
+      Metadata::default()
+    );
+    let point2 = Geometry::Point(
+      PixelCoordinate { x: 200.0, y: 200.0 },
+      Metadata::default()
+    );
+    let line1 = Geometry::LineString(
+      vec![
+        PixelCoordinate { x: 150.0, y: 150.0 },
+        PixelCoordinate { x: 160.0, y: 160.0 }
+      ],
+      Metadata::default()
+    );
+    
+    let nested_collection = Geometry::GeometryCollection(
+      vec![point1, point2, line1],
+      Metadata::default()
+    );
+    
+    // Create an identity transform (no scaling/translation)
+    let transform = Transform::default();
+    
+    // Test case 1: Click closest to point1 (100, 100)
+    let click_pos = Pos2::new(105.0, 105.0); // Very close to point1
+    let mut closest_distance = f64::INFINITY;
+    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
+    
+    shape_layer.find_closest_in_geometry(
+      "test_layer",
+      0,
+      &Vec::new(),
+      &nested_collection,
+      click_pos,
+      &transform,
+      &mut closest_distance,
+      &mut closest_geometry,
+    );
+    
+    // Should find the first nested geometry (point1) at path [0]
+    assert!(closest_geometry.is_some());
+    let (layer_id, shape_idx, nested_path) = closest_geometry.unwrap();
+    assert_eq!(layer_id, "test_layer");
+    assert_eq!(shape_idx, 0);
+    assert_eq!(nested_path, vec![0]); // First nested geometry
+    assert!(closest_distance < 10.0); // Should be very close
+    
+    // Test case 2: Click closest to point2 (200, 200)
+    let click_pos = Pos2::new(195.0, 195.0); // Very close to point2
+    let mut closest_distance = f64::INFINITY;
+    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
+    
+    shape_layer.find_closest_in_geometry(
+      "test_layer",
+      0,
+      &Vec::new(),
+      &nested_collection,
+      click_pos,
+      &transform,
+      &mut closest_distance,
+      &mut closest_geometry,
+    );
+    
+    // Should find the second nested geometry (point2) at path [1]
+    assert!(closest_geometry.is_some());
+    let (layer_id, shape_idx, nested_path) = closest_geometry.unwrap();
+    assert_eq!(layer_id, "test_layer");
+    assert_eq!(shape_idx, 0);
+    assert_eq!(nested_path, vec![1]); // Second nested geometry
+    assert!(closest_distance < 10.0); // Should be very close
+    
+    // Test case 3: Click closest to line1 (around 155, 155)
+    let click_pos = Pos2::new(155.0, 155.0); // On the line
+    let mut closest_distance = f64::INFINITY;
+    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
+    
+    shape_layer.find_closest_in_geometry(
+      "test_layer",
+      0,
+      &Vec::new(),
+      &nested_collection,
+      click_pos,
+      &transform,
+      &mut closest_distance,
+      &mut closest_geometry,
+    );
+    
+    // Should find the third nested geometry (line1) at path [2]
+    assert!(closest_geometry.is_some());
+    let (layer_id, shape_idx, nested_path) = closest_geometry.unwrap();
+    assert_eq!(layer_id, "test_layer");
+    assert_eq!(shape_idx, 0);
+    assert_eq!(nested_path, vec![2]); // Third nested geometry (line)
+    assert!(closest_distance < 10.0); // Should be close to the line
+  }
+
+  impl ShapeLayer {
+    // Helper method for testing
+    fn new_with_test_receiver() -> Self {
+      let (send, recv) = mpsc::channel();
+      Self {
+        shape_map: HashMap::new(),
+        layer_visibility: HashMap::new(),
+        geometry_visibility: HashMap::new(),
+        collection_expansion: HashMap::new(),
+        nested_geometry_visibility: HashMap::new(),
+        collection_pagination: HashMap::new(),
+        layer_pagination: HashMap::new(),
+        recv: Arc::new(recv),
+        send,
+        layer_properties: crate::map::mapvas_egui::layer::LayerProperties {
+          visible: true,
+        },
+        highlighted_geometry_id: None,
+        just_highlighted: false,
+        config: crate::config::Config::new(),
+        next_geometry_id: 1,
+        geometry_id_map: HashMap::new(),
+        temporal_current_time: None,
+        temporal_time_window: None,
+      }
     }
   }
 }
