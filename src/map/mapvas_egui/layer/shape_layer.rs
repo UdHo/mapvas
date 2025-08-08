@@ -41,6 +41,8 @@ pub struct ShapeLayer {
   // Temporal filtering state
   temporal_current_time: Option<DateTime<Utc>>,
   temporal_time_window: Option<Duration>,
+  // Pending popup to display
+  pending_detail_popup: Option<(&'static str, String)>, // (popup_id, content)
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -135,6 +137,7 @@ impl ShapeLayer {
       config,
       temporal_current_time: None,
       temporal_time_window: None,
+      pending_detail_popup: None,
     }
   }
 
@@ -641,6 +644,7 @@ impl ShapeLayer {
         }
       }
     }
+
 
     let mut color_picker_requests = Vec::new();
     for (layer_id, shapes) in &self.shape_map {
@@ -1590,6 +1594,42 @@ impl Layer for ShapeLayer {
       shapes_header = shapes_header.open(Some(true));
     }
 
+    // Handle pending detail popup from double-click FIRST (before showing shape layers)
+    if let Some((popup_id, detail_info)) = &self.pending_detail_popup {
+      let egui_popup_id = egui::Id::new(popup_id);
+      ui.memory_mut(|mem| mem.data.insert_temp(egui_popup_id, detail_info.clone()));
+      self.pending_detail_popup = None; // Clear the pending popup
+    }
+
+    // Handle geometry detail popup from double-click - display logic
+    let popup_id = egui::Id::new("geometry_detail_popup");
+    if let Some(detail_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
+      let mut is_open = true;
+      egui::Window::new("Geometry Details")
+        .id(popup_id)
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(true)
+        .movable(true)
+        .default_width(600.0)
+        .min_width(400.0)
+        .max_width(900.0)
+        .max_height(600.0)
+        .show(ui.ctx(), |ui| {
+          egui::ScrollArea::vertical()
+            .max_height(500.0)
+            .show(ui, |ui| {
+              ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                ui.add(egui::Label::new(&detail_text).wrap());
+              });
+            });
+        });
+
+      if !is_open {
+        ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
+      }
+    }
+
     shapes_header.show(ui, |ui| {
       self.show_shape_layers(ui);
     });
@@ -1639,9 +1679,12 @@ impl Layer for ShapeLayer {
     }
 
     // If we found a closest geometry, show popup (hover highlighting handled separately)
-    if let Some((_layer_id, _shape_idx, _nested_path)) = closest_geometry {
-      // TODO: Show detail popup here
-      println!("TODO: Show detail popup for geometry from map canvas");
+    if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
+      if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
+        // Use a single, simple popup ID for all geometry detail popups
+        let popup_id = "geometry_detail_popup";
+        self.pending_detail_popup = Some((popup_id, detail_info));
+      }
       return Some(closest_distance);
     }
 
@@ -1661,51 +1704,9 @@ impl Layer for ShapeLayer {
     self.temporal_time_window = time_window;
   }
 
-  fn handle_double_click(&mut self, pos: Pos2, transform: &Transform) -> bool {
-    // Find the closest geometry to the click position
-    let mut closest_distance = f64::INFINITY;
-    let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
-
-    for (layer_id, shapes) in &self.shape_map {
-      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        continue; // Skip hidden layers
-      }
-
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        let geometry_key = (layer_id.clone(), shape_idx);
-        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-          continue; // Skip hidden geometries
-        }
-
-        // Apply temporal filtering
-        if let Some(current_time) = self.temporal_current_time {
-          if !self.is_geometry_visible_at_time(shape, current_time) {
-            continue; // Skip temporally filtered geometries
-          }
-        }
-
-        // Check distance to this geometry (recursively for collections)
-        self.find_closest_in_geometry(
-          layer_id,
-          shape_idx,
-          &Vec::new(),
-          shape,
-          pos,
-          transform,
-          &mut closest_distance,
-          &mut closest_geometry,
-        );
-      }
-    }
-
-    // If we found a closest geometry, show popup (TODO: implement popup)
-    if let Some((_layer_id, _shape_idx, _nested_path)) = closest_geometry {
-      // TODO: Show detail popup here
-      println!("TODO: Show detail popup for geometry");
-      return true; // Indicate that we handled the double-click
-    }
-
-    false // No geometry found for popup
+  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
+    // This method is not used - double-click handling happens in closest_geometry_with_selection
+    false
   }
 }
 
@@ -1812,6 +1813,185 @@ impl ShapeLayer {
     } else {
       meta.is_visible_at_time(current_time)
     }
+  }
+
+  /// Generate detailed information about a geometry for popup display
+  fn generate_geometry_detail_info(
+    &self,
+    layer_id: &str,
+    shape_idx: usize,
+    nested_path: &[usize],
+  ) -> Option<String> {
+    
+    let shapes = self.shape_map.get(layer_id);
+    if shapes.is_none() {
+      return None;
+    }
+    
+    let current_shape = shapes.unwrap().get(shape_idx);
+    if current_shape.is_none() {
+      return None;
+    }
+    
+    let mut current_geometry = current_shape.unwrap();
+    
+    // Navigate to the specific nested geometry if there's a path
+    for &idx in nested_path.iter() {
+      if let Geometry::GeometryCollection(geometries, _) = current_geometry {
+        current_geometry = geometries.get(idx)?;
+      } else {
+        return None; // Invalid path
+      }
+    }
+
+    // Generate detailed information based on geometry type
+    let detail_info = match current_geometry {
+      Geometry::Point(coord, metadata) => {
+        let wgs84 = coord.as_wgs84();
+        let mut info = format!("📍 Point\nCoordinates: {:.6}, {:.6}", wgs84.lat, wgs84.lon);
+        
+        if let Some(label) = &metadata.label {
+          info.push_str(&format!("\nLabel: {}", label.full()));
+        }
+        
+        if let Some(time_data) = &metadata.time_data {
+          if let Some(timestamp) = time_data.timestamp {
+            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+          }
+        }
+        
+        info.push_str(&format!("\nLayer: {}", layer_id));
+        if !nested_path.is_empty() {
+          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+        }
+        
+        info
+      },
+      
+      Geometry::LineString(coords, metadata) => {
+        let mut info = format!("📏 LineString\nPoints: {}", coords.len());
+        
+        if !coords.is_empty() {
+          let start_wgs84 = coords.first().unwrap().as_wgs84();
+          let end_wgs84 = coords.last().unwrap().as_wgs84();
+          info.push_str(&format!("\nStart: {:.6}, {:.6}", start_wgs84.lat, start_wgs84.lon));
+          info.push_str(&format!("\nEnd: {:.6}, {:.6}", end_wgs84.lat, end_wgs84.lon));
+          
+          // Calculate total length
+          let mut total_distance = 0.0;
+          for window in coords.windows(2) {
+            let p1 = window[0].as_wgs84();
+            let p2 = window[1].as_wgs84();
+            // Simple distance approximation
+            let dx = p2.lat - p1.lat;
+            let dy = p2.lon - p1.lon;
+            total_distance += (dx * dx + dy * dy).sqrt();
+          }
+          info.push_str(&format!("\nApprox Length: {:.6}°", total_distance));
+        }
+        
+        if let Some(label) = &metadata.label {
+          info.push_str(&format!("\nLabel: {}", label.full()));
+        }
+        
+        if let Some(time_data) = &metadata.time_data {
+          if let Some(timestamp) = time_data.timestamp {
+            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+          }
+        }
+        
+        info.push_str(&format!("\nLayer: {}", layer_id));
+        if !nested_path.is_empty() {
+          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+        }
+        
+        info
+      },
+      
+      Geometry::Polygon(coords, metadata) => {
+        let mut info = format!("⬟ Polygon\nVertices: {}", coords.len());
+        
+        if coords.len() >= 3 {
+          // Calculate bounding box
+          let wgs84_coords: Vec<_> = coords.iter().map(|c| c.as_wgs84()).collect();
+          let min_lat = wgs84_coords.iter().map(|c| c.lat as f64).fold(f64::INFINITY, f64::min);
+          let max_lat = wgs84_coords.iter().map(|c| c.lat as f64).fold(f64::NEG_INFINITY, f64::max);
+          let min_lon = wgs84_coords.iter().map(|c| c.lon as f64).fold(f64::INFINITY, f64::min);
+          let max_lon = wgs84_coords.iter().map(|c| c.lon as f64).fold(f64::NEG_INFINITY, f64::max);
+          
+          info.push_str(&format!("\nBounds: {:.6}, {:.6} to {:.6}, {:.6}", 
+                                min_lat, min_lon, max_lat, max_lon));
+          info.push_str(&format!("\nArea: ~{:.8}° sq", (max_lat - min_lat) * (max_lon - min_lon)));
+        }
+        
+        if let Some(label) = &metadata.label {
+          info.push_str(&format!("\nLabel: {}", label.full()));
+        }
+        
+        if let Some(time_data) = &metadata.time_data {
+          if let Some(timestamp) = time_data.timestamp {
+            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+          }
+        }
+        
+        info.push_str(&format!("\nLayer: {}", layer_id));
+        if !nested_path.is_empty() {
+          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+        }
+        
+        info
+      },
+      
+      Geometry::GeometryCollection(geometries, metadata) => {
+        let mut info = format!("📁 Geometry Collection\nItems: {}", geometries.len());
+        
+        // Count types
+        let mut point_count = 0;
+        let mut line_count = 0;
+        let mut polygon_count = 0;
+        let mut collection_count = 0;
+        
+        fn count_geometries(geoms: &[Geometry<PixelCoordinate>], pc: &mut usize, lc: &mut usize, polc: &mut usize, cc: &mut usize) {
+          for geom in geoms {
+            match geom {
+              Geometry::Point(_, _) => *pc += 1,
+              Geometry::LineString(_, _) => *lc += 1,
+              Geometry::Polygon(_, _) => *polc += 1,
+              Geometry::GeometryCollection(sub_geoms, _) => {
+                *cc += 1;
+                count_geometries(sub_geoms, pc, lc, polc, cc);
+              }
+            }
+          }
+        }
+        
+        count_geometries(geometries, &mut point_count, &mut line_count, &mut polygon_count, &mut collection_count);
+        
+        if point_count > 0 { info.push_str(&format!("\nPoints: {}", point_count)); }
+        if line_count > 0 { info.push_str(&format!("\nLineStrings: {}", line_count)); }
+        if polygon_count > 0 { info.push_str(&format!("\nPolygons: {}", polygon_count)); }
+        if collection_count > 0 { info.push_str(&format!("\nSub-collections: {}", collection_count)); }
+        
+        if let Some(label) = &metadata.label {
+          info.push_str(&format!("\nLabel: {}", label.full()));
+        }
+        
+        if let Some(time_data) = &metadata.time_data {
+          if let Some(timestamp) = time_data.timestamp {
+            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+          }
+        }
+        
+        info.push_str(&format!("\nLayer: {}", layer_id));
+        if !nested_path.is_empty() {
+          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+        }
+        
+        info
+      }
+    };
+    
+    Some(detail_info)
   }
 
   /// Recursively find the closest individual geometry to a point
@@ -1975,6 +2155,7 @@ mod tests {
         config: crate::config::Config::new(),
         temporal_current_time: None,
         temporal_time_window: None,
+        pending_detail_popup: None,
       }
     }
   }
