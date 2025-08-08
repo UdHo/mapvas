@@ -1205,11 +1205,10 @@ impl ShapeLayer {
       };
       
       if is_highlighted {
-        // Draw highlight background first (nested geometry - don't highlight collections)
+        // Draw only the highlight (solid/filled) - don't draw transparent version on top
         self.draw_highlighted_geometry(geometry, painter, transform, false);
-        // Then draw the normal geometry on top
-        geometry.draw_with_style(painter, transform, self.config.heading_style);
       } else {
+        // Draw normal transparent geometry
         geometry.draw_with_style(painter, transform, self.config.heading_style);
       }
     }
@@ -1445,20 +1444,11 @@ impl ShapeLayer {
     
     let center = transform.apply(*coord).into();
     let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
-    let [r, g, b, _] = base_color.to_array();
     
-    let highlight_fill = Color32::from_rgba_premultiplied(
-      ((r as f32 * 0.7) as u8).max(120),
-      ((g as f32 * 0.7) as u8).max(120),
-      ((b as f32 * 0.7) as u8).max(120),
-      160  // More opaque
-    );
-    let highlight_stroke = Color32::from_rgba_premultiplied(
-      ((r as f32 * 0.6) as u8).max(100),
-      ((g as f32 * 0.6) as u8).max(100),
-      ((b as f32 * 0.6) as u8).max(100),
-      200  // Much more opaque
-    );
+    
+    // Draw highlighted point with same transparency as lines
+    let highlight_fill = base_color; // Filled circle
+    let highlight_stroke = base_color;
     
     let circle_shape = Shape::Circle(CircleShape {
       center,
@@ -1480,11 +1470,8 @@ impl ShapeLayer {
     use crate::map::geometry_collection::DEFAULT_STYLE;
     
     let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
-    let [r, g, b, _] = base_color.to_array();
     
-    // Use bright yellow highlight for maximum visibility during testing
-    let highlight_color = Color32::from_rgba_premultiplied(255, 255, 0, 255);
-    
+    // Draw highlighted linestring as solid (no transparency)
     let shape = Shape::Path(PathShape {
       points: coords
         .iter()
@@ -1492,7 +1479,7 @@ impl ShapeLayer {
         .collect(),
       closed: false,
       fill: Color32::TRANSPARENT,
-      stroke: PathStroke::new(20.0, highlight_color),  // Extra thick for testing
+      stroke: PathStroke::new(6.0, base_color),  // Thicker and solid
     });
     painter.add(shape);
   }
@@ -1509,32 +1496,11 @@ impl ShapeLayer {
     
     let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
     let base_color = style.color();
-    let base_fill = style.fill_color();
     
-    let [stroke_r, stroke_g, stroke_b, _] = base_color.to_array();
-    let highlight_stroke = Color32::from_rgba_premultiplied(
-      (stroke_r as f32 * 0.3) as u8,
-      (stroke_g as f32 * 0.3) as u8,
-      (stroke_b as f32 * 0.3) as u8,
-      80
-    );
     
-    let highlight_fill = if base_fill == Color32::TRANSPARENT {
-      Color32::from_rgba_premultiplied(
-        (stroke_r as f32 * 0.4) as u8,
-        (stroke_g as f32 * 0.4) as u8,
-        (stroke_b as f32 * 0.4) as u8,
-        40
-      )
-    } else {
-      let [fill_r, fill_g, fill_b, _] = base_fill.to_array();
-      Color32::from_rgba_premultiplied(
-        (fill_r as f32 * 0.4) as u8,
-        (fill_g as f32 * 0.4) as u8,
-        (fill_b as f32 * 0.4) as u8,
-        80
-      )
-    };
+    // Draw highlighted polygon with solid colors - fill matches stroke color
+    let highlight_stroke = base_color; // Solid stroke in original color
+    let highlight_fill = base_color; // Fill always matches stroke color
     
     let shape = Shape::Path(PathShape {
       points: coords
@@ -1543,7 +1509,7 @@ impl ShapeLayer {
         .collect(),
       closed: true,
       fill: highlight_fill,
-      stroke: PathStroke::new(8.0, highlight_stroke),
+      stroke: PathStroke::new(6.0, highlight_stroke),
     });
     painter.add(shape);
   }
@@ -1643,18 +1609,10 @@ impl Layer for ShapeLayer {
             };
             
             if is_highlighted {
-              // Draw highlight background first (top-level geometry - only highlight individual geometries, not collections)
+              // Draw only the highlight (solid/filled) - don't draw transparent version on top
               self.draw_highlighted_geometry(shape, ui.painter(), transform, false);
-              // Then draw the normal geometry on top
-              self.draw_geometry_with_visibility(
-                ui.painter(),
-                transform,
-                layer_id,
-                shape_idx,
-                &[],
-                shape,
-              );
             } else {
+              // Draw normal transparent geometry
               self.draw_geometry_with_visibility(
                 ui.painter(),
                 transform,

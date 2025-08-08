@@ -77,21 +77,25 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
           unreachable!("GeometryCollections should be flattened")
         }
         Geometry::Point(coord, metadata) => {
-          let color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+          let original_color = style.color();
           let center = transform.apply(coord.as_pixel_coordinate()).into();
 
-          // Draw the point as a circle
+          // Points should typically be filled with their stroke color at transparency
+          let transparent_fill = original_color.gamma_multiply(0.7);
+
+          // Draw the point as a transparent circle with moderate outline
           let circle_shape = Shape::Circle(CircleShape {
             center,
             radius: DEFAULT_POINT_RADIUS,
-            fill: color,
-            stroke: Stroke::new(0.0, color),
+            fill: transparent_fill, // Preserve original fill at transparency
+            stroke: Stroke::new(DEFAULT_STROKE_WIDTH, original_color.gamma_multiply(0.7)), // More visible outline
           });
           painter.add(circle_shape);
 
-          // Draw heading arrow if present
+          // Draw heading arrow if present (also transparent)
           if let Some(heading) = metadata.heading {
-            let heading_shape = create_heading_arrow(center, heading, color, heading_style);
+            let heading_shape = create_heading_arrow(center, heading, original_color.gamma_multiply(0.7), heading_style);
             painter.add(heading_shape);
           }
 
@@ -100,26 +104,33 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
         }
         Geometry::LineString(coord, metadata) => {
           let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+          // Make linestrings transparent with moderate outline
           Shape::Path(PathShape {
             points: coord
               .iter()
               .map(|c| transform.apply(c.as_pixel_coordinate()).into())
               .collect(),
             closed: false,
-            fill: style.fill_color(),
-            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color()),
+            fill: egui::Color32::TRANSPARENT,
+            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color().gamma_multiply(0.7)), // More visible line
           })
         }
         Geometry::Polygon(vec, metadata) => {
           let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+          // Make polygons transparent with moderate outline and preserve fill
+          let transparent_fill = if style.fill_color() == egui::Color32::TRANSPARENT {
+            egui::Color32::TRANSPARENT // Keep transparent if originally transparent
+          } else {
+            style.fill_color().gamma_multiply(0.7) // Make original fill transparent
+          };
           Shape::Path(PathShape {
             points: vec
               .iter()
               .map(|c| transform.apply(c.as_pixel_coordinate()).into())
               .collect(),
             closed: true,
-            fill: style.fill_color(),
-            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color()),
+            fill: transparent_fill, // Preserve original fill at transparency
+            stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color().gamma_multiply(0.7)), // More visible outline
           })
         }
       };
