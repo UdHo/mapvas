@@ -5,6 +5,10 @@ use egui::{Pos2, Rect, Ui};
 mod commands;
 /// Drawing abstactions.
 mod drawable;
+/// Geometry selection and closest point calculations.
+mod geometry_selection;
+/// Geometry highlighting logic.
+mod geometry_highlighting;
 /// Handles screenshot functionality.
 mod screenshot;
 /// Draws and holds the shapes on the map.
