@@ -20,6 +20,7 @@ pub struct ScreenshotLayer {
 }
 
 impl ScreenshotLayer {
+  #[must_use]
   pub fn new(ctx: Context) -> Self {
     let (sender, receiver) = std::sync::mpsc::channel();
     Self {
@@ -35,6 +36,7 @@ impl ScreenshotLayer {
     }
   }
 
+  #[must_use]
   pub fn get_sender(&self) -> std::sync::mpsc::Sender<MapEvent> {
     self.sender.clone()
   }
@@ -172,4 +174,12 @@ impl Layer for ScreenshotLayer {
   }
 
   fn ui_content(&mut self, _ui: &mut egui::Ui) {}
+
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    self
+  }
 }

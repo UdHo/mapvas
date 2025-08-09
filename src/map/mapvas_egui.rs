@@ -4,8 +4,10 @@ use std::{
 };
 
 use crate::{
+  config::Config,
   map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
-  parser::{FileParser, GrepParser, JsonParser, Parser},
+  parser::{GrepParser, JsonParser, Parser},
+  profile_scope,
   remote::Remote,
 };
 use arboard::Clipboard;
@@ -14,7 +16,7 @@ use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
 use layer::Layer;
-use log::{debug, info};
+use log::debug;
 
 use super::{
   coordinates::{BoundingBox, PixelPosition},
@@ -24,7 +26,7 @@ use super::{
 
 mod helpers;
 
-mod layer;
+pub mod layer;
 pub use layer::ParameterUpdate;
 
 #[derive(Debug, Clone)]
@@ -46,6 +48,7 @@ pub struct Map {
   right_click: Option<PixelCoordinate>,
   keys: Vec<String>,
   geometry_info: Option<GeometryInfo>,
+  config: Config,
 }
 
 impl Map {
@@ -54,7 +57,7 @@ impl Map {
     let cfg = crate::config::Config::new();
 
     let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
-    let shape_layer = layer::ShapeLayer::new();
+    let shape_layer = layer::ShapeLayer::new(cfg.clone());
     let shape_layer_sender = shape_layer.get_sender();
 
     let (command, command_sender) = layer::CommandLayer::new();
@@ -98,6 +101,7 @@ impl Map {
         right_click: None,
         keys,
         geometry_info: None,
+        config: cfg,
       },
       remote,
       map_data_holder,
@@ -134,17 +138,10 @@ impl Map {
       }
 
       // If a layer handled the selection, we're done
-      if let Some(layer_idx) = closest_layer_idx {
-        let layer_name = layers[layer_idx].name();
-        log::debug!(
-          "Map: Layer '{layer_name}' handled the selection at distance {closest_distance:.2}"
-        );
+      if let Some(_layer_idx) = closest_layer_idx {
         return;
       }
     }
-
-    log::debug!("Map: No layer handled the double-click");
-    // If no layer handled the event, clear geometry info
     self.geometry_info = None;
   }
 
@@ -180,7 +177,13 @@ impl Map {
           if let Some(label) = &info.metadata.label {
             ui.horizontal(|ui| {
               ui.label("Label:");
-              ui.strong(label);
+              let short_label = label.short();
+              let truncated_label = if short_label.len() > 30 {
+                format!("{}...", &short_label[..27])
+              } else {
+                short_label
+              };
+              ui.strong(truncated_label);
             });
           }
 
@@ -380,6 +383,7 @@ impl Map {
   }
 
   fn handle_map_events(&mut self, rect: Rect) {
+    profile_scope!("Map::handle_map_events");
     let events = self.recv.try_iter().collect::<Vec<_>>();
 
     // Process Clear events first (they should happen before new data)
@@ -459,20 +463,15 @@ impl Map {
 
   fn handle_dropped_files(&self, ctx: &egui::Context) {
     for file in ctx.input(|i| i.raw.dropped_files.clone()) {
-      if let Some(file) = file.path {
+      if let Some(file_path) = file.path {
         let sender = self.remote.layer.clone();
         let update = self.remote.update.clone();
         tokio::spawn(async move {
-          // Buf Reader of file:
-          let file = std::fs::File::open(file).inspect_err(|e| {
-            log::error!("Failed to open file: {e:?}");
-          });
-          if let Ok(file) = file {
-            let read = Box::new(std::io::BufReader::new(file));
-            for map_event in GrepParser::new(false).parse(read) {
-              let _ = sender.send(map_event);
-              update.request_repaint();
-            }
+          // Use auto parser for dropped files
+          let mut auto_parser = crate::parser::AutoFileParser::new(file_path);
+          for map_event in auto_parser.parse() {
+            let _ = sender.send(map_event);
+            update.request_repaint();
           }
         });
       }
@@ -487,6 +486,7 @@ impl Map {
 
 impl Widget for &mut Map {
   fn ui(self, ui: &mut Ui) -> Response {
+    profile_scope!("Map::ui");
     let size = ui.available_size();
     let (rect, /*mut*/ response) = ui.allocate_exact_size(size, Sense::click_and_drag());
 
@@ -516,10 +516,6 @@ impl Widget for &mut Map {
         .collect::<Vec<_>>()
     });
     self.handle_keys(events.into_iter(), rect);
-
-    if response.clicked() {
-      info!("Clicked at: {:?}", response.hover_pos());
-    }
 
     if response.double_clicked() {
       if let Some(pos) = response.hover_pos() {
@@ -581,19 +577,18 @@ impl Widget for &mut Map {
     fit_to_screen(&mut self.transform, &rect);
 
     if ui.is_rect_visible(rect) {
+      profile_scope!("Map::draw_layers");
       if let Ok(mut layer_guard) = self.layers.try_lock().inspect_err(|e| {
         log::error!("Failed to lock layers: {e:?}");
       }) {
         for layer in layer_guard.iter_mut() {
+          profile_scope!("Layer::draw", layer.name());
           layer.draw(ui, &self.transform, rect);
         }
       }
     }
-    // Handle map events last (and request repaint if there were any) to have all the other input
-    // data handled first, so that screenshot or focus events do not miss parts.
     self.handle_map_events(rect);
 
-    // Show geometry info popup if available
     self.show_geometry_info(ui);
 
     response
@@ -611,6 +606,117 @@ impl Map {
       }
     }
     false
+  }
+
+  /// Update the config for the map and all its layers
+  pub fn update_config(&mut self, new_config: &crate::config::Config) {
+    self.config = new_config.clone();
+
+    // Update all layers that need config updates
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.update_config(new_config);
+      }
+    }
+  }
+
+  /// Set temporal filtering for all layers
+  pub fn set_temporal_filter(
+    &mut self,
+    current_time: Option<chrono::DateTime<chrono::Utc>>,
+    time_window: Option<chrono::Duration>,
+  ) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.set_temporal_filter(current_time, time_window);
+      }
+    }
+  }
+
+  /// Search geometries across all layers
+  pub fn search_geometries(&mut self, query: &str) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        // Only search in shape layer for now
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          shape_layer.search_geometries(query);
+        }
+      }
+    }
+  }
+
+  /// Get the count of search results
+  pub fn get_search_results_count(&self) -> usize {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if let Some(shape_layer) = layer
+          .as_any()
+          .downcast_ref::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          return shape_layer.get_search_results().len();
+        }
+      }
+    }
+    0
+  }
+
+  /// Show a specific layer
+  pub fn show_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          layer.set_visible(true);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Hide a specific layer
+  pub fn hide_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          layer.set_visible(false);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Toggle visibility of a specific layer
+  pub fn toggle_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          let current = layer.is_visible();
+          layer.set_visible(!current);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Zoom in
+  pub fn zoom_in(&mut self) {
+    self.transform.zoom *= 1.5;
+  }
+
+  /// Zoom out
+  pub fn zoom_out(&mut self) {
+    self.transform.zoom /= 1.5;
+  }
+
+  /// Zoom to fit all geometries
+  pub fn zoom_fit(&mut self) {
+    // TODO: Implement zoom to fit functionality
+    // This would require calculating bounding box of all geometries
   }
 }
 

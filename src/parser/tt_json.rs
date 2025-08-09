@@ -16,6 +16,8 @@ pub struct TTJsonParser {
   data: String,
   #[serde(default)]
   color: Color,
+  #[serde(skip)]
+  layer_name: String,
 }
 
 impl Default for TTJsonParser {
@@ -30,6 +32,7 @@ impl TTJsonParser {
     Self {
       data: String::new(),
       color: Color::default(),
+      layer_name: "ttjson".to_string(),
     }
   }
 
@@ -58,8 +61,10 @@ impl TTJsonParser {
             Geometry::LineString(
               points,
               Metadata {
-                label: Some(format!("Leg {i}")),
+                label: Some(format!("Leg {i}").into()),
                 style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
+                heading: None,
+                time_data: None,
               },
             )
           })
@@ -68,7 +73,7 @@ impl TTJsonParser {
       ));
     }
 
-    let mut layer = Layer::new("Routes".to_string());
+    let mut layer = Layer::new(self.layer_name.clone());
     layer.geometries = vec![Geometry::GeometryCollection(res, Metadata::default())];
     MapEvent::Layer(layer)
   }
@@ -90,6 +95,8 @@ impl TTJsonParser {
             .with_color(Into::<Color32>::into(self.color))
             .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
         ),
+        heading: None,
+        time_data: None,
       },
     )];
     if let Some(c) = center {
@@ -102,10 +109,12 @@ impl TTJsonParser {
               .with_color(Into::<Color32>::into(self.color))
               .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
           ),
+          heading: None,
+          time_data: None,
         },
       ));
     }
-    let mut layer = Layer::new("Range".to_string());
+    let mut layer = Layer::new(self.layer_name.clone());
     layer.geometries = geometries;
     MapEvent::Layer(layer)
   }
@@ -156,5 +165,9 @@ impl Parser for TTJsonParser {
         Some(self.convert_range(polygon.center, &polygon.boundary))
       }
     }
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }

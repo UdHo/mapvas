@@ -601,16 +601,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_point_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Point Label: {label}"));
+                .insert_temp(popup_id, format!("Point Label: {}", label.full()));
             });
           }
         }
@@ -643,16 +643,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_linestring_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("LineString Label: {label}"));
+                .insert_temp(popup_id, format!("LineString Label: {}", label.full()));
             });
           }
         }
@@ -727,16 +727,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_polygon_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Polygon Label: {label}"));
+                .insert_temp(popup_id, format!("Polygon Label: {}", label.full()));
             });
           }
         }
@@ -826,16 +826,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_collection_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Collection Label: {label}"));
+                .insert_temp(popup_id, format!("Collection Label: {}", label.full()));
             });
           }
         }

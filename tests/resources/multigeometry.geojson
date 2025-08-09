@@ -1,0 +1,47 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Multi Point",
+        "color": "#ff00ff"
+      },
+      "geometry": {
+        "type": "MultiPoint",
+        "coordinates": [
+          [10.0, 52.0],
+          [10.1, 52.1]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Multi LineString",
+        "stroke": "#ffff00"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [[10.2, 52.2], [10.3, 52.3]],
+          [[10.4, 52.4], [10.5, 52.5]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Multi Polygon",
+        "fill": "#00ffff"
+      },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[10.6, 52.6], [10.7, 52.6], [10.7, 52.7], [10.6, 52.7], [10.6, 52.6]]],
+          [[[10.8, 52.8], [10.9, 52.8], [10.9, 52.9], [10.8, 52.9], [10.8, 52.8]]]
+        ]
+      }
+    }
+  ]
+}

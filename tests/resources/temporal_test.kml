@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Temporal Test Data</name>
+    
+    <Placemark>
+      <name>Morning Point</name>
+      <TimeStamp>
+        <when>2024-01-01T09:00:00Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>13.4050,52.5200,0</coordinates>
+      </Point>
+    </Placemark>
+    
+    <Placemark>
+      <name>Noon Point</name>
+      <TimeStamp>
+        <when>2024-01-01T12:00:00Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>13.4100,52.5250,0</coordinates>
+      </Point>
+    </Placemark>
+    
+    <Placemark>
+      <name>Evening Point</name>
+      <TimeStamp>
+        <when>2024-01-01T18:00:00Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>13.4150,52.5300,0</coordinates>
+      </Point>
+    </Placemark>
+    
+  </Document>
+</kml>

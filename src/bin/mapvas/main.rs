@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use egui::IconData;
 use mapvas::{
-  config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp, remote::spawn_remote_runner,
+  config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp, profiling, remote::spawn_remote_runner,
 };
 
 fn load_icon() -> Option<Arc<IconData>> {
@@ -14,6 +14,9 @@ fn load_icon() -> Option<Arc<IconData>> {
 fn main() -> eframe::Result {
   // init logger.
   env_logger::init();
+
+  // Initialize profiling
+  profiling::init_profiling();
 
   // Tokio runtime.
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

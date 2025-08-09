@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Unix Epoch Timeline Test</name>
+    
+    <Placemark>
+      <name>Start Point</name>
+      <TimeStamp>
+        <when>1970-01-01T01:16:17Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>0.0,51.5,0</coordinates>
+      </Point>
+    </Placemark>
+    
+    <Placemark>
+      <name>Second Point</name>
+      <TimeStamp>
+        <when>1970-01-01T01:16:18Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>0.1,51.6,0</coordinates>
+      </Point>
+    </Placemark>
+    
+    <Placemark>
+      <name>Third Point</name>
+      <TimeStamp>
+        <when>1970-01-01T01:16:19Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>0.2,51.7,0</coordinates>
+      </Point>
+    </Placemark>
+    
+    <Placemark>
+      <name>End Point</name>
+      <TimeStamp>
+        <when>1970-01-01T01:16:22Z</when>
+      </TimeStamp>
+      <Point>
+        <coordinates>0.3,51.8,0</coordinates>
+      </Point>
+    </Placemark>
+    
+  </Document>
+</kml>

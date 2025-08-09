@@ -1,0 +1,34 @@
+{
+  "locations": [
+    {
+      "latitude": 52.0,
+      "longitude": 10.0,
+      "name": "Hex Color",
+      "stroke": "#ff0000"
+    },
+    {
+      "latitude": 52.1,
+      "longitude": 10.1,
+      "name": "Short Hex",
+      "stroke": "#f00"
+    },
+    {
+      "latitude": 52.2,
+      "longitude": 10.2,
+      "name": "RGB Color",
+      "stroke": "rgb(0, 255, 0)"
+    },
+    {
+      "latitude": 52.3,
+      "longitude": 10.3,
+      "name": "Named Color",
+      "stroke": "blue"
+    },
+    {
+      "latitude": 52.4,
+      "longitude": 10.4,
+      "name": "Hex with Alpha",
+      "stroke": "#ff000080"
+    }
+  ]
+}

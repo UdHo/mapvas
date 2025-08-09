@@ -208,8 +208,8 @@ impl TileCoordinate {
   /// Exact equality comparison using bit representation
   #[must_use]
   pub fn exact_eq(&self, other: &Self) -> bool {
-    self.x.to_bits() == other.x.to_bits() 
-      && self.y.to_bits() == other.y.to_bits() 
+    self.x.to_bits() == other.x.to_bits()
+      && self.y.to_bits() == other.y.to_bits()
       && self.zoom == other.zoom
   }
 }

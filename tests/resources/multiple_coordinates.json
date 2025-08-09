@@ -1,0 +1,39 @@
+{
+  "x": {
+    "y": [
+      {
+        "leg": {
+          "blub": 456,
+          "bla": 123,
+          "geometry": [
+            {
+              "latitude": 53.55365,
+              "longitude": 10.00512,
+              "name": "Point 1",
+              "color": "red"
+            },
+            {
+              "latitude": 53.55365,
+              "longitude": 10.00518,
+              "name": "Point 2", 
+              "stroke": "#00ff00"
+            },
+            {
+              "latitude": 53.55369,
+              "longitude": 10.00519,
+              "name": "Point 3",
+              "fill": "#0000ff"
+            },
+            {
+              "latitude": 53.55372,
+              "longitude": 10.00519,
+              "name": "Point 4",
+              "stroke": "#ffff00",
+              "fillColor": "#ff00ff"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
