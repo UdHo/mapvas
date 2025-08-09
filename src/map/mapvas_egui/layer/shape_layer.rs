@@ -49,7 +49,9 @@ pub struct ShapeLayer {
   temporal_current_time: Option<DateTime<Utc>>,
   temporal_time_window: Option<Duration>,
   // Pending popup to display
-  pending_detail_popup: Option<(&'static str, String)>, // (popup_id, content)
+  pending_detail_popup: Option<(egui::Pos2, PixelCoordinate, String, f64)>, // (click_pos, click_world_coord, content, creation_time)
+  // Current transform for coordinate-to-pixel conversion
+  current_transform: Transform,
   // Search results
   search_results: Vec<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
 }
@@ -147,6 +149,7 @@ impl ShapeLayer {
       temporal_current_time: None,
       temporal_time_window: None,
       pending_detail_popup: None,
+      current_transform: Transform::invalid(),
       search_results: Vec::new(),
     }
   }
@@ -398,7 +401,7 @@ impl ShapeLayer {
     let is_highlighted = self.geometry_highlighter.is_highlighted(&geometry_key_for_highlight.0, geometry_key_for_highlight.1, &geometry_key_for_highlight.2);
 
     let bg_color = if is_highlighted {
-      Some(egui::Color32::from_rgb(180, 60, 60))
+      Some(egui::Color32::from_rgb(100, 100, 200))
     } else {
       None
     };
@@ -1049,7 +1052,7 @@ impl ShapeLayer {
       if is_highlighted {
         let rect = horizontal_response.response.rect;
         ui.painter()
-          .rect_filled(rect, 2.0, egui::Color32::from_rgb(180, 60, 60));
+          .rect_filled(rect, 2.0, egui::Color32::from_rgb(100, 100, 200));
       }
 
       // Handle visibility toggle after the horizontal closure
@@ -1588,6 +1591,10 @@ impl Layer for ShapeLayer {
 
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     profile_scope!("ShapeLayer::draw");
+    
+    // Store current transform for popup positioning
+    self.current_transform = *transform;
+    
     self.handle_new_shapes();
 
     if !self.visible() {
@@ -1632,6 +1639,79 @@ impl Layer for ShapeLayer {
             }
           }
         }
+      }
+    }
+
+    // Handle pending detail popup from double-click as lightweight positioned window
+    // This needs to be in draw() so it shows regardless of sidebar state
+    if let Some((click_pos, click_world_coord, detail_info, creation_time)) = &self.pending_detail_popup {
+      // Extract values to avoid borrow checker issues
+      let click_pos = *click_pos;
+      let click_world_coord = *click_world_coord;
+      let detail_info = detail_info.clone();
+      let creation_time = *creation_time;
+      
+      // Calculate how long the popup has been visible
+      let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+      let time_since_creation = current_time - creation_time;
+      
+      // For the first 500ms, use click position for better UX
+      // After that, track the click world coordinate so popup follows map movement
+      let screen_pos = if time_since_creation < 0.5 {
+        click_pos
+      } else if self.current_transform.is_invalid() {
+        // Fallback to original click position if transform is invalid
+        click_pos
+      } else {
+        // Convert click world coordinate to current screen position
+        let pixel_pos = self.current_transform.apply(click_world_coord);
+        egui::pos2(pixel_pos.x, pixel_pos.y)
+      };
+      
+      let mut show_popup = true;
+      
+      egui::Window::new("Geometry Info")
+        .id(egui::Id::new("geometry_detail_context_menu"))
+        .open(&mut show_popup)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .title_bar(false)
+        .frame(egui::Frame::popup(ui.style()))
+        .fixed_pos(screen_pos)
+        .show(ui.ctx(), |ui| {
+          ui.set_min_width(280.0);
+          ui.set_max_width(400.0);
+
+          // Split detail info into lines and format nicely
+          for line in detail_info.lines() {
+            if line.starts_with("📍") || line.starts_with("📏") || line.starts_with("⬟") || line.starts_with("📦") {
+              ui.strong(line);
+            } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
+              ui.label(line);
+            } else if line.starts_with("Label:") || line.starts_with("Timestamp:") {
+              ui.small(line);
+            } else {
+              ui.label(line);
+            }
+          }
+        });
+      
+      if !show_popup {
+        self.pending_detail_popup = None; // Clear if window was closed
+      } else {
+        // Also close on any click or escape key, but ignore clicks for a short period after creation
+        ui.ctx().input(|i| {
+          // Ignore clicks for 200ms after popup creation to prevent immediate closure
+          let ignore_clicks = time_since_creation < 0.2;
+          
+          if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
+            self.pending_detail_popup = None;
+          }
+        });
       }
     }
   }
@@ -1707,41 +1787,6 @@ impl Layer for ShapeLayer {
       shapes_header = shapes_header.open(Some(true));
     }
 
-    // Handle pending detail popup from double-click FIRST (before showing shape layers)
-    if let Some((popup_id, detail_info)) = &self.pending_detail_popup {
-      let egui_popup_id = egui::Id::new(popup_id);
-      ui.memory_mut(|mem| mem.data.insert_temp(egui_popup_id, detail_info.clone()));
-      self.pending_detail_popup = None; // Clear the pending popup
-    }
-
-    // Handle geometry detail popup from double-click - display logic
-    let popup_id = egui::Id::new("geometry_detail_popup");
-    if let Some(detail_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
-      let mut is_open = true;
-      egui::Window::new("Geometry Details")
-        .id(popup_id)
-        .open(&mut is_open)
-        .collapsible(false)
-        .resizable(true)
-        .movable(true)
-        .default_width(600.0)
-        .min_width(400.0)
-        .max_width(900.0)
-        .max_height(600.0)
-        .show(ui.ctx(), |ui| {
-          egui::ScrollArea::vertical()
-            .max_height(500.0)
-            .show(ui, |ui| {
-              ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                ui.add(egui::Label::new(&detail_text).wrap());
-              });
-            });
-        });
-
-      if !is_open {
-        ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
-      }
-    }
 
     shapes_header.show(ui, |ui| {
       self.show_shape_layers(ui);
@@ -1794,9 +1839,16 @@ impl Layer for ShapeLayer {
     // If we found a closest geometry, show popup (hover highlighting handled separately)
     if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
       if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
-        // Use a single, simple popup ID for all geometry detail popups
-        let popup_id = "geometry_detail_popup";
-        self.pending_detail_popup = Some((popup_id, detail_info));
+        // Convert click position to world coordinate for tracking
+        let click_world_coord = transform.invert().apply(pos.into());
+        
+        // Store current time to ignore immediate clicks
+        let creation_time = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .unwrap_or_default()
+          .as_secs_f64();
+        // Store click position and its world coordinate
+        self.pending_detail_popup = Some((pos, click_world_coord, detail_info, creation_time));
       }
       return Some(closest_distance);
     }
@@ -1928,6 +1980,7 @@ impl ShapeLayer {
     }
   }
 
+
   /// Generate detailed information about a geometry for popup display
   fn generate_geometry_detail_info(
     &self,
@@ -1957,7 +2010,7 @@ impl ShapeLayer {
       }
     }
 
-    // Generate detailed information based on geometry type
+    // Generate basic information for geometry type
     let detail_info = match current_geometry {
       Geometry::Point(coord, metadata) => {
         let wgs84 = coord.as_wgs84();
@@ -1984,25 +2037,6 @@ impl ShapeLayer {
       Geometry::LineString(coords, metadata) => {
         let mut info = format!("📏 LineString\nPoints: {}", coords.len());
         
-        if !coords.is_empty() {
-          let start_wgs84 = coords.first().unwrap().as_wgs84();
-          let end_wgs84 = coords.last().unwrap().as_wgs84();
-          info.push_str(&format!("\nStart: {:.6}, {:.6}", start_wgs84.lat, start_wgs84.lon));
-          info.push_str(&format!("\nEnd: {:.6}, {:.6}", end_wgs84.lat, end_wgs84.lon));
-          
-          // Calculate total length
-          let mut total_distance = 0.0;
-          for window in coords.windows(2) {
-            let p1 = window[0].as_wgs84();
-            let p2 = window[1].as_wgs84();
-            // Simple distance approximation
-            let dx = p2.lat - p1.lat;
-            let dy = p2.lon - p1.lon;
-            total_distance += (dx * dx + dy * dy).sqrt();
-          }
-          info.push_str(&format!("\nApprox Length: {:.6}°", total_distance));
-        }
-        
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
@@ -2024,19 +2058,6 @@ impl ShapeLayer {
       Geometry::Polygon(coords, metadata) => {
         let mut info = format!("⬟ Polygon\nVertices: {}", coords.len());
         
-        if coords.len() >= 3 {
-          // Calculate bounding box
-          let wgs84_coords: Vec<_> = coords.iter().map(|c| c.as_wgs84()).collect();
-          let min_lat = wgs84_coords.iter().map(|c| c.lat as f64).fold(f64::INFINITY, f64::min);
-          let max_lat = wgs84_coords.iter().map(|c| c.lat as f64).fold(f64::NEG_INFINITY, f64::max);
-          let min_lon = wgs84_coords.iter().map(|c| c.lon as f64).fold(f64::INFINITY, f64::min);
-          let max_lon = wgs84_coords.iter().map(|c| c.lon as f64).fold(f64::NEG_INFINITY, f64::max);
-          
-          info.push_str(&format!("\nBounds: {:.6}, {:.6} to {:.6}, {:.6}", 
-                                min_lat, min_lon, max_lat, max_lon));
-          info.push_str(&format!("\nArea: ~{:.8}° sq", (max_lat - min_lat) * (max_lon - min_lon)));
-        }
-        
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
@@ -2056,34 +2077,7 @@ impl ShapeLayer {
       },
       
       Geometry::GeometryCollection(geometries, metadata) => {
-        let mut info = format!("📁 Geometry Collection\nItems: {}", geometries.len());
-        
-        // Count types
-        let mut point_count = 0;
-        let mut line_count = 0;
-        let mut polygon_count = 0;
-        let mut collection_count = 0;
-        
-        fn count_geometries(geoms: &[Geometry<PixelCoordinate>], pc: &mut usize, lc: &mut usize, polc: &mut usize, cc: &mut usize) {
-          for geom in geoms {
-            match geom {
-              Geometry::Point(_, _) => *pc += 1,
-              Geometry::LineString(_, _) => *lc += 1,
-              Geometry::Polygon(_, _) => *polc += 1,
-              Geometry::GeometryCollection(sub_geoms, _) => {
-                *cc += 1;
-                count_geometries(sub_geoms, pc, lc, polc, cc);
-              }
-            }
-          }
-        }
-        
-        count_geometries(geometries, &mut point_count, &mut line_count, &mut polygon_count, &mut collection_count);
-        
-        if point_count > 0 { info.push_str(&format!("\nPoints: {}", point_count)); }
-        if line_count > 0 { info.push_str(&format!("\nLineStrings: {}", line_count)); }
-        if polygon_count > 0 { info.push_str(&format!("\nPolygons: {}", polygon_count)); }
-        if collection_count > 0 { info.push_str(&format!("\nSub-collections: {}", collection_count)); }
+        let mut info = format!("📁 Collection\nItems: {}", geometries.len());
         
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
@@ -2269,6 +2263,7 @@ mod tests {
         temporal_current_time: None,
         temporal_time_window: None,
         pending_detail_popup: None,
+        current_transform: Transform::invalid(),
         search_results: Vec::new(),
       }
     }
