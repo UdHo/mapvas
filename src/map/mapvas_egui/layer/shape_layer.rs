@@ -1490,12 +1490,148 @@ impl ShapeLayer {
       }
     }
     
-    self.search_results = results;
+    self.search_results = results.clone();
+    
+    // Highlight all found geometries
+    if !results.is_empty() {
+      // Clear any previous highlighting
+      self.geometry_highlighter.clear_highlighting();
+      
+      // Highlight the first search result
+      if let Some((layer_id, shape_idx, nested_path)) = results.first() {
+        self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+        
+        // Show popup for the first search result
+        self.show_search_result_popup();
+      }
+    } else {
+      // Clear highlighting if no results found
+      self.geometry_highlighter.clear_highlighting();
+    }
   }
 
   /// Get current search results
   pub fn get_search_results(&self) -> &Vec<(String, usize, Vec<usize>)> {
     &self.search_results
+  }
+
+  /// Show popup for currently highlighted search result
+  pub fn show_search_result_popup(&mut self) {
+    if let Some((layer_id, shape_idx, nested_path)) = self.geometry_highlighter.get_highlighted_geometry() {
+      if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
+        // Find the geometry to get its representative coordinate for popup positioning
+        if let Some(coord) = self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path) {
+          // Convert to screen position using current transform
+          let screen_pos = if !self.current_transform.is_invalid() {
+            let pixel_pos = self.current_transform.apply(coord);
+            egui::pos2(pixel_pos.x, pixel_pos.y)
+          } else {
+            egui::pos2(0.0, 0.0) // Fallback position
+          };
+          
+          let creation_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+            
+          self.pending_detail_popup = Some((screen_pos, coord, detail_info, creation_time));
+        }
+      }
+    }
+  }
+
+  /// Navigate to next search result
+  pub fn next_search_result(&mut self) -> bool {
+    if self.search_results.is_empty() {
+      return false;
+    }
+    
+    let current_highlighted = self.geometry_highlighter.get_highlighted_geometry();
+    let current_idx = if let Some(current) = current_highlighted {
+      self.search_results.iter().position(|result| result == &current)
+    } else {
+      None
+    };
+    
+    let next_idx = match current_idx {
+      Some(idx) => (idx + 1) % self.search_results.len(),
+      None => 0,
+    };
+    
+    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(next_idx) {
+      self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+      self.show_search_result_popup();
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Navigate to previous search result
+  pub fn previous_search_result(&mut self) -> bool {
+    if self.search_results.is_empty() {
+      return false;
+    }
+    
+    let current_highlighted = self.geometry_highlighter.get_highlighted_geometry();
+    let current_idx = if let Some(current) = current_highlighted {
+      self.search_results.iter().position(|result| result == &current)
+    } else {
+      None
+    };
+    
+    let prev_idx = match current_idx {
+      Some(idx) => if idx == 0 { self.search_results.len() - 1 } else { idx - 1 },
+      None => self.search_results.len() - 1,
+    };
+    
+    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(prev_idx) {
+      self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+      self.show_search_result_popup();
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Get representative coordinate for a geometry (used for popup positioning)
+  fn get_geometry_representative_coordinate(
+    &self,
+    layer_id: &str,
+    shape_idx: usize,
+    nested_path: &[usize],
+  ) -> Option<PixelCoordinate> {
+    let shapes = self.shape_map.get(layer_id)?;
+    let mut current_geometry = shapes.get(shape_idx)?;
+    
+    // Navigate to the specific nested geometry if there's a path
+    for &idx in nested_path.iter() {
+      if let Geometry::GeometryCollection(geometries, _) = current_geometry {
+        current_geometry = geometries.get(idx)?;
+      } else {
+        return None; // Invalid path
+      }
+    }
+    
+    // Return representative coordinate based on geometry type
+    match current_geometry {
+      Geometry::Point(coord, _) => Some(*coord),
+      Geometry::LineString(coords, _) => coords.first().copied(),
+      Geometry::Polygon(coords, _) => coords.first().copied(),
+      Geometry::GeometryCollection(geometries, _) => {
+        // For collections, try to get coordinate from first child geometry
+        if let Some(first_child) = geometries.first() {
+          match first_child {
+            Geometry::Point(coord, _) => Some(*coord),
+            Geometry::LineString(coords, _) => coords.first().copied(),
+            Geometry::Polygon(coords, _) => coords.first().copied(),
+            _ => None,
+          }
+        } else {
+          None
+        }
+      }
+    }
   }
 
   /// Check if text matches the search pattern

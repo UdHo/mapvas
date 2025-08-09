@@ -63,6 +63,19 @@ impl GeometryHighlighter {
     result
   }
 
+  /// Get the currently highlighted geometry if any
+  pub fn get_highlighted_geometry(&self) -> Option<(String, usize, Vec<usize>)> {
+    if let Some(highlighted_id) = self.highlighted_geometry_id {
+      // Find the geometry path that matches the highlighted ID
+      for ((layer_id, shape_idx, nested_path), geometry_id) in &self.geometry_id_map {
+        if *geometry_id == highlighted_id {
+          return Some((layer_id.clone(), *shape_idx, nested_path.clone()));
+        }
+      }
+    }
+    None
+  }
+
   /// Generate a unique ID for a geometry
   fn generate_geometry_id(&mut self) -> u64 {
     let id = self.next_geometry_id;

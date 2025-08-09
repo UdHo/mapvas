@@ -580,6 +580,51 @@ impl Map {
     }
   }
 
+  /// Navigate to next search result
+  pub fn next_search_result(&mut self) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          return shape_layer.next_search_result();
+        }
+      }
+    }
+    false
+  }
+
+  /// Navigate to previous search result
+  pub fn previous_search_result(&mut self) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          return shape_layer.previous_search_result();
+        }
+      }
+    }
+    false
+  }
+
+  /// Show popup for current search result
+  pub fn show_search_result_popup(&mut self) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          shape_layer.show_search_result_popup();
+          break;
+        }
+      }
+    }
+  }
+
   /// Get the count of search results
   pub fn get_search_results_count(&self) -> usize {
     if let Ok(layers) = self.layers.lock() {

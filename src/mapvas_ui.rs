@@ -207,12 +207,26 @@ impl MapApp {
         }
       }
       Command::SearchNext => {
-        // TODO: Implement next search result navigation
-        self.command_line.set_message("Search next not implemented yet".to_string(), true);
+        if self.map.next_search_result() {
+          let results_count = self.map.get_search_results_count();
+          self.command_line.set_message(
+            format!("Next search result ({} total)", results_count), 
+            false
+          );
+        } else {
+          self.command_line.set_message("No search results available".to_string(), true);
+        }
       }
       Command::SearchPrev => {
-        // TODO: Implement previous search result navigation
-        self.command_line.set_message("Search previous not implemented yet".to_string(), true);
+        if self.map.previous_search_result() {
+          let results_count = self.map.get_search_results_count();
+          self.command_line.set_message(
+            format!("Previous search result ({} total)", results_count), 
+            false
+          );
+        } else {
+          self.command_line.set_message("No search results available".to_string(), true);
+        }
       }
       Command::GoTo(location) => {
         // TODO: Implement go to location (could use location search)
