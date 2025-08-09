@@ -8,6 +8,7 @@ use crate::{
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
+  command_line::{CommandLine, Command, handle_command_line_input, show_command_line_ui},
 };
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 
@@ -18,6 +19,7 @@ pub struct MapApp {
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
   previous_had_highlighted: bool,
   last_heading_style: HeadingStyle,
+  command_line: CommandLine,
 }
 
 impl MapApp {
@@ -37,6 +39,7 @@ impl MapApp {
       settings_dialog,
       previous_had_highlighted: false,
       last_heading_style: config.heading_style,
+      command_line: CommandLine::new(),
     }
   }
 
@@ -151,12 +154,138 @@ impl eframe::App for MapApp {
     }
     self.previous_had_highlighted = has_highlighted;
 
+    // Handle command line input and execute commands
+    if let Some(command) = handle_command_line_input(&mut self.command_line, ctx) {
+      self.execute_command(command, ctx);
+    }
+
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
       .show(ctx, |ui| {
         profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
       });
+
+    // Show command line UI (must be after CentralPanel to appear on top)
+    show_command_line_ui(&mut self.command_line, ctx);
+  }
+}
+
+impl MapApp {
+  /// Execute a command from the command line
+  fn execute_command(&mut self, command: Command, ctx: &egui::Context) {
+    match command {
+      Command::Quit => {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.command_line.set_message("Goodbye!".to_string(), false);
+      }
+      Command::Write => {
+        // TODO: Implement save functionality
+        self.command_line.set_message("Write command not implemented yet".to_string(), true);
+      }
+      Command::WriteQuit => {
+        // TODO: Implement save functionality, then quit
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.command_line.set_message("Write and quit".to_string(), false);
+      }
+      Command::Search(query) => {
+        // Use the existing search functionality
+        self.map.search_geometries(&query);
+        let results_count = self.map.get_search_results_count();
+        if results_count > 0 {
+          self.command_line.set_message(
+            format!("Found {} results for '{}'", results_count, query), 
+            false
+          );
+          // Show sidebar to display search results
+          self.sidebar.show();
+        } else {
+          self.command_line.set_message(
+            format!("No results found for '{}'", query), 
+            true
+          );
+        }
+      }
+      Command::SearchNext => {
+        // TODO: Implement next search result navigation
+        self.command_line.set_message("Search next not implemented yet".to_string(), true);
+      }
+      Command::SearchPrev => {
+        // TODO: Implement previous search result navigation
+        self.command_line.set_message("Search previous not implemented yet".to_string(), true);
+      }
+      Command::GoTo(location) => {
+        // TODO: Implement go to location (could use location search)
+        self.command_line.set_message(
+          format!("Go to location '{}' not implemented yet", location), 
+          true
+        );
+      }
+      Command::Focus(target) => {
+        // TODO: Implement focus on specific layer or geometry
+        self.command_line.set_message(
+          format!("Focus on '{}' not implemented yet", target), 
+          true
+        );
+      }
+      Command::ShowLayer(layer) => {
+        if self.map.show_layer(&layer) {
+          self.command_line.set_message(
+            format!("Showed layer '{}'", layer), 
+            false
+          );
+        } else {
+          self.command_line.set_message(
+            format!("Layer '{}' not found", layer), 
+            true
+          );
+        }
+      }
+      Command::HideLayer(layer) => {
+        if self.map.hide_layer(&layer) {
+          self.command_line.set_message(
+            format!("Hid layer '{}'", layer), 
+            false
+          );
+        } else {
+          self.command_line.set_message(
+            format!("Layer '{}' not found", layer), 
+            true
+          );
+        }
+      }
+      Command::ToggleLayer(layer) => {
+        if self.map.toggle_layer(&layer) {
+          self.command_line.set_message(
+            format!("Toggled layer '{}'", layer), 
+            false
+          );
+        } else {
+          self.command_line.set_message(
+            format!("Layer '{}' not found", layer), 
+            true
+          );
+        }
+      }
+      Command::ZoomIn => {
+        self.map.zoom_in();
+        self.command_line.set_message("Zoomed in".to_string(), false);
+      }
+      Command::ZoomOut => {
+        self.map.zoom_out();
+        self.command_line.set_message("Zoomed out".to_string(), false);
+      }
+      Command::ZoomFit => {
+        self.map.zoom_fit();
+        self.command_line.set_message("Fit to view".to_string(), false);
+      }
+      Command::Unknown(cmd) => {
+        self.command_line.set_message(
+          format!("Unknown command: '{}'", cmd), 
+          true
+        );
+      }
+    }
   }
 }
 

@@ -10,18 +10,30 @@ use crate::map::{
 use chrono::{DateTime, Utc};
 use egui::Color32;
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct KmlParser {
   #[serde(skip)]
   data: String,
   #[serde(skip)]
   document_styles: HashMap<String, Style>,
+  #[serde(skip)]
+  layer_name: String,
+}
+
+impl Default for KmlParser {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl KmlParser {
   #[must_use]
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      data: String::new(),
+      document_styles: HashMap::new(),
+      layer_name: "kml".to_string(),
+    }
   }
 
   fn parse_kml_color(color_str: &str) -> Option<Color32> {
@@ -550,11 +562,15 @@ impl Parser for KmlParser {
     let geometries = self.parse_kml();
     log::debug!("KML parser found {} geometries", geometries.len());
     if !geometries.is_empty() {
-      let mut layer = Layer::new("kml".to_string());
+      let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries = geometries;
       return Some(MapEvent::Layer(layer));
     }
     None
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 

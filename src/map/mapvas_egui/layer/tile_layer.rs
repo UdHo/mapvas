@@ -383,6 +383,14 @@ impl Layer for TileLayer {
   fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
     false
   }
+
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    self
+  }
 }
 
 fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {

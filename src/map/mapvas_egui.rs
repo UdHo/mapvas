@@ -632,6 +632,92 @@ impl Map {
       }
     }
   }
+
+  /// Search geometries across all layers
+  pub fn search_geometries(&mut self, query: &str) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        // Only search in shape layer for now
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          shape_layer.search_geometries(query);
+        }
+      }
+    }
+  }
+
+  /// Get the count of search results
+  pub fn get_search_results_count(&self) -> usize {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if let Some(shape_layer) = layer
+          .as_any()
+          .downcast_ref::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          return shape_layer.get_search_results().len();
+        }
+      }
+    }
+    0
+  }
+
+  /// Show a specific layer
+  pub fn show_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          layer.set_visible(true);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Hide a specific layer
+  pub fn hide_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          layer.set_visible(false);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Toggle visibility of a specific layer
+  pub fn toggle_layer(&mut self, layer_name: &str) -> bool {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == layer_name {
+          let current = layer.is_visible();
+          layer.set_visible(!current);
+          return true;
+        }
+      }
+    }
+    false
+  }
+
+  /// Zoom in
+  pub fn zoom_in(&mut self) {
+    self.transform.zoom *= 1.5;
+  }
+
+  /// Zoom out
+  pub fn zoom_out(&mut self) {
+    self.transform.zoom /= 1.5;
+  }
+
+  /// Zoom to fit all geometries
+  pub fn zoom_fit(&mut self) {
+    // TODO: Implement zoom to fit functionality
+    // This would require calculating bounding box of all geometries
+  }
 }
 
 pub trait MapLayerReader {

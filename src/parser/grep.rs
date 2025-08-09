@@ -52,6 +52,8 @@ pub struct GrepParser {
   fill: FillStyle,
   #[serde(skip, default)]
   label_re: Option<Regex>,
+  #[serde(skip)]
+  layer_name: String,
 }
 
 impl Parser for GrepParser {
@@ -61,7 +63,7 @@ impl Parser for GrepParser {
       return Some(event);
     }
 
-    let mut layer = Layer::new("test".to_string());
+    let mut layer = Layer::new(self.layer_name.clone());
 
     for l in line.split('\n') {
       self.parse_color(l);
@@ -142,6 +144,10 @@ impl Parser for GrepParser {
       Some(MapEvent::Layer(layer))
     }
   }
+  
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
+  }
 }
 
 impl GrepParser {
@@ -154,6 +160,7 @@ impl GrepParser {
       color: Color::default(),
       fill: FillStyle::default(),
       label_re: None,
+      layer_name: "coordinates".to_string(), // Default name for grep parser
     }
   }
 
@@ -282,3 +289,4 @@ impl GrepParser {
     coordinates.is_valid().then_some(coordinates)
   }
 }
+

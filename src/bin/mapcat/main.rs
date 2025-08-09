@@ -90,14 +90,18 @@ async fn main() {
         .read_to_string(&mut content)
         .expect("Failed to read from stdin");
 
-      let content_parser = mapvas::parser::ContentAutoParser::new(content);
+      let content_parser = mapvas::parser::ContentAutoParser::new(content)
+        .with_label_pattern(&args.label_pattern)
+        .with_invert_coordinates(args.invert_coordinates);
       for event in content_parser.parse() {
         sender.send_event(event);
       }
     } else {
       // Use file-based auto-parser for each file
       for file_path in &args.files {
-        let mut auto_parser = AutoFileParser::new(file_path.clone());
+        let mut auto_parser = AutoFileParser::new(file_path.clone())
+          .with_label_pattern(&args.label_pattern)
+          .with_invert_coordinates(args.invert_coordinates);
         auto_parser.parse().for_each(|e| sender.send_event(e));
       }
     }

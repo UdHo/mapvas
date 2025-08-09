@@ -68,6 +68,7 @@ impl SenderInner {
     let mut queue = VecDeque::new();
     std::mem::swap(&mut queue, &mut self.queue);
 
+    debug!("Sending queue:\n{queue:?}");
     let send_counter = self.send_counter.clone();
     let notify = self.notify.clone();
     tokio::spawn(async move {

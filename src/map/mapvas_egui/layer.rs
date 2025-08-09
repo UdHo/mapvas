@@ -74,6 +74,22 @@ pub trait Layer {
     panic!("as_any not implemented for this layer type")
   }
 
+  /// Allow mutable downcasting to concrete layer types
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    // Default implementation - layers should override this
+    panic!("as_any_mut not implemented for this layer type")
+  }
+
+  /// Check if this layer is visible
+  fn is_visible(&self) -> bool {
+    self.visible()
+  }
+
+  /// Set visibility of this layer
+  fn set_visible(&mut self, visible: bool) {
+    *self.visible_mut() = visible;
+  }
+
   /// Get temporal range from this layer if it supports temporal data
   fn get_temporal_range(
     &self,

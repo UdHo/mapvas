@@ -12,18 +12,30 @@ use crate::{
   profile_scope,
 };
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct JsonParser {
   #[serde(skip)]
   data: String,
   #[serde(skip)]
   geometry: Vec<Geometry<PixelCoordinate>>,
+  #[serde(skip)]
+  layer_name: String,
+}
+
+impl Default for JsonParser {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl JsonParser {
   #[must_use]
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      data: String::new(),
+      geometry: Vec::new(),
+      layer_name: "json".to_string(),
+    }
   }
 
   #[expect(clippy::cast_possible_truncation)]
@@ -95,11 +107,15 @@ impl Parser for JsonParser {
     let parsed: Value = serde_json::from_str(&self.data).ok()?;
     self.find_coordinates(&parsed);
     if !self.geometry.is_empty() {
-      let mut layer = Layer::new("json".to_string());
+      let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries.clone_from(&self.geometry);
       return Some(MapEvent::Layer(layer));
     }
     None
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 

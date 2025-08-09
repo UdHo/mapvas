@@ -7,16 +7,27 @@ use crate::map::{
   map_event::{Layer, MapEvent},
 };
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GpxParser {
   #[serde(skip)]
   data: String,
+  #[serde(skip)]
+  layer_name: String,
+}
+
+impl Default for GpxParser {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl GpxParser {
   #[must_use]
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      data: String::new(),
+      layer_name: "gpx".to_string(),
+    }
   }
 
   #[allow(clippy::cast_possible_truncation)]
@@ -87,11 +98,15 @@ impl Parser for GpxParser {
   fn finalize(&mut self) -> Option<MapEvent> {
     let geometries = self.parse_gpx();
     if !geometries.is_empty() {
-      let mut layer = Layer::new("gpx".to_string());
+      let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries = geometries;
       return Some(MapEvent::Layer(layer));
     }
     None
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 

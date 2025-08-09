@@ -12,18 +12,30 @@ use crate::{
   profile_scope,
 };
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GeoJsonParser {
   #[serde(skip)]
   data: String,
   #[serde(skip)]
   geometry: Vec<Geometry<PixelCoordinate>>,
+  #[serde(skip)]
+  layer_name: String,
+}
+
+impl Default for GeoJsonParser {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl GeoJsonParser {
   #[must_use]
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      data: String::new(),
+      geometry: Vec::new(),
+      layer_name: "geojson".to_string(),
+    }
   }
 
   /// Parse `GeoJSON` data and extract geometries with style information
@@ -257,11 +269,15 @@ impl Parser for GeoJsonParser {
     }
 
     if !self.geometry.is_empty() {
-      let mut layer = Layer::new("geojson".to_string());
+      let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries.clone_from(&self.geometry);
       return Some(MapEvent::Layer(layer));
     }
     None
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 

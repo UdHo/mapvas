@@ -19,10 +19,17 @@ use std::{
     mpsc::{Receiver, Sender},
   },
 };
+use regex::Regex;
 
 const MAX_ITEMS_PER_COLLECTION: usize = 100;
 const ITEMS_PER_PAGE: usize = 50;
 const HIGLIGHT_PIXEL_DISTANCE: f64 = 10.0;
+
+/// Search pattern that can be either a regex or literal string
+enum SearchPattern {
+  Regex(Regex),
+  Literal(String),
+}
 
 /// A layer that draws shapes on the map.
 pub struct ShapeLayer {
@@ -43,6 +50,8 @@ pub struct ShapeLayer {
   temporal_time_window: Option<Duration>,
   // Pending popup to display
   pending_detail_popup: Option<(&'static str, String)>, // (popup_id, content)
+  // Search results
+  search_results: Vec<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -138,6 +147,7 @@ impl ShapeLayer {
       temporal_current_time: None,
       temporal_time_window: None,
       pending_detail_popup: None,
+      search_results: Vec::new(),
     }
   }
 
@@ -1447,12 +1457,115 @@ impl ShapeLayer {
       ui.close();
     }
   }
+
+  /// Search for geometries that match the given query string (supports regex)
+  pub fn search_geometries(&mut self, query: &str) {
+    self.search_results.clear();
+    
+    // Try to compile as regex first, fallback to literal string search
+    let search_pattern = match regex::Regex::new(query) {
+      Ok(regex) => SearchPattern::Regex(regex),
+      Err(_) => {
+        // If regex compilation fails, treat as literal string (case-insensitive)
+        SearchPattern::Literal(query.to_lowercase())
+      }
+    };
+    
+    // Collect results first to avoid borrowing issues
+    let mut results = Vec::new();
+    
+    for (layer_id, shapes) in &self.shape_map {
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        Self::search_in_geometry_static(
+          layer_id, 
+          shape_idx, 
+          &Vec::new(), 
+          shape, 
+          &search_pattern, 
+          &mut results
+        );
+      }
+    }
+    
+    self.search_results = results;
+  }
+
+  /// Get current search results
+  pub fn get_search_results(&self) -> &Vec<(String, usize, Vec<usize>)> {
+    &self.search_results
+  }
+
+  /// Check if text matches the search pattern
+  fn matches_pattern(text: &str, pattern: &SearchPattern) -> bool {
+    match pattern {
+      SearchPattern::Regex(regex) => regex.is_match(text),
+      SearchPattern::Literal(literal) => text.to_lowercase().contains(literal),
+    }
+  }
+
+  /// Recursively search within a geometry for the query string (static version to avoid borrow checker issues)
+  fn search_in_geometry_static(
+    layer_id: &str,
+    shape_idx: usize,
+    nested_path: &[usize],
+    geometry: &Geometry<PixelCoordinate>,
+    pattern: &SearchPattern,
+    results: &mut Vec<(String, usize, Vec<usize>)>,
+  ) {
+    let metadata = match geometry {
+      Geometry::Point(_, metadata)
+      | Geometry::LineString(_, metadata)
+      | Geometry::Polygon(_, metadata)
+      | Geometry::GeometryCollection(_, metadata) => metadata,
+    };
+
+    // Check if metadata contains the search pattern
+    let mut matches = false;
+    
+    if let Some(label) = &metadata.label {
+      if Self::matches_pattern(&label.name, pattern) ||
+         Self::matches_pattern(&label.short(), pattern) ||
+         Self::matches_pattern(&label.full(), pattern) {
+        matches = true;
+      }
+      
+      if let Some(description) = &label.description {
+        if Self::matches_pattern(description, pattern) {
+          matches = true;
+        }
+      }
+    }
+
+    if matches {
+      results.push((layer_id.to_string(), shape_idx, nested_path.to_vec()));
+    }
+
+    // Recursively search in nested geometries
+    if let Geometry::GeometryCollection(nested_geometries, _) = geometry {
+      for (nested_idx, nested_geometry) in nested_geometries.iter().enumerate() {
+        let mut nested_path = nested_path.to_vec();
+        nested_path.push(nested_idx);
+        Self::search_in_geometry_static(
+          layer_id, 
+          shape_idx, 
+          &nested_path, 
+          nested_geometry, 
+          pattern, 
+          results
+        );
+      }
+    }
+  }
 }
 
 const NAME: &str = "Shape Layer";
 
 impl Layer for ShapeLayer {
   fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
     self
   }
 
@@ -2156,6 +2269,7 @@ mod tests {
         temporal_current_time: None,
         temporal_time_window: None,
         pending_detail_popup: None,
+        search_results: Vec::new(),
       }
     }
   }
