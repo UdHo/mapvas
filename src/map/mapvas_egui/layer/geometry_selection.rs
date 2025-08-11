@@ -55,11 +55,12 @@ pub fn find_closest_in_geometry<F1, F2>(
       }
     }
     _ => {
-      // For individual geometries, calculate distance
-      let distance = calculate_distance_to_geometry(geometry, &click_pixel);
+      // For individual geometries, calculate distance in map coordinates, then convert to screen pixels
+      let distance_map_coords = calculate_distance_to_geometry(geometry, &click_pixel);
+      let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
       
-      if distance < *closest_distance {
-        *closest_distance = distance;
+      if distance_screen_pixels < *closest_distance {
+        *closest_distance = distance_screen_pixels;
         *closest_geometry = Some((layer_id.to_string(), shape_idx, nested_path.to_vec()));
       }
     }

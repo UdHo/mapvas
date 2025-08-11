@@ -147,12 +147,12 @@ impl eframe::App for MapApp {
       self.show_sidebar_toggle_button(ctx);
     }
 
-    // Show sidebar when geometry becomes newly highlighted (from double-click)
-    let has_highlighted = self.map.has_highlighted_geometry();
-    if has_highlighted && !self.previous_had_highlighted {
+    // Show sidebar when double-click action occurs (but not on hover highlighting)
+    let has_double_click = self.map.has_double_click_action();
+    if has_double_click && !self.previous_had_highlighted {
       self.sidebar.show();
     }
-    self.previous_had_highlighted = has_highlighted;
+    self.previous_had_highlighted = has_double_click;
 
     // Handle command line input and execute commands
     if let Some(command) = handle_command_line_input(&mut self.command_line, ctx) {

@@ -56,6 +56,8 @@ pub struct ShapeLayer {
   search_results: Vec<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
   // Filter pattern (None = no filter active)
   filter_pattern: Option<SearchPattern>,
+  // Track if a double-click action just occurred (separate from hover highlighting)
+  pub(crate) just_double_clicked: Option<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -154,6 +156,7 @@ impl ShapeLayer {
       current_transform: Transform::invalid(),
       search_results: Vec::new(),
       filter_pattern: None,
+      just_double_clicked: None,
     }
   }
 
@@ -254,8 +257,11 @@ impl ShapeLayer {
         header = header.show_background(true);
       }
 
-      if self.geometry_highlighter.was_just_highlighted() && has_highlighted_geometry {
-        header = header.open(Some(true));
+      // Open sidebar on double-click (but not hover)
+      if let Some((clicked_layer, _, _)) = &self.just_double_clicked {
+        if clicked_layer == &layer_id {
+          header = header.open(Some(true));
+        }
       }
 
       let header_response = header.show(ui, |ui| {
@@ -1978,7 +1984,8 @@ impl Layer for ShapeLayer {
       .id_salt(layer_id)
       .default_open(has_highlighted_geometry);
 
-    if self.geometry_highlighter.was_just_highlighted() {
+    // Open sidebar on double-click (but not hover)
+    if self.just_double_clicked.is_some() {
       layer_header = layer_header.open(Some(true));
     }
 
@@ -1997,7 +2004,8 @@ impl Layer for ShapeLayer {
       .id_salt(shapes_header_id)
       .default_open(has_highlighted_geometry);
 
-    if self.geometry_highlighter.was_just_highlighted() && has_highlighted_geometry {
+    // Open sidebar on double-click (but not hover)
+    if self.just_double_clicked.is_some() {
       shapes_header = shapes_header.open(Some(true));
     }
 
@@ -2007,6 +2015,8 @@ impl Layer for ShapeLayer {
     });
 
     let _ = self.geometry_highlighter.was_just_highlighted();
+    // Clear double-click flag after UI update
+    self.just_double_clicked = None;
   }
 
   fn has_highlighted_geometry(&self) -> bool {
@@ -2050,21 +2060,41 @@ impl Layer for ShapeLayer {
       }
     }
 
-    // If we found a closest geometry, show popup (hover highlighting handled separately)
+    // If we found a closest geometry within tolerance, show popup (hover highlighting handled separately)
     if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
-      if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
-        // Convert click position to world coordinate for tracking
-        let click_world_coord = transform.invert().apply(pos.into());
-        
-        // Store current time to ignore immediate clicks
-        let creation_time = std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap_or_default()
-          .as_secs_f64();
-        // Store click position and its world coordinate
-        self.pending_detail_popup = Some((pos, click_world_coord, detail_info, creation_time));
+      // Check if the geometry is within reasonable click distance (use same as hover highlighting)
+      if closest_distance < HIGLIGHT_PIXEL_DISTANCE {
+        if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
+          // Convert click position to world coordinate for tracking
+          let click_world_coord = transform.invert().apply(pos.into());
+          
+          // Store current time to ignore immediate clicks
+          let creation_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+          // Store click position and its world coordinate
+          self.pending_detail_popup = Some((pos, click_world_coord, detail_info, creation_time));
+        }
+
+        // Handle collection expansion for double-clicks on GeometryCollections
+        if let Some(shapes) = self.shape_map.get(&layer_id) {
+          if let Some(clicked_shape) = shapes.get(shape_idx) {
+            // Check if we clicked on a collection (either top-level or nested)
+            let clicked_geometry = self.get_geometry_at_path(clicked_shape, &nested_path);
+            if let Some(Geometry::GeometryCollection(_, _)) = clicked_geometry {
+              // Toggle expansion state for this collection
+              let collection_key = (layer_id.clone(), shape_idx, nested_path.clone());
+              let current_expanded = *self.collection_expansion.get(&collection_key).unwrap_or(&false);
+              self.collection_expansion.insert(collection_key, !current_expanded);
+            }
+          }
+        }
+
+        // Set double-click flag for sidebar expansion (any geometry type)
+        self.just_double_clicked = Some((layer_id.clone(), shape_idx, nested_path.clone()));
+        return Some(closest_distance);
       }
-      return Some(closest_distance);
     }
 
     None
@@ -2090,6 +2120,30 @@ impl Layer for ShapeLayer {
 }
 
 impl ShapeLayer {
+  /// Navigate to a specific geometry within nested collections
+  fn get_geometry_at_path<'a>(
+    &self, 
+    geometry: &'a Geometry<PixelCoordinate>, 
+    nested_path: &[usize]
+  ) -> Option<&'a Geometry<PixelCoordinate>> {
+    let mut current_geometry = geometry;
+    
+    for &path_index in nested_path {
+      match current_geometry {
+        Geometry::GeometryCollection(nested_geometries, _) => {
+          if path_index < nested_geometries.len() {
+            current_geometry = &nested_geometries[path_index];
+          } else {
+            return None; // Invalid path index
+          }
+        }
+        _ => return None, // Path continues but current geometry is not a collection
+      }
+    }
+    
+    Some(current_geometry)
+  }
+
   /// Get temporal range from all geometries in this layer
   #[must_use]
   pub fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
@@ -2480,6 +2534,7 @@ mod tests {
         current_transform: Transform::invalid(),
         search_results: Vec::new(),
         filter_pattern: None,
+        just_double_clicked: None,
       }
     }
   }

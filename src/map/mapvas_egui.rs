@@ -540,6 +540,25 @@ impl Map {
     false
   }
 
+  /// Check if a double-click just occurred on any layer
+  #[must_use]
+  pub fn has_double_click_action(&self) -> bool {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        // Check if this is a shape layer with a double-click action
+        if let Some(shape_layer) = layer
+          .as_any()
+          .downcast_ref::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          if shape_layer.just_double_clicked.is_some() {
+            return true;
+          }
+        }
+      }
+    }
+    false
+  }
+
   /// Update the config for the map and all its layers
   pub fn update_config(&mut self, new_config: &crate::config::Config) {
     self.config = new_config.clone();
