@@ -37,13 +37,8 @@ impl GeometryHighlighter {
   }
 
   /// Highlight a geometry by its path
-  pub fn highlight_geometry(
-    &mut self,
-    layer_id: String,
-    shape_idx: usize,
-    nested_path: Vec<usize>,
-  ) {
-    let geometry_id = self.get_or_create_geometry_id(&layer_id, shape_idx, &nested_path);
+  pub fn highlight_geometry(&mut self, layer_id: &str, shape_idx: usize, nested_path: &[usize]) {
+    let geometry_id = self.get_or_create_geometry_id(layer_id, shape_idx, nested_path);
     self.highlight_geometry_by_id(geometry_id);
   }
 
@@ -118,7 +113,7 @@ pub fn draw_highlighted_geometry(
 ) {
   match geometry {
     Geometry::Point(coord, metadata) => {
-      draw_highlighted_point(coord, metadata, painter, transform);
+      draw_highlighted_point(*coord, metadata, painter, transform);
     }
     Geometry::LineString(coords, metadata) => {
       draw_highlighted_linestring(coords, metadata, painter, transform);
@@ -137,12 +132,12 @@ pub fn draw_highlighted_geometry(
 
 /// Draw a highlighted point
 fn draw_highlighted_point(
-  coord: &PixelCoordinate,
+  coord: PixelCoordinate,
   metadata: &Metadata,
   painter: &Painter,
   transform: &Transform,
 ) {
-  let center = transform.apply(*coord).into();
+  let center = transform.apply(coord).into();
   let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
 
   // Draw highlighted point filled with original color

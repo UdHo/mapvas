@@ -401,7 +401,7 @@ impl Map {
         let update = self.remote.update.clone();
         tokio::spawn(async move {
           // Use auto parser for dropped files
-          let mut auto_parser = crate::parser::AutoFileParser::new(file_path);
+          let mut auto_parser = crate::parser::AutoFileParser::new(&file_path);
           for map_event in auto_parser.parse() {
             let _ = sender.send(map_event);
             update.request_repaint();
@@ -672,6 +672,7 @@ impl Map {
   }
 
   /// Get the count of search results
+  #[must_use]
   pub fn get_search_results_count(&self) -> usize {
     if let Ok(layers) = self.layers.lock() {
       for layer in layers.iter() {

@@ -5,6 +5,7 @@ use crate::map::{
 use egui::Pos2;
 
 /// Find the closest geometry to a click position within a geometry (recursively for collections)
+#[allow(clippy::too_many_arguments)]
 pub fn find_closest_in_geometry<F1, F2>(
   layer_id: &str,
   shape_idx: usize,
@@ -23,46 +24,43 @@ pub fn find_closest_in_geometry<F1, F2>(
 {
   let click_pixel = transform.invert().apply(click_pos.into());
 
-  match geometry {
-    Geometry::GeometryCollection(geometries, _) => {
-      // Recursively check each nested geometry
-      for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
-        let mut new_path = nested_path.to_vec();
-        new_path.push(nested_idx);
+  if let Geometry::GeometryCollection(geometries, _) = geometry {
+    // Recursively check each nested geometry
+    for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
+      let mut new_path = nested_path.to_vec();
+      new_path.push(nested_idx);
 
-        // Check if this nested geometry is visible
-        if !is_nested_visible(layer_id, shape_idx, &new_path) {
-          continue;
-        }
-
-        // Apply temporal filtering to nested geometry
-        if !is_temporal_visible(nested_geometry) {
-          continue;
-        }
-
-        find_closest_in_geometry(
-          layer_id,
-          shape_idx,
-          &new_path,
-          nested_geometry,
-          click_pos,
-          transform,
-          closest_distance,
-          closest_geometry,
-          is_nested_visible,
-          is_temporal_visible,
-        );
+      // Check if this nested geometry is visible
+      if !is_nested_visible(layer_id, shape_idx, &new_path) {
+        continue;
       }
+
+      // Apply temporal filtering to nested geometry
+      if !is_temporal_visible(nested_geometry) {
+        continue;
+      }
+
+      find_closest_in_geometry(
+        layer_id,
+        shape_idx,
+        &new_path,
+        nested_geometry,
+        click_pos,
+        transform,
+        closest_distance,
+        closest_geometry,
+        is_nested_visible,
+        is_temporal_visible,
+      );
     }
-    _ => {
-      // For individual geometries, calculate distance in map coordinates, then convert to screen pixels
-      let distance_map_coords = calculate_distance_to_geometry(geometry, &click_pixel);
-      let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
+  } else {
+    // For individual geometries, calculate distance in map coordinates, then convert to screen pixels
+    let distance_map_coords = calculate_distance_to_geometry(geometry, click_pixel);
+    let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
 
-      if distance_screen_pixels < *closest_distance {
-        *closest_distance = distance_screen_pixels;
-        *closest_geometry = Some((layer_id.to_string(), shape_idx, nested_path.to_vec()));
-      }
+    if distance_screen_pixels < *closest_distance {
+      *closest_distance = distance_screen_pixels;
+      *closest_geometry = Some((layer_id.to_string(), shape_idx, nested_path.to_vec()));
     }
   }
 }
@@ -70,13 +68,13 @@ pub fn find_closest_in_geometry<F1, F2>(
 /// Calculate distance from a point to any type of geometry
 fn calculate_distance_to_geometry(
   geometry: &Geometry<PixelCoordinate>,
-  click_pixel: &PixelCoordinate,
+  click_pixel: PixelCoordinate,
 ) -> f64 {
   match geometry {
     Geometry::Point(coord, _) => {
       let dx = click_pixel.x - coord.x;
       let dy = click_pixel.y - coord.y;
-      (dx * dx + dy * dy).sqrt() as f64
+      f64::from((dx * dx + dy * dy).sqrt())
     }
     Geometry::LineString(coords, _) => distance_to_linestring(coords, click_pixel),
     Geometry::Polygon(coords, _) => distance_to_polygon(coords, click_pixel),
@@ -88,21 +86,21 @@ fn calculate_distance_to_geometry(
 }
 
 /// Calculate distance from a point to a linestring
-fn distance_to_linestring(coords: &[PixelCoordinate], click_pixel: &PixelCoordinate) -> f64 {
+fn distance_to_linestring(coords: &[PixelCoordinate], click_pixel: PixelCoordinate) -> f64 {
   if coords.len() < 2 {
     return f64::INFINITY;
   }
 
   let mut min_distance = f64::INFINITY;
   for segment in coords.windows(2) {
-    let distance = point_to_line_segment_distance(click_pixel, &segment[0], &segment[1]);
+    let distance = point_to_line_segment_distance(click_pixel, segment[0], segment[1]);
     min_distance = min_distance.min(distance);
   }
   min_distance
 }
 
 /// Calculate distance from a point to a polygon (outline)
-fn distance_to_polygon(coords: &[PixelCoordinate], click_pixel: &PixelCoordinate) -> f64 {
+fn distance_to_polygon(coords: &[PixelCoordinate], click_pixel: PixelCoordinate) -> f64 {
   if coords.len() < 3 {
     return f64::INFINITY;
   }
@@ -113,7 +111,7 @@ fn distance_to_polygon(coords: &[PixelCoordinate], click_pixel: &PixelCoordinate
   for i in 0..coords.len() {
     let start = &coords[i];
     let end = &coords[(i + 1) % coords.len()];
-    let distance = point_to_line_segment_distance(click_pixel, start, end);
+    let distance = point_to_line_segment_distance(click_pixel, *start, *end);
     min_distance = min_distance.min(distance);
   }
 
@@ -122,9 +120,9 @@ fn distance_to_polygon(coords: &[PixelCoordinate], click_pixel: &PixelCoordinate
 
 /// Calculate the shortest distance from a point to a line segment
 fn point_to_line_segment_distance(
-  point: &PixelCoordinate,
-  line_start: &PixelCoordinate,
-  line_end: &PixelCoordinate,
+  point: PixelCoordinate,
+  line_start: PixelCoordinate,
+  line_end: PixelCoordinate,
 ) -> f64 {
   let dx = line_end.x - line_start.x;
   let dy = line_end.y - line_start.y;
@@ -133,7 +131,7 @@ fn point_to_line_segment_distance(
     // Line segment is actually a point
     let dx = point.x - line_start.x;
     let dy = point.y - line_start.y;
-    return (dx * dx + dy * dy).sqrt() as f64;
+    return f64::from((dx * dx + dy * dy).sqrt());
   }
 
   let t = ((point.x - line_start.x) * dx + (point.y - line_start.y) * dy) / (dx * dx + dy * dy);
@@ -144,7 +142,7 @@ fn point_to_line_segment_distance(
 
   let dx = point.x - closest_x;
   let dy = point.y - closest_y;
-  (dx * dx + dy * dy).sqrt() as f64
+  f64::from((dx * dx + dy * dy).sqrt())
 }
 
 #[cfg(test)]
@@ -157,7 +155,7 @@ mod tests {
     let line_start = PixelCoordinate { x: 0.0, y: 0.0 };
     let line_end = PixelCoordinate { x: 2.0, y: 0.0 };
 
-    let distance = point_to_line_segment_distance(&point, &line_start, &line_end);
+    let distance = point_to_line_segment_distance(point, line_start, line_end);
     assert!((distance - 1.0).abs() < 1e-10); // Should be 1.0
   }
 
@@ -170,7 +168,7 @@ mod tests {
     ];
     let click_pixel = PixelCoordinate { x: 5.0, y: 1.0 };
 
-    let distance = distance_to_linestring(&coords, &click_pixel);
+    let distance = distance_to_linestring(&coords, click_pixel);
     assert!((distance - 1.0).abs() < 1e-10); // Should be 1.0
   }
 }

@@ -12,7 +12,7 @@ fn test_filename_becomes_layer_name() {
   fs::write(filename, content).expect("Failed to write test file");
 
   // Parse it with AutoFileParser
-  let mut parser = AutoFileParser::new(PathBuf::from(filename));
+  let mut parser = AutoFileParser::new(&PathBuf::from(filename));
   let events: Vec<_> = parser.parse().collect();
 
   // Check that we get events
@@ -43,7 +43,7 @@ fn test_different_file_extensions() {
   ];
 
   for (filename, expected_layer_name) in test_cases {
-    let content = match filename.split('.').last().unwrap() {
+    let content = match filename.split('.').next_back().unwrap() {
       "geojson" | "json" => {
         r#"{"type": "Feature", "geometry": {"type": "Point", "coordinates": [10.0, 52.0]}}"#
       }
@@ -70,23 +70,21 @@ fn test_different_file_extensions() {
 
     fs::write(filename, content).expect("Failed to write test file");
 
-    let mut parser = AutoFileParser::new(PathBuf::from(filename));
+    let mut parser = AutoFileParser::new(&PathBuf::from(filename));
     let events: Vec<_> = parser.parse().collect();
 
     assert!(
       !events.is_empty(),
-      "Should get at least one event for {}",
-      filename
+      "Should get at least one event for {filename}"
     );
 
     if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(
         layer.id, expected_layer_name,
-        "Layer name should be '{}' for file '{}'",
-        expected_layer_name, filename
+        "Layer name should be '{expected_layer_name}' for file '{filename}'"
       );
     } else {
-      panic!("Expected first event to be a Layer event for {}", filename);
+      panic!("Expected first event to be a Layer event for {filename}");
     }
 
     fs::remove_file(filename).expect("Failed to remove test file");

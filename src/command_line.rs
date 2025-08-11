@@ -60,6 +60,7 @@ impl Default for CommandLine {
 }
 
 impl CommandLine {
+  #[must_use]
   pub fn new() -> Self {
     let mut cmd = Self {
       mode: CommandLineMode::Hidden,
@@ -139,6 +140,7 @@ impl CommandLine {
   }
 
   /// Check if command line is visible
+  #[must_use]
   pub fn is_visible(&self) -> bool {
     self.mode != CommandLineMode::Hidden
   }
@@ -155,17 +157,19 @@ impl CommandLine {
     if self.mode != CommandLineMode::Hidden {
       // Don't delete the command prefix (':' or '/')
       let min_len = match self.mode {
-        CommandLineMode::Normal => 1, // Keep ':'
-        CommandLineMode::Search => 1, // Keep '/'
-        CommandLineMode::Filter => 1, // Keep '&'
+        // Keep '/'
+        CommandLineMode::Filter | CommandLineMode::Search | CommandLineMode::Normal => 1, // Keep '&'
         CommandLineMode::Hidden => 0,
       };
 
-      if self.input.len() > min_len {
-        self.input.pop();
-      } else if self.input.len() == min_len {
-        // If we're at the prefix, hide the command line
-        self.hide();
+      match self.input.len().cmp(&min_len) {
+        std::cmp::Ordering::Greater => {
+          self.input.pop();
+        }
+        std::cmp::Ordering::Equal => {
+          self.hide();
+        }
+        std::cmp::Ordering::Less => {}
       }
     }
   }
@@ -190,7 +194,7 @@ impl CommandLine {
     let result = match self.mode {
       CommandLineMode::Normal => self.parse_normal_command(&command_text),
       CommandLineMode::Search => self.parse_search_command(&command_text),
-      CommandLineMode::Filter => self.parse_filter_command(&command_text),
+      CommandLineMode::Filter => Self::parse_filter_command(&command_text),
       CommandLineMode::Hidden => None,
     };
 
@@ -276,7 +280,7 @@ impl CommandLine {
       "show" => Some(Command::ShowLayer(args)),
       "hide" => Some(Command::HideLayer(args)),
       "toggle" => Some(Command::ToggleLayer(args)),
-      _ => Some(Command::Unknown(cmd_text.to_string())),
+      _ => Some(Command::Unknown((*cmd_text).to_string())),
     }
   }
 
@@ -297,7 +301,7 @@ impl CommandLine {
   }
 
   /// Parse filter command (starting with '&')
-  fn parse_filter_command(&mut self, input: &str) -> Option<Command> {
+  fn parse_filter_command(input: &str) -> Option<Command> {
     if !input.starts_with('&') {
       return None;
     }
@@ -323,6 +327,7 @@ impl CommandLine {
   }
 
   /// Get the current message
+  #[must_use]
   pub fn get_message(&self) -> Option<&(String, bool)> {
     self.message.as_ref()
   }

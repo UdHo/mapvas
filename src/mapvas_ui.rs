@@ -173,6 +173,7 @@ impl eframe::App for MapApp {
 
 impl MapApp {
   /// Execute a command from the command line
+  #[allow(clippy::too_many_lines)]
   fn execute_command(&mut self, command: Command, ctx: &egui::Context) {
     match command {
       Command::Quit => {
@@ -198,7 +199,7 @@ impl MapApp {
         let results_count = self.map.get_search_results_count();
         if results_count > 0 {
           self.command_line.set_message(
-            format!("Found {} results for '{}'", results_count, query),
+            format!("Found {results_count} results for '{query}'"),
             false,
           );
           // Show sidebar to display search results
@@ -206,16 +207,15 @@ impl MapApp {
         } else {
           self
             .command_line
-            .set_message(format!("No results found for '{}'", query), true);
+            .set_message(format!("No results found for '{query}'"), true);
         }
       }
       Command::SearchNext => {
         if self.map.next_search_result() {
           let results_count = self.map.get_search_results_count();
-          self.command_line.set_message(
-            format!("Next search result ({} total)", results_count),
-            false,
-          );
+          self
+            .command_line
+            .set_message(format!("Next search result ({results_count} total)"), false);
         } else {
           self
             .command_line
@@ -226,7 +226,7 @@ impl MapApp {
         if self.map.previous_search_result() {
           let results_count = self.map.get_search_results_count();
           self.command_line.set_message(
-            format!("Previous search result ({} total)", results_count),
+            format!("Previous search result ({results_count} total)"),
             false,
           );
         } else {
@@ -239,7 +239,7 @@ impl MapApp {
         self.map.filter_geometries(&query);
         self
           .command_line
-          .set_message(format!("Applied filter: '{}'", query), false);
+          .set_message(format!("Applied filter: '{query}'"), false);
       }
       Command::ClearFilter => {
         self.map.clear_filter();
@@ -250,7 +250,7 @@ impl MapApp {
       Command::GoTo(location) => {
         // TODO: Implement go to location (could use location search)
         self.command_line.set_message(
-          format!("Go to location '{}' not implemented yet", location),
+          format!("Go to location '{location}' not implemented yet"),
           true,
         );
       }
@@ -258,39 +258,39 @@ impl MapApp {
         // TODO: Implement focus on specific layer or geometry
         self
           .command_line
-          .set_message(format!("Focus on '{}' not implemented yet", target), true);
+          .set_message(format!("Focus on '{target}' not implemented yet"), true);
       }
       Command::ShowLayer(layer) => {
         if self.map.show_layer(&layer) {
           self
             .command_line
-            .set_message(format!("Showed layer '{}'", layer), false);
+            .set_message(format!("Showed layer '{layer}'"), false);
         } else {
           self
             .command_line
-            .set_message(format!("Layer '{}' not found", layer), true);
+            .set_message(format!("Layer '{layer}' not found"), true);
         }
       }
       Command::HideLayer(layer) => {
         if self.map.hide_layer(&layer) {
           self
             .command_line
-            .set_message(format!("Hid layer '{}'", layer), false);
+            .set_message(format!("Hid layer '{layer}'"), false);
         } else {
           self
             .command_line
-            .set_message(format!("Layer '{}' not found", layer), true);
+            .set_message(format!("Layer '{layer}' not found"), true);
         }
       }
       Command::ToggleLayer(layer) => {
         if self.map.toggle_layer(&layer) {
           self
             .command_line
-            .set_message(format!("Toggled layer '{}'", layer), false);
+            .set_message(format!("Toggled layer '{layer}'"), false);
         } else {
           self
             .command_line
-            .set_message(format!("Layer '{}' not found", layer), true);
+            .set_message(format!("Layer '{layer}' not found"), true);
         }
       }
       Command::ZoomIn => {
@@ -314,7 +314,7 @@ impl MapApp {
       Command::Unknown(cmd) => {
         self
           .command_line
-          .set_message(format!("Unknown command: '{}'", cmd), true);
+          .set_message(format!("Unknown command: '{cmd}'"), true);
       }
     }
   }

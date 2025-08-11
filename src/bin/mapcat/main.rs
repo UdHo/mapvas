@@ -99,7 +99,7 @@ async fn main() {
     } else {
       // Use file-based auto-parser for each file
       for file_path in &args.files {
-        let mut auto_parser = AutoFileParser::new(file_path.clone())
+        let mut auto_parser = AutoFileParser::new(file_path)
           .with_label_pattern(&args.label_pattern)
           .with_invert_coordinates(args.invert_coordinates);
         auto_parser.parse().for_each(|e| sender.send_event(e));

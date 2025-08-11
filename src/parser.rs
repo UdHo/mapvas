@@ -140,37 +140,37 @@ pub struct AutoFileParser {
 
 impl AutoFileParser {
   #[must_use]
-  pub fn new(path: PathBuf) -> Self {
+  pub fn new(path: &Path) -> Self {
     let mut parser = Self {
       parser_chain: Vec::new(),
-      path: path.clone(),
+      path: path.to_path_buf(),
       label_pattern: None,
       invert_coordinates: false,
     };
-    parser.parser_chain = parser.get_parser_chain(&path);
+    parser.parser_chain = parser.get_parser_chain(path);
     parser
   }
 
   #[must_use]
   pub fn with_label_pattern(mut self, label_pattern: &str) -> Self {
     self.label_pattern = Some(label_pattern.to_string());
-    self.parser_chain = self.get_parser_chain(&self.path.clone());
+    self.parser_chain = self.get_parser_chain(&self.path);
     self
   }
 
   #[must_use]
   pub fn with_invert_coordinates(mut self, invert_coordinates: bool) -> Self {
     self.invert_coordinates = invert_coordinates;
-    self.parser_chain = self.get_parser_chain(&self.path.clone());
+    self.parser_chain = self.get_parser_chain(&self.path);
     self
   }
 
-  fn create_grep_parser(&self) -> Box<GrepParser> {
+  fn create_grep_parser(&self) -> GrepParser {
     let mut grep_parser = GrepParser::new(self.invert_coordinates);
     if let Some(pattern) = &self.label_pattern {
       grep_parser = grep_parser.with_label_pattern(pattern);
     }
-    Box::new(grep_parser)
+    grep_parser
   }
 
   fn get_parser_chain(&self, path: &Path) -> Vec<Box<dyn FileParser>> {
@@ -182,24 +182,24 @@ impl AutoFileParser {
         "geojson" => {
           parsers.push(Box::new(GeoJsonParser::new()));
           parsers.push(Box::new(JsonParser::new()));
-          parsers.push(self.create_grep_parser());
+          parsers.push(Box::new(self.create_grep_parser()));
         }
         "json" => {
           parsers.push(Box::new(TTJsonParser::new()));
           parsers.push(Box::new(JsonParser::new()));
           parsers.push(Box::new(GeoJsonParser::new()));
-          parsers.push(self.create_grep_parser());
+          parsers.push(Box::new(self.create_grep_parser()));
         }
         "gpx" => {
           parsers.push(Box::new(GpxParser::new()));
-          parsers.push(self.create_grep_parser());
+          parsers.push(Box::new(self.create_grep_parser()));
         }
         "kml" | "xml" => {
           parsers.push(Box::new(KmlParser::new()));
-          parsers.push(self.create_grep_parser());
+          parsers.push(Box::new(self.create_grep_parser()));
         }
         "log" | "txt" => {
-          parsers.push(self.create_grep_parser());
+          parsers.push(Box::new(self.create_grep_parser()));
         }
         _ => {
           let filename = path
@@ -211,13 +211,13 @@ impl AutoFileParser {
           if filename.contains("geojson") {
             parsers.push(Box::new(GeoJsonParser::new()));
             parsers.push(Box::new(JsonParser::new()));
-            parsers.push(self.create_grep_parser());
+            parsers.push(Box::new(self.create_grep_parser()));
           } else if filename.contains("json") {
             parsers.push(Box::new(TTJsonParser::new()));
             parsers.push(Box::new(JsonParser::new()));
-            parsers.push(self.create_grep_parser());
+            parsers.push(Box::new(self.create_grep_parser()));
           } else {
-            parsers.push(self.create_grep_parser());
+            parsers.push(Box::new(self.create_grep_parser()));
           }
         }
       }
@@ -225,7 +225,7 @@ impl AutoFileParser {
       parsers.push(Box::new(TTJsonParser::new()));
       parsers.push(Box::new(JsonParser::new()));
       parsers.push(Box::new(GeoJsonParser::new()));
-      parsers.push(self.create_grep_parser());
+      parsers.push(Box::new(self.create_grep_parser()));
     }
 
     parsers
@@ -424,22 +424,22 @@ mod tests {
   fn test_auto_parser_extension_detection() {
     // Test that the correct parser chains are created for different extensions
     let geojson_path = PathBuf::from("test.geojson");
-    let auto_parser = AutoFileParser::new(geojson_path.clone());
+    let auto_parser = AutoFileParser::new(&geojson_path);
     let parsers = auto_parser.get_parser_chain(&geojson_path);
     assert!(parsers.len() >= 2); // Should have GeoJson, Json, and Grep as fallbacks
 
     let json_path = PathBuf::from("test.json");
-    let auto_parser = AutoFileParser::new(json_path.clone());
+    let auto_parser = AutoFileParser::new(&json_path);
     let parsers = auto_parser.get_parser_chain(&json_path);
     assert!(parsers.len() >= 3); // Should have TTJson, Json, GeoJson, and Grep as fallbacks
 
     let txt_path = PathBuf::from("test.txt");
-    let auto_parser = AutoFileParser::new(txt_path.clone());
+    let auto_parser = AutoFileParser::new(&txt_path);
     let parsers = auto_parser.get_parser_chain(&txt_path);
     assert_eq!(parsers.len(), 1); // Should only have Grep parser
 
     let no_ext_path = PathBuf::from("test");
-    let auto_parser = AutoFileParser::new(no_ext_path.clone());
+    let auto_parser = AutoFileParser::new(&no_ext_path);
     let parsers = auto_parser.get_parser_chain(&no_ext_path);
     assert!(parsers.len() >= 3); // Should try TTJson, Json, GeoJson, and Grep
   }
@@ -469,6 +469,7 @@ mod tests {
   }
 
   #[test]
+  #[allow(clippy::too_many_lines)]
   fn test_comprehensive_parser_comparison() {
     type TestFile = (&'static str, fn() -> Box<dyn FileParser>);
     let test_files: Vec<TestFile> = vec![
@@ -512,7 +513,7 @@ mod tests {
       let content_bytes = content.as_bytes().to_vec();
       let cursor1 = std::io::Cursor::new(content_bytes);
       let manual_events: Vec<_> = manual_parser.parse(Box::new(cursor1)).collect();
-      let mut auto_file_parser = AutoFileParser::new(PathBuf::from(file_path));
+      let mut auto_file_parser = AutoFileParser::new(&PathBuf::from(file_path));
       let extension_events: Vec<_> = auto_file_parser.parse().collect();
       let content_parser = ContentAutoParser::new(content.clone());
       let content_events = content_parser.parse();

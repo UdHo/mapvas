@@ -142,7 +142,7 @@ impl ExeCfg {
         Err(e) => {
           let raw_response = RawResponse {
             stdout: String::new(),
-            stderr: format!("Failed to execute command '{}': {}", cmd, e),
+            stderr: format!("Failed to execute command '{cmd}': {e}"),
             exit_code: None,
             command_type: CommandType::Executable,
           };
@@ -319,7 +319,7 @@ impl CurlCfg {
         Err(e) => {
           let raw_response = RawResponse {
             stdout: String::new(),
-            stderr: format!("Failed to fetch URL '{}': {}", url, e),
+            stderr: format!("Failed to fetch URL '{url}': {e}"),
             exit_code: None,
             command_type: CommandType::Curl,
           };
@@ -613,12 +613,12 @@ impl ExternalCommand {
       CommandType::Curl => "🌐 HTTP Request",
     };
 
-    ui.label(format!("Type: {}", command_type_str));
+    ui.label(format!("Type: {command_type_str}"));
 
     if let Some(exit_code) = response.exit_code {
       let status_text = match response.command_type {
-        CommandType::Executable => format!("Exit Code: {}", exit_code),
-        CommandType::Curl => format!("Status: {}", exit_code),
+        CommandType::Executable => format!("Exit Code: {exit_code}"),
+        CommandType::Curl => format!("Status: {exit_code}"),
       };
       ui.label(status_text);
     }
@@ -633,7 +633,7 @@ impl ExternalCommand {
 
       let (truncated_stdout, _was_truncated) =
         super::truncate_label_by_width(ui, &stdout_preview, available_width);
-      let stdout_text = format!("📝 Output: {}", truncated_stdout);
+      let stdout_text = format!("📝 Output: {truncated_stdout}");
 
       let stdout_response = ui.label(stdout_text);
       if stdout_response.clicked() {
@@ -643,8 +643,8 @@ impl ExternalCommand {
           command_type_str,
           if let Some(code) = response.exit_code {
             match response.command_type {
-              CommandType::Executable => format!("Exit Code: {}", code),
-              CommandType::Curl => format!("HTTP Status: {}", code),
+              CommandType::Executable => format!("Exit Code: {code}"),
+              CommandType::Curl => format!("HTTP Status: {code}"),
             }
           } else {
             "Status: Unknown".to_string()
@@ -665,7 +665,7 @@ impl ExternalCommand {
 
       let (truncated_stderr, _was_truncated) =
         super::truncate_label_by_width(ui, &stderr_preview, available_width);
-      let stderr_text = format!("⚠️  Error: {}", truncated_stderr);
+      let stderr_text = format!("⚠️  Error: {truncated_stderr}");
 
       let stderr_response = ui.small(stderr_text);
       if stderr_response.clicked() {
@@ -675,8 +675,8 @@ impl ExternalCommand {
           command_type_str,
           if let Some(code) = response.exit_code {
             match response.command_type {
-              CommandType::Executable => format!("Exit Code: {}", code),
-              CommandType::Curl => format!("HTTP Status: {}", code),
+              CommandType::Executable => format!("Exit Code: {code}"),
+              CommandType::Curl => format!("HTTP Status: {code}"),
             }
           } else {
             "Status: Unknown".to_string()

@@ -16,6 +16,7 @@ use egui::{Color32, Pos2, Rect, Ui};
 use regex::Regex;
 use std::{
   collections::HashMap,
+  fmt::Write,
   sync::{
     Arc,
     mpsc::{Receiver, Sender},
@@ -190,7 +191,7 @@ impl ShapeLayer {
 
     if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
       if closest_distance < HIGLIGHT_PIXEL_DISTANCE {
-        self.highlight_geometry(layer_id, shape_idx, nested_path);
+        self.highlight_geometry(&layer_id, shape_idx, &nested_path);
       } else {
         self.geometry_highlighter.clear_highlighting();
       }
@@ -1253,7 +1254,7 @@ impl ShapeLayer {
 
       if is_highlighted {
         // Draw only the highlight (solid/filled) - don't draw transparent version on top
-        self.draw_highlighted_geometry(geometry, painter, transform, false);
+        Self::draw_highlighted_geometry(geometry, painter, transform, false);
       } else {
         // Draw normal transparent geometry
         geometry.draw_with_style(painter, transform, self.config.heading_style);
@@ -1417,15 +1418,14 @@ impl ShapeLayer {
   }
 
   /// Highlight a geometry by its path (converts to ID-based highlighting)
-  fn highlight_geometry(&mut self, layer_id: String, shape_idx: usize, nested_path: Vec<usize>) {
+  fn highlight_geometry(&mut self, layer_id: &str, shape_idx: usize, nested_path: &[usize]) {
     self
       .geometry_highlighter
       .highlight_geometry(layer_id, shape_idx, nested_path);
   }
 
-  /// Draw highlighting for a single specific geometry using the geometry_highlighting module
+  /// Draw highlighting for a single specific geometry using the `geometry_highlighting` module
   fn draw_highlighted_geometry(
-    &self,
     geometry: &Geometry<PixelCoordinate>,
     painter: &egui::Painter,
     transform: &Transform,
@@ -1507,24 +1507,25 @@ impl ShapeLayer {
     self.search_results = results.clone();
 
     // Highlight all found geometries
-    if !results.is_empty() {
+    if results.is_empty() {
+      // Clear highlighting if no results found
+      self.geometry_highlighter.clear_highlighting();
+    } else {
       // Clear any previous highlighting
       self.geometry_highlighter.clear_highlighting();
 
       // Highlight the first search result
       if let Some((layer_id, shape_idx, nested_path)) = results.first() {
-        self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+        self.highlight_geometry(layer_id, *shape_idx, nested_path);
 
         // Show popup for the first search result
         self.show_search_result_popup();
       }
-    } else {
-      // Clear highlighting if no results found
-      self.geometry_highlighter.clear_highlighting();
     }
   }
 
   /// Get current search results
+  #[must_use]
   pub fn get_search_results(&self) -> &Vec<(String, usize, Vec<usize>)> {
     &self.search_results
   }
@@ -1542,11 +1543,11 @@ impl ShapeLayer {
           self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path)
         {
           // Convert to screen position using current transform
-          let screen_pos = if !self.current_transform.is_invalid() {
+          let screen_pos = if self.current_transform.is_invalid() {
+            egui::pos2(0.0, 0.0) // Fallback position
+          } else {
             let pixel_pos = self.current_transform.apply(coord);
             egui::pos2(pixel_pos.x, pixel_pos.y)
-          } else {
-            egui::pos2(0.0, 0.0) // Fallback position
           };
 
           let creation_time = std::time::SystemTime::now()
@@ -1581,8 +1582,8 @@ impl ShapeLayer {
       None => 0,
     };
 
-    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(next_idx) {
-      self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(next_idx).cloned() {
+      self.highlight_geometry(&layer_id, shape_idx, &nested_path);
       self.show_search_result_popup();
       true
     } else {
@@ -1617,8 +1618,8 @@ impl ShapeLayer {
       None => self.search_results.len() - 1,
     };
 
-    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(prev_idx) {
-      self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
+    if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(prev_idx).cloned() {
+      self.highlight_geometry(&layer_id, shape_idx, &nested_path);
       self.show_search_result_popup();
       true
     } else {
@@ -1637,7 +1638,7 @@ impl ShapeLayer {
     let mut current_geometry = shapes.get(shape_idx)?;
 
     // Navigate to the specific nested geometry if there's a path
-    for &idx in nested_path.iter() {
+    for &idx in nested_path {
       if let Geometry::GeometryCollection(geometries, _) = current_geometry {
         current_geometry = geometries.get(idx)?;
       } else {
@@ -1646,22 +1647,21 @@ impl ShapeLayer {
     }
 
     // Return representative coordinate based on geometry type
-    match current_geometry {
+    Self::get_geometry_first_coordinate(current_geometry)
+  }
+
+  /// Get the first coordinate from any geometry type
+  fn get_geometry_first_coordinate(
+    geometry: &Geometry<PixelCoordinate>,
+  ) -> Option<PixelCoordinate> {
+    match geometry {
       Geometry::Point(coord, _) => Some(*coord),
-      Geometry::LineString(coords, _) => coords.first().copied(),
-      Geometry::Polygon(coords, _) => coords.first().copied(),
+      Geometry::LineString(coords, _) | Geometry::Polygon(coords, _) => coords.first().copied(),
       Geometry::GeometryCollection(geometries, _) => {
         // For collections, try to get coordinate from first child geometry
-        if let Some(first_child) = geometries.first() {
-          match first_child {
-            Geometry::Point(coord, _) => Some(*coord),
-            Geometry::LineString(coords, _) => coords.first().copied(),
-            Geometry::Polygon(coords, _) => coords.first().copied(),
-            _ => None,
-          }
-        } else {
-          None
-        }
+        geometries
+          .first()
+          .and_then(Self::get_geometry_first_coordinate)
       }
     }
   }
@@ -1826,6 +1826,7 @@ impl Layer for ShapeLayer {
     for _event in self.recv.try_iter() {}
   }
 
+  #[allow(clippy::too_many_lines)]
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     profile_scope!("ShapeLayer::draw");
 
@@ -1871,7 +1872,7 @@ impl Layer for ShapeLayer {
 
             if is_highlighted {
               // Draw only the highlight (solid/filled) - don't draw transparent version on top
-              self.draw_highlighted_geometry(shape, ui.painter(), transform, false);
+              Self::draw_highlighted_geometry(shape, ui.painter(), transform, false);
             } else {
               // Draw normal transparent geometry
               self.draw_geometry_with_visibility(
@@ -1952,9 +1953,7 @@ impl Layer for ShapeLayer {
           }
         });
 
-      if !show_popup {
-        self.pending_detail_popup = None; // Clear if window was closed
-      } else {
+      if show_popup {
         // Also close on any click or escape key, but ignore clicks for a short period after creation
         ui.ctx().input(|i| {
           // Ignore clicks for 200ms after popup creation to prevent immediate closure
@@ -1964,6 +1963,8 @@ impl Layer for ShapeLayer {
             self.pending_detail_popup = None;
           }
         });
+      } else {
+        self.pending_detail_popup = None; // Clear if window was closed
       }
     }
   }
@@ -2114,7 +2115,7 @@ impl Layer for ShapeLayer {
         if let Some(shapes) = self.shape_map.get(&layer_id) {
           if let Some(clicked_shape) = shapes.get(shape_idx) {
             // Check if we clicked on a collection (either top-level or nested)
-            let clicked_geometry = self.get_geometry_at_path(clicked_shape, &nested_path);
+            let clicked_geometry = Self::get_geometry_at_path(clicked_shape, &nested_path);
             if let Some(Geometry::GeometryCollection(_, _)) = clicked_geometry {
               // Toggle expansion state for this collection
               let collection_key = (layer_id.clone(), shape_idx, nested_path.clone());
@@ -2160,7 +2161,6 @@ impl Layer for ShapeLayer {
 impl ShapeLayer {
   /// Navigate to a specific geometry within nested collections
   fn get_geometry_at_path<'a>(
-    &self,
     geometry: &'a Geometry<PixelCoordinate>,
     nested_path: &[usize],
   ) -> Option<&'a Geometry<PixelCoordinate>> {
@@ -2287,26 +2287,19 @@ impl ShapeLayer {
   }
 
   /// Generate detailed information about a geometry for popup display
+  #[allow(clippy::too_many_lines)]
   fn generate_geometry_detail_info(
     &self,
     layer_id: &str,
     shape_idx: usize,
     nested_path: &[usize],
   ) -> Option<String> {
-    let shapes = self.shape_map.get(layer_id);
-    if shapes.is_none() {
-      return None;
-    }
-
-    let current_shape = shapes.unwrap().get(shape_idx);
-    if current_shape.is_none() {
-      return None;
-    }
-
-    let mut current_geometry = current_shape.unwrap();
+    let shapes = self.shape_map.get(layer_id)?;
+    let current_shape = shapes.get(shape_idx)?;
+    let mut current_geometry = current_shape;
 
     // Navigate to the specific nested geometry if there's a path
-    for &idx in nested_path.iter() {
+    for &idx in nested_path {
       if let Geometry::GeometryCollection(geometries, _) = current_geometry {
         current_geometry = geometries.get(idx)?;
       } else {
@@ -2321,28 +2314,32 @@ impl ShapeLayer {
         let mut info = format!("📍 Point\nCoordinates: {:.6}, {:.6}", wgs84.lat, wgs84.lon);
 
         if let Some(label) = &metadata.label {
-          info.push_str(&format!("\nLabel: {}", label.full()));
+          write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!(
+            write!(
+              info,
               "\nTimestamp: {}",
               timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            ));
+            )
+            .unwrap();
           }
         }
 
-        info.push_str(&format!("\nLayer: {}", layer_id));
+        write!(info, "\nLayer: {layer_id}").unwrap();
         if !nested_path.is_empty() {
-          info.push_str(&format!(
+          write!(
+            info,
             "\nNested Path: {}",
             nested_path
               .iter()
-              .map(|i| i.to_string())
+              .map(std::string::ToString::to_string)
               .collect::<Vec<_>>()
               .join(" → ")
-          ));
+          )
+          .unwrap();
         }
 
         info
@@ -2352,28 +2349,32 @@ impl ShapeLayer {
         let mut info = format!("📏 LineString\nPoints: {}", coords.len());
 
         if let Some(label) = &metadata.label {
-          info.push_str(&format!("\nLabel: {}", label.full()));
+          write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!(
+            write!(
+              info,
               "\nTimestamp: {}",
               timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            ));
+            )
+            .unwrap();
           }
         }
 
-        info.push_str(&format!("\nLayer: {}", layer_id));
+        write!(info, "\nLayer: {layer_id}").unwrap();
         if !nested_path.is_empty() {
-          info.push_str(&format!(
+          write!(
+            info,
             "\nNested Path: {}",
             nested_path
               .iter()
-              .map(|i| i.to_string())
+              .map(std::string::ToString::to_string)
               .collect::<Vec<_>>()
               .join(" → ")
-          ));
+          )
+          .unwrap();
         }
 
         info
@@ -2383,28 +2384,32 @@ impl ShapeLayer {
         let mut info = format!("⬟ Polygon\nVertices: {}", coords.len());
 
         if let Some(label) = &metadata.label {
-          info.push_str(&format!("\nLabel: {}", label.full()));
+          write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!(
+            write!(
+              info,
               "\nTimestamp: {}",
               timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            ));
+            )
+            .unwrap();
           }
         }
 
-        info.push_str(&format!("\nLayer: {}", layer_id));
+        write!(info, "\nLayer: {layer_id}").unwrap();
         if !nested_path.is_empty() {
-          info.push_str(&format!(
+          write!(
+            info,
             "\nNested Path: {}",
             nested_path
               .iter()
-              .map(|i| i.to_string())
+              .map(std::string::ToString::to_string)
               .collect::<Vec<_>>()
               .join(" → ")
-          ));
+          )
+          .unwrap();
         }
 
         info
@@ -2414,28 +2419,32 @@ impl ShapeLayer {
         let mut info = format!("📁 Collection\nItems: {}", geometries.len());
 
         if let Some(label) = &metadata.label {
-          info.push_str(&format!("\nLabel: {}", label.full()));
+          write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!(
+            write!(
+              info,
               "\nTimestamp: {}",
               timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            ));
+            )
+            .unwrap();
           }
         }
 
-        info.push_str(&format!("\nLayer: {}", layer_id));
+        write!(info, "\nLayer: {layer_id}").unwrap();
         if !nested_path.is_empty() {
-          info.push_str(&format!(
+          write!(
+            info,
             "\nNested Path: {}",
             nested_path
               .iter()
-              .map(|i| i.to_string())
+              .map(std::string::ToString::to_string)
               .collect::<Vec<_>>()
               .join(" → ")
-          ));
+          )
+          .unwrap();
         }
 
         info
@@ -2446,6 +2455,7 @@ impl ShapeLayer {
   }
 
   /// Recursively find the closest individual geometry to a point
+  #[allow(clippy::too_many_arguments)]
   fn find_closest_in_geometry(
     &self,
     layer_id: &str,
@@ -2592,6 +2602,7 @@ mod tests {
 
   impl ShapeLayer {
     // Helper method for testing
+    #[allow(clippy::arc_with_non_send_sync)]
     fn new_with_test_receiver() -> Self {
       let (send, recv) = mpsc::channel();
       Self {
