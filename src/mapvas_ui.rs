@@ -228,6 +228,17 @@ impl MapApp {
           self.command_line.set_message("No search results available".to_string(), true);
         }
       }
+      Command::Filter(query) => {
+        self.map.filter_geometries(&query);
+        self.command_line.set_message(
+          format!("Applied filter: '{}'", query), 
+          false
+        );
+      }
+      Command::ClearFilter => {
+        self.map.clear_filter();
+        self.command_line.set_message("Filter cleared - showing all geometries".to_string(), false);
+      }
       Command::GoTo(location) => {
         // TODO: Implement go to location (could use location search)
         self.command_line.set_message(

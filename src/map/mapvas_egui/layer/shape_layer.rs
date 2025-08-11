@@ -54,6 +54,8 @@ pub struct ShapeLayer {
   current_transform: Transform,
   // Search results
   search_results: Vec<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
+  // Filter pattern (None = no filter active)
+  filter_pattern: Option<SearchPattern>,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -151,6 +153,7 @@ impl ShapeLayer {
       pending_detail_popup: None,
       current_transform: Transform::invalid(),
       search_results: Vec::new(),
+      filter_pattern: None,
     }
   }
 
@@ -311,16 +314,22 @@ impl ShapeLayer {
               .skip(start_idx)
               .take(ITEMS_PER_PAGE)
             {
-              self.show_shape_ui(ui, &layer_id, idx, shape);
-              if idx < end_idx - 1 {
-                ui.separator();
+              // Apply filter to sidebar display
+              if self.geometry_matches_filter(shape) {
+                self.show_shape_ui(ui, &layer_id, idx, shape);
+                if idx < end_idx - 1 {
+                  ui.separator();
+                }
               }
             }
           } else {
             for (shape_idx, shape) in shapes.iter().enumerate() {
-              self.show_shape_ui(ui, &layer_id, shape_idx, shape);
-              if shape_idx < shapes.len() - 1 {
-                ui.separator();
+              // Apply filter to sidebar display
+              if self.geometry_matches_filter(shape) {
+                self.show_shape_ui(ui, &layer_id, shape_idx, shape);
+                if shape_idx < shapes.len() - 1 {
+                  ui.separator();
+                }
               }
             }
           }
@@ -1634,6 +1643,70 @@ impl ShapeLayer {
     }
   }
 
+  /// Apply filter to hide non-matching geometries
+  pub fn filter_geometries(&mut self, query: &str) {
+    // Try to compile as regex first, fallback to literal string search
+    let filter_pattern = match regex::Regex::new(query) {
+      Ok(regex) => SearchPattern::Regex(regex),
+      Err(_) => {
+        // If regex compilation fails, treat as literal string (case-insensitive)
+        SearchPattern::Literal(query.to_lowercase())
+      }
+    };
+    
+    self.filter_pattern = Some(filter_pattern);
+  }
+
+  /// Clear filter and show all geometries
+  pub fn clear_filter(&mut self) {
+    self.filter_pattern = None;
+  }
+
+  /// Check if a geometry matches the current filter
+  fn geometry_matches_filter(&self, geometry: &Geometry<PixelCoordinate>) -> bool {
+    if let Some(ref pattern) = self.filter_pattern {
+      Self::geometry_matches_pattern_static(geometry, pattern)
+    } else {
+      true // No filter active, show all geometries
+    }
+  }
+
+  /// Check if a geometry matches a search pattern (static version)
+  fn geometry_matches_pattern_static(geometry: &Geometry<PixelCoordinate>, pattern: &SearchPattern) -> bool {
+    let metadata = match geometry {
+      Geometry::Point(_, metadata)
+      | Geometry::LineString(_, metadata)
+      | Geometry::Polygon(_, metadata)
+      | Geometry::GeometryCollection(_, metadata) => metadata,
+    };
+
+    // Check if metadata contains the search pattern
+    if let Some(label) = &metadata.label {
+      if Self::matches_pattern(&label.name, pattern) ||
+         Self::matches_pattern(&label.short(), pattern) ||
+         Self::matches_pattern(&label.full(), pattern) {
+        return true;
+      }
+      
+      if let Some(description) = &label.description {
+        if Self::matches_pattern(description, pattern) {
+          return true;
+        }
+      }
+    }
+
+    // For collections, check nested geometries recursively
+    if let Geometry::GeometryCollection(geometries, _) = geometry {
+      for nested_geometry in geometries {
+        if Self::geometry_matches_pattern_static(nested_geometry, pattern) {
+          return true;
+        }
+      }
+    }
+
+    false
+  }
+
   /// Check if text matches the search pattern
   fn matches_pattern(text: &str, pattern: &SearchPattern) -> bool {
     match pattern {
@@ -1753,6 +1826,11 @@ impl Layer for ShapeLayer {
               if !self.is_geometry_visible_at_time(shape, current_time) {
                 continue; // Skip this geometry if it's not visible at current time
               }
+            }
+
+            // Apply filter (only show geometries that match filter pattern)
+            if !self.geometry_matches_filter(shape) {
+              continue; // Skip this geometry if it doesn't match the filter
             }
 
             // Check if this top-level geometry is highlighted by ID
@@ -2401,6 +2479,7 @@ mod tests {
         pending_detail_popup: None,
         current_transform: Transform::invalid(),
         search_results: Vec::new(),
+        filter_pattern: None,
       }
     }
   }

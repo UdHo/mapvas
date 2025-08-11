@@ -625,6 +625,34 @@ impl Map {
     }
   }
 
+  /// Filter geometries across all layers
+  pub fn filter_geometries(&mut self, query: &str) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          shape_layer.filter_geometries(query);
+        }
+      }
+    }
+  }
+
+  /// Clear filter and show all geometries
+  pub fn clear_filter(&mut self) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if let Some(shape_layer) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
+        {
+          shape_layer.clear_filter();
+        }
+      }
+    }
+  }
+
   /// Get the count of search results
   pub fn get_search_results_count(&self) -> usize {
     if let Ok(layers) = self.layers.lock() {

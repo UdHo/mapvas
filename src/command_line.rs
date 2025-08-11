@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub enum CommandLineMode {
   Normal,    // Default mode, commands start with ':'
   Search,    // Search mode, commands start with '/'
+  Filter,    // Filter mode, commands start with '&'
   Hidden,    // Command line is not visible
 }
 
@@ -19,6 +20,10 @@ pub enum Command {
   Search(String),
   SearchNext,
   SearchPrev,
+  
+  // Filter commands
+  Filter(String),
+  ClearFilter,
   
   // Navigation commands
   GoTo(String),
@@ -98,6 +103,12 @@ impl CommandLine {
     self.input = "/".to_string();
   }
 
+  /// Enter filter mode (show command line with '&')
+  pub fn enter_filter_mode(&mut self) {
+    self.mode = CommandLineMode::Filter;
+    self.input = "&".to_string();
+  }
+
   /// Hide the command line
   pub fn hide(&mut self) {
     self.mode = CommandLineMode::Hidden;
@@ -124,6 +135,7 @@ impl CommandLine {
       let min_len = match self.mode {
         CommandLineMode::Normal => 1,  // Keep ':'
         CommandLineMode::Search => 1,  // Keep '/'
+        CommandLineMode::Filter => 1,  // Keep '&'
         CommandLineMode::Hidden => 0,
       };
       
@@ -156,6 +168,7 @@ impl CommandLine {
     let result = match self.mode {
       CommandLineMode::Normal => self.parse_normal_command(&command_text),
       CommandLineMode::Search => self.parse_search_command(&command_text),
+      CommandLineMode::Filter => self.parse_filter_command(&command_text),
       CommandLineMode::Hidden => None,
     };
 
@@ -197,6 +210,7 @@ impl CommandLine {
         self.input = match self.mode {
           CommandLineMode::Normal => ":".to_string(),
           CommandLineMode::Search => "/".to_string(),
+          CommandLineMode::Filter => "&".to_string(),
           CommandLineMode::Hidden => String::new(),
         };
       } else {
@@ -256,6 +270,22 @@ impl CommandLine {
     Some(Command::Search(search_term))
   }
 
+  /// Parse filter command (starting with '&')
+  fn parse_filter_command(&mut self, input: &str) -> Option<Command> {
+    if !input.starts_with('&') {
+      return None;
+    }
+
+    let filter_term = input[1..].to_string();
+    
+    if filter_term.is_empty() {
+      // Empty filter means clear filter
+      return Some(Command::ClearFilter);
+    }
+
+    Some(Command::Filter(filter_term))
+  }
+
   /// Set a message to display
   pub fn set_message(&mut self, message: String, is_error: bool) {
     self.message = Some((message, is_error));
@@ -289,6 +319,10 @@ pub fn handle_command_line_input(
           }
           Key::Slash if modifiers.is_none() && !cmd.is_visible() => {
             cmd.enter_search_mode();
+          }
+          _ if *key == Key::Num7 && modifiers.shift && !cmd.is_visible() => {
+            // Shift+7 produces '&' on most keyboard layouts
+            cmd.enter_filter_mode();
           }
           Key::Enter if cmd.is_visible() => {
             result = cmd.handle_enter();
@@ -373,6 +407,7 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
           let expected_prefix = match cmd.mode {
             CommandLineMode::Normal => ":",
             CommandLineMode::Search => "/",
+            CommandLineMode::Filter => "&",
             CommandLineMode::Hidden => "",
           };
           
