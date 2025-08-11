@@ -1,4 +1,7 @@
-use super::{Layer, LayerProperties, drawable::Drawable as _, geometry_selection, geometry_highlighting::GeometryHighlighter};
+use super::{
+  Layer, LayerProperties, drawable::Drawable as _, geometry_highlighting::GeometryHighlighter,
+  geometry_selection,
+};
 use crate::{
   config::Config,
   map::{
@@ -9,9 +12,8 @@ use crate::{
   profile_scope,
 };
 use chrono::{DateTime, Duration, Utc};
-use egui::{
-  Color32, Pos2, Rect, Ui,
-};
+use egui::{Color32, Pos2, Rect, Ui};
+use regex::Regex;
 use std::{
   collections::HashMap,
   sync::{
@@ -19,7 +21,6 @@ use std::{
     mpsc::{Receiver, Sender},
   },
 };
-use regex::Regex;
 
 const MAX_ITEMS_PER_COLLECTION: usize = 100;
 const ITEMS_PER_PAGE: usize = 50;
@@ -413,7 +414,11 @@ impl ShapeLayer {
     let geometry_key = (layer_id.to_string(), shape_idx);
     let geometry_visible = *self.geometry_visibility.get(&geometry_key).unwrap_or(&true);
     let geometry_key_for_highlight = (layer_id.to_string(), shape_idx, Vec::new());
-    let is_highlighted = self.geometry_highlighter.is_highlighted(&geometry_key_for_highlight.0, geometry_key_for_highlight.1, &geometry_key_for_highlight.2);
+    let is_highlighted = self.geometry_highlighter.is_highlighted(
+      &geometry_key_for_highlight.0,
+      geometry_key_for_highlight.1,
+      &geometry_key_for_highlight.2,
+    );
 
     let bg_color = if is_highlighted {
       Some(egui::Color32::from_rgb(100, 100, 200))
@@ -673,7 +678,6 @@ impl ShapeLayer {
       }
     }
 
-
     let mut color_picker_requests = Vec::new();
     for (layer_id, shapes) in &self.shape_map {
       for (shape_idx, shape) in shapes.iter().enumerate() {
@@ -871,7 +875,6 @@ impl ShapeLayer {
       .unwrap_or(&true);
 
     if let Geometry::GeometryCollection(nested_geometries, nested_metadata) = geometry {
-      // Collections get CollapsingHeader without extra spacing - egui handles the indentation
       let collection_key = nested_key.clone();
       let is_expanded = *self
         .collection_expansion
@@ -894,11 +897,6 @@ impl ShapeLayer {
           let total_items = nested_geometries.len();
 
           if total_items > MAX_ITEMS_PER_COLLECTION {
-            ui.label(format!(
-              "⚠️ Large collection with {total_items} items - showing paginated view"
-            ));
-            ui.separator();
-
             let current_page = *self
               .collection_pagination
               .get(&collection_key)
@@ -964,11 +962,6 @@ impl ShapeLayer {
       self
         .collection_expansion
         .insert(collection_key, is_currently_open);
-
-      // Handle double-click to show popup (TODO: implement popup)
-      if header_response.header_response.double_clicked() {
-        println!("TODO: Show detail popup for nested collection");
-      }
 
       // Add context menu for nested collection
       header_response.header_response.context_menu(|ui| {
@@ -1061,7 +1054,11 @@ impl ShapeLayer {
 
       // Check if this individual nested geometry is highlighted for sidebar background
       let geometry_key_for_highlight = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-      let is_highlighted = self.geometry_highlighter.is_highlighted(&geometry_key_for_highlight.0, geometry_key_for_highlight.1, &geometry_key_for_highlight.2);
+      let is_highlighted = self.geometry_highlighter.is_highlighted(
+        &geometry_key_for_highlight.0,
+        geometry_key_for_highlight.1,
+        &geometry_key_for_highlight.2,
+      );
 
       // Add background color to the horizontal response if highlighted
       if is_highlighted {
@@ -1249,7 +1246,10 @@ impl ShapeLayer {
       }
       // Check if this specific nested geometry is highlighted by ID
       let geometry_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-      let is_highlighted = self.geometry_highlighter.is_highlighted(&geometry_key.0, geometry_key.1, &geometry_key.2);
+      let is_highlighted =
+        self
+          .geometry_highlighter
+          .is_highlighted(&geometry_key.0, geometry_key.1, &geometry_key.2);
 
       if is_highlighted {
         // Draw only the highlight (solid/filled) - don't draw transparent version on top
@@ -1416,12 +1416,12 @@ impl ShapeLayer {
     }
   }
 
-
   /// Highlight a geometry by its path (converts to ID-based highlighting)
   fn highlight_geometry(&mut self, layer_id: String, shape_idx: usize, nested_path: Vec<usize>) {
-    self.geometry_highlighter.highlight_geometry(layer_id, shape_idx, nested_path);
+    self
+      .geometry_highlighter
+      .highlight_geometry(layer_id, shape_idx, nested_path);
   }
-
 
   /// Draw highlighting for a single specific geometry using the geometry_highlighting module
   fn draw_highlighted_geometry(
@@ -1434,7 +1434,6 @@ impl ShapeLayer {
     use super::geometry_highlighting::draw_highlighted_geometry;
     draw_highlighted_geometry(geometry, painter, transform, false);
   }
-
 
   fn show_delete_collection_button(
     &mut self,
@@ -1479,7 +1478,7 @@ impl ShapeLayer {
   /// Search for geometries that match the given query string (supports regex)
   pub fn search_geometries(&mut self, query: &str) {
     self.search_results.clear();
-    
+
     // Try to compile as regex first, fallback to literal string search
     let search_pattern = match regex::Regex::new(query) {
       Ok(regex) => SearchPattern::Regex(regex),
@@ -1488,34 +1487,34 @@ impl ShapeLayer {
         SearchPattern::Literal(query.to_lowercase())
       }
     };
-    
+
     // Collect results first to avoid borrowing issues
     let mut results = Vec::new();
-    
+
     for (layer_id, shapes) in &self.shape_map {
       for (shape_idx, shape) in shapes.iter().enumerate() {
         Self::search_in_geometry_static(
-          layer_id, 
-          shape_idx, 
-          &Vec::new(), 
-          shape, 
-          &search_pattern, 
-          &mut results
+          layer_id,
+          shape_idx,
+          &Vec::new(),
+          shape,
+          &search_pattern,
+          &mut results,
         );
       }
     }
-    
+
     self.search_results = results.clone();
-    
+
     // Highlight all found geometries
     if !results.is_empty() {
       // Clear any previous highlighting
       self.geometry_highlighter.clear_highlighting();
-      
+
       // Highlight the first search result
       if let Some((layer_id, shape_idx, nested_path)) = results.first() {
         self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
-        
+
         // Show popup for the first search result
         self.show_search_result_popup();
       }
@@ -1532,10 +1531,16 @@ impl ShapeLayer {
 
   /// Show popup for currently highlighted search result
   pub fn show_search_result_popup(&mut self) {
-    if let Some((layer_id, shape_idx, nested_path)) = self.geometry_highlighter.get_highlighted_geometry() {
-      if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
+    if let Some((layer_id, shape_idx, nested_path)) =
+      self.geometry_highlighter.get_highlighted_geometry()
+    {
+      if let Some(detail_info) =
+        self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path)
+      {
         // Find the geometry to get its representative coordinate for popup positioning
-        if let Some(coord) = self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path) {
+        if let Some(coord) =
+          self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path)
+        {
           // Convert to screen position using current transform
           let screen_pos = if !self.current_transform.is_invalid() {
             let pixel_pos = self.current_transform.apply(coord);
@@ -1543,12 +1548,12 @@ impl ShapeLayer {
           } else {
             egui::pos2(0.0, 0.0) // Fallback position
           };
-          
+
           let creation_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
-            
+
           self.pending_detail_popup = Some((screen_pos, coord, detail_info, creation_time));
         }
       }
@@ -1560,19 +1565,22 @@ impl ShapeLayer {
     if self.search_results.is_empty() {
       return false;
     }
-    
+
     let current_highlighted = self.geometry_highlighter.get_highlighted_geometry();
     let current_idx = if let Some(current) = current_highlighted {
-      self.search_results.iter().position(|result| result == &current)
+      self
+        .search_results
+        .iter()
+        .position(|result| result == &current)
     } else {
       None
     };
-    
+
     let next_idx = match current_idx {
       Some(idx) => (idx + 1) % self.search_results.len(),
       None => 0,
     };
-    
+
     if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(next_idx) {
       self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
       self.show_search_result_popup();
@@ -1587,19 +1595,28 @@ impl ShapeLayer {
     if self.search_results.is_empty() {
       return false;
     }
-    
+
     let current_highlighted = self.geometry_highlighter.get_highlighted_geometry();
     let current_idx = if let Some(current) = current_highlighted {
-      self.search_results.iter().position(|result| result == &current)
+      self
+        .search_results
+        .iter()
+        .position(|result| result == &current)
     } else {
       None
     };
-    
+
     let prev_idx = match current_idx {
-      Some(idx) => if idx == 0 { self.search_results.len() - 1 } else { idx - 1 },
+      Some(idx) => {
+        if idx == 0 {
+          self.search_results.len() - 1
+        } else {
+          idx - 1
+        }
+      }
       None => self.search_results.len() - 1,
     };
-    
+
     if let Some((layer_id, shape_idx, nested_path)) = self.search_results.get(prev_idx) {
       self.highlight_geometry(layer_id.clone(), *shape_idx, nested_path.clone());
       self.show_search_result_popup();
@@ -1618,7 +1635,7 @@ impl ShapeLayer {
   ) -> Option<PixelCoordinate> {
     let shapes = self.shape_map.get(layer_id)?;
     let mut current_geometry = shapes.get(shape_idx)?;
-    
+
     // Navigate to the specific nested geometry if there's a path
     for &idx in nested_path.iter() {
       if let Geometry::GeometryCollection(geometries, _) = current_geometry {
@@ -1627,7 +1644,7 @@ impl ShapeLayer {
         return None; // Invalid path
       }
     }
-    
+
     // Return representative coordinate based on geometry type
     match current_geometry {
       Geometry::Point(coord, _) => Some(*coord),
@@ -1659,7 +1676,7 @@ impl ShapeLayer {
         SearchPattern::Literal(query.to_lowercase())
       }
     };
-    
+
     self.filter_pattern = Some(filter_pattern);
   }
 
@@ -1678,7 +1695,10 @@ impl ShapeLayer {
   }
 
   /// Check if a geometry matches a search pattern (static version)
-  fn geometry_matches_pattern_static(geometry: &Geometry<PixelCoordinate>, pattern: &SearchPattern) -> bool {
+  fn geometry_matches_pattern_static(
+    geometry: &Geometry<PixelCoordinate>,
+    pattern: &SearchPattern,
+  ) -> bool {
     let metadata = match geometry {
       Geometry::Point(_, metadata)
       | Geometry::LineString(_, metadata)
@@ -1688,12 +1708,13 @@ impl ShapeLayer {
 
     // Check if metadata contains the search pattern
     if let Some(label) = &metadata.label {
-      if Self::matches_pattern(&label.name, pattern) ||
-         Self::matches_pattern(&label.short(), pattern) ||
-         Self::matches_pattern(&label.full(), pattern) {
+      if Self::matches_pattern(&label.name, pattern)
+        || Self::matches_pattern(&label.short(), pattern)
+        || Self::matches_pattern(&label.full(), pattern)
+      {
         return true;
       }
-      
+
       if let Some(description) = &label.description {
         if Self::matches_pattern(description, pattern) {
           return true;
@@ -1739,14 +1760,15 @@ impl ShapeLayer {
 
     // Check if metadata contains the search pattern
     let mut matches = false;
-    
+
     if let Some(label) = &metadata.label {
-      if Self::matches_pattern(&label.name, pattern) ||
-         Self::matches_pattern(&label.short(), pattern) ||
-         Self::matches_pattern(&label.full(), pattern) {
+      if Self::matches_pattern(&label.name, pattern)
+        || Self::matches_pattern(&label.short(), pattern)
+        || Self::matches_pattern(&label.full(), pattern)
+      {
         matches = true;
       }
-      
+
       if let Some(description) = &label.description {
         if Self::matches_pattern(description, pattern) {
           matches = true;
@@ -1764,12 +1786,12 @@ impl ShapeLayer {
         let mut nested_path = nested_path.to_vec();
         nested_path.push(nested_idx);
         Self::search_in_geometry_static(
-          layer_id, 
-          shape_idx, 
-          &nested_path, 
-          nested_geometry, 
-          pattern, 
-          results
+          layer_id,
+          shape_idx,
+          &nested_path,
+          nested_geometry,
+          pattern,
+          results,
         );
       }
     }
@@ -1806,10 +1828,10 @@ impl Layer for ShapeLayer {
 
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     profile_scope!("ShapeLayer::draw");
-    
+
     // Store current transform for popup positioning
     self.current_transform = *transform;
-    
+
     self.handle_new_shapes();
 
     if !self.visible() {
@@ -1841,7 +1863,11 @@ impl Layer for ShapeLayer {
 
             // Check if this top-level geometry is highlighted by ID
             let geometry_key = (layer_id.to_string(), shape_idx, Vec::new());
-            let is_highlighted = self.geometry_highlighter.is_highlighted(&geometry_key.0, geometry_key.1, &geometry_key.2);
+            let is_highlighted = self.geometry_highlighter.is_highlighted(
+              &geometry_key.0,
+              geometry_key.1,
+              &geometry_key.2,
+            );
 
             if is_highlighted {
               // Draw only the highlight (solid/filled) - don't draw transparent version on top
@@ -1864,20 +1890,22 @@ impl Layer for ShapeLayer {
 
     // Handle pending detail popup from double-click as lightweight positioned window
     // This needs to be in draw() so it shows regardless of sidebar state
-    if let Some((click_pos, click_world_coord, detail_info, creation_time)) = &self.pending_detail_popup {
+    if let Some((click_pos, click_world_coord, detail_info, creation_time)) =
+      &self.pending_detail_popup
+    {
       // Extract values to avoid borrow checker issues
       let click_pos = *click_pos;
       let click_world_coord = *click_world_coord;
       let detail_info = detail_info.clone();
       let creation_time = *creation_time;
-      
+
       // Calculate how long the popup has been visible
       let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
       let time_since_creation = current_time - creation_time;
-      
+
       // For the first 500ms, use click position for better UX
       // After that, track the click world coordinate so popup follows map movement
       let screen_pos = if time_since_creation < 0.5 {
@@ -1890,9 +1918,9 @@ impl Layer for ShapeLayer {
         let pixel_pos = self.current_transform.apply(click_world_coord);
         egui::pos2(pixel_pos.x, pixel_pos.y)
       };
-      
+
       let mut show_popup = true;
-      
+
       egui::Window::new("Geometry Info")
         .id(egui::Id::new("geometry_detail_context_menu"))
         .open(&mut show_popup)
@@ -1908,7 +1936,11 @@ impl Layer for ShapeLayer {
 
           // Split detail info into lines and format nicely
           for line in detail_info.lines() {
-            if line.starts_with("📍") || line.starts_with("📏") || line.starts_with("⬟") || line.starts_with("📦") {
+            if line.starts_with("📍")
+              || line.starts_with("📏")
+              || line.starts_with("⬟")
+              || line.starts_with("📦")
+            {
               ui.strong(line);
             } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
               ui.label(line);
@@ -1919,7 +1951,7 @@ impl Layer for ShapeLayer {
             }
           }
         });
-      
+
       if !show_popup {
         self.pending_detail_popup = None; // Clear if window was closed
       } else {
@@ -1927,7 +1959,7 @@ impl Layer for ShapeLayer {
         ui.ctx().input(|i| {
           // Ignore clicks for 200ms after popup creation to prevent immediate closure
           let ignore_clicks = time_since_creation < 0.2;
-          
+
           if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
             self.pending_detail_popup = None;
           }
@@ -2009,7 +2041,6 @@ impl Layer for ShapeLayer {
       shapes_header = shapes_header.open(Some(true));
     }
 
-
     shapes_header.show(ui, |ui| {
       self.show_shape_layers(ui);
     });
@@ -2064,10 +2095,12 @@ impl Layer for ShapeLayer {
     if let Some((layer_id, shape_idx, nested_path)) = closest_geometry {
       // Check if the geometry is within reasonable click distance (use same as hover highlighting)
       if closest_distance < HIGLIGHT_PIXEL_DISTANCE {
-        if let Some(detail_info) = self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path) {
+        if let Some(detail_info) =
+          self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path)
+        {
           // Convert click position to world coordinate for tracking
           let click_world_coord = transform.invert().apply(pos.into());
-          
+
           // Store current time to ignore immediate clicks
           let creation_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2085,8 +2118,13 @@ impl Layer for ShapeLayer {
             if let Some(Geometry::GeometryCollection(_, _)) = clicked_geometry {
               // Toggle expansion state for this collection
               let collection_key = (layer_id.clone(), shape_idx, nested_path.clone());
-              let current_expanded = *self.collection_expansion.get(&collection_key).unwrap_or(&false);
-              self.collection_expansion.insert(collection_key, !current_expanded);
+              let current_expanded = *self
+                .collection_expansion
+                .get(&collection_key)
+                .unwrap_or(&false);
+              self
+                .collection_expansion
+                .insert(collection_key, !current_expanded);
             }
           }
         }
@@ -2122,12 +2160,12 @@ impl Layer for ShapeLayer {
 impl ShapeLayer {
   /// Navigate to a specific geometry within nested collections
   fn get_geometry_at_path<'a>(
-    &self, 
-    geometry: &'a Geometry<PixelCoordinate>, 
-    nested_path: &[usize]
+    &self,
+    geometry: &'a Geometry<PixelCoordinate>,
+    nested_path: &[usize],
   ) -> Option<&'a Geometry<PixelCoordinate>> {
     let mut current_geometry = geometry;
-    
+
     for &path_index in nested_path {
       match current_geometry {
         Geometry::GeometryCollection(nested_geometries, _) => {
@@ -2140,7 +2178,7 @@ impl ShapeLayer {
         _ => return None, // Path continues but current geometry is not a collection
       }
     }
-    
+
     Some(current_geometry)
   }
 
@@ -2248,7 +2286,6 @@ impl ShapeLayer {
     }
   }
 
-
   /// Generate detailed information about a geometry for popup display
   fn generate_geometry_detail_info(
     &self,
@@ -2256,19 +2293,18 @@ impl ShapeLayer {
     shape_idx: usize,
     nested_path: &[usize],
   ) -> Option<String> {
-    
     let shapes = self.shape_map.get(layer_id);
     if shapes.is_none() {
       return None;
     }
-    
+
     let current_shape = shapes.unwrap().get(shape_idx);
     if current_shape.is_none() {
       return None;
     }
-    
+
     let mut current_geometry = current_shape.unwrap();
-    
+
     // Navigate to the specific nested geometry if there's a path
     for &idx in nested_path.iter() {
       if let Geometry::GeometryCollection(geometries, _) = current_geometry {
@@ -2283,89 +2319,129 @@ impl ShapeLayer {
       Geometry::Point(coord, metadata) => {
         let wgs84 = coord.as_wgs84();
         let mut info = format!("📍 Point\nCoordinates: {:.6}, {:.6}", wgs84.lat, wgs84.lon);
-        
+
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
-        
+
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+            info.push_str(&format!(
+              "\nTimestamp: {}",
+              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
           }
         }
-        
+
         info.push_str(&format!("\nLayer: {}", layer_id));
         if !nested_path.is_empty() {
-          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+          info.push_str(&format!(
+            "\nNested Path: {}",
+            nested_path
+              .iter()
+              .map(|i| i.to_string())
+              .collect::<Vec<_>>()
+              .join(" → ")
+          ));
         }
-        
+
         info
-      },
-      
+      }
+
       Geometry::LineString(coords, metadata) => {
         let mut info = format!("📏 LineString\nPoints: {}", coords.len());
-        
+
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
-        
+
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+            info.push_str(&format!(
+              "\nTimestamp: {}",
+              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
           }
         }
-        
+
         info.push_str(&format!("\nLayer: {}", layer_id));
         if !nested_path.is_empty() {
-          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+          info.push_str(&format!(
+            "\nNested Path: {}",
+            nested_path
+              .iter()
+              .map(|i| i.to_string())
+              .collect::<Vec<_>>()
+              .join(" → ")
+          ));
         }
-        
+
         info
-      },
-      
+      }
+
       Geometry::Polygon(coords, metadata) => {
         let mut info = format!("⬟ Polygon\nVertices: {}", coords.len());
-        
+
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
-        
+
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+            info.push_str(&format!(
+              "\nTimestamp: {}",
+              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
           }
         }
-        
+
         info.push_str(&format!("\nLayer: {}", layer_id));
         if !nested_path.is_empty() {
-          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+          info.push_str(&format!(
+            "\nNested Path: {}",
+            nested_path
+              .iter()
+              .map(|i| i.to_string())
+              .collect::<Vec<_>>()
+              .join(" → ")
+          ));
         }
-        
+
         info
-      },
-      
+      }
+
       Geometry::GeometryCollection(geometries, metadata) => {
         let mut info = format!("📁 Collection\nItems: {}", geometries.len());
-        
+
         if let Some(label) = &metadata.label {
           info.push_str(&format!("\nLabel: {}", label.full()));
         }
-        
+
         if let Some(time_data) = &metadata.time_data {
           if let Some(timestamp) = time_data.timestamp {
-            info.push_str(&format!("\nTimestamp: {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+            info.push_str(&format!(
+              "\nTimestamp: {}",
+              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
           }
         }
-        
+
         info.push_str(&format!("\nLayer: {}", layer_id));
         if !nested_path.is_empty() {
-          info.push_str(&format!("\nNested Path: {}", nested_path.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" → ")));
+          info.push_str(&format!(
+            "\nNested Path: {}",
+            nested_path
+              .iter()
+              .map(|i| i.to_string())
+              .collect::<Vec<_>>()
+              .join(" → ")
+          ));
         }
-        
+
         info
       }
     };
-    
+
     Some(detail_info)
   }
 
@@ -2393,7 +2469,10 @@ impl ShapeLayer {
       |layer_id, shape_idx, nested_path| {
         // Nested visibility check
         let nested_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-        *self.nested_geometry_visibility.get(&nested_key).unwrap_or(&true)
+        *self
+          .nested_geometry_visibility
+          .get(&nested_key)
+          .unwrap_or(&true)
       },
       |nested_geometry| {
         // Temporal visibility check
@@ -2402,7 +2481,7 @@ impl ShapeLayer {
         } else {
           true
         }
-      }
+      },
     );
   }
 }

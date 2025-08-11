@@ -1,8 +1,11 @@
 use crate::map::{
   coordinates::{PixelCoordinate, Transform},
-  geometry_collection::{Geometry, Metadata, DEFAULT_STYLE},
+  geometry_collection::{DEFAULT_STYLE, Geometry, Metadata},
 };
-use egui::{Color32, Painter, Shape, Stroke, epaint::{CircleShape, PathShape, PathStroke}};
+use egui::{
+  Color32, Painter, Shape, Stroke,
+  epaint::{CircleShape, PathShape, PathStroke},
+};
 use std::collections::HashMap;
 
 /// Manages geometry highlighting with unique IDs
@@ -34,7 +37,12 @@ impl GeometryHighlighter {
   }
 
   /// Highlight a geometry by its path
-  pub fn highlight_geometry(&mut self, layer_id: String, shape_idx: usize, nested_path: Vec<usize>) {
+  pub fn highlight_geometry(
+    &mut self,
+    layer_id: String,
+    shape_idx: usize,
+    nested_path: Vec<usize>,
+  ) {
     let geometry_id = self.get_or_create_geometry_id(&layer_id, shape_idx, &nested_path);
     self.highlight_geometry_by_id(geometry_id);
   }

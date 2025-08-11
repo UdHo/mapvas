@@ -129,9 +129,9 @@ impl ExeCfg {
             exit_code: output.status.code(),
             command_type: CommandType::Executable,
           };
-          
+
           let _ = response_sender.send(raw_response);
-          
+
           let cursor = std::io::Cursor::new(output.stdout);
           let buf_read: Box<dyn BufRead> = Box::new(cursor);
           let parsed = parser.parse(buf_read);
@@ -297,7 +297,7 @@ impl CurlCfg {
         .recv_string()
         .await
         .inspect_err(|e| error!("Could not fetch data: {e}"));
-      
+
       match response {
         Ok(response_body) => {
           let raw_response = RawResponse {
@@ -306,9 +306,9 @@ impl CurlCfg {
             exit_code: Some(200), // HTTP 200 OK
             command_type: CommandType::Curl,
           };
-          
+
           let _ = response_sender.send(raw_response);
-          
+
           let cursor = std::io::Cursor::new(response_body.into_bytes());
           let buf_read: Box<dyn BufRead> = Box::new(cursor);
           let parsed = parser.parse(buf_read);
@@ -612,9 +612,9 @@ impl ExternalCommand {
       CommandType::Executable => "🔧 Executable",
       CommandType::Curl => "🌐 HTTP Request",
     };
-    
+
     ui.label(format!("Type: {}", command_type_str));
-    
+
     if let Some(exit_code) = response.exit_code {
       let status_text = match response.command_type {
         CommandType::Executable => format!("Exit Code: {}", exit_code),
@@ -622,7 +622,7 @@ impl ExternalCommand {
       };
       ui.label(status_text);
     }
-    
+
     if !response.stdout.is_empty() {
       let available_width = (ui.available_width() - 80.0).max(30.0);
       let stdout_preview = if response.stdout.len() > 100 {
@@ -630,10 +630,11 @@ impl ExternalCommand {
       } else {
         response.stdout.replace('\n', " ")
       };
-      
-      let (truncated_stdout, _was_truncated) = super::truncate_label_by_width(ui, &stdout_preview, available_width);
+
+      let (truncated_stdout, _was_truncated) =
+        super::truncate_label_by_width(ui, &stdout_preview, available_width);
       let stdout_text = format!("📝 Output: {}", truncated_stdout);
-      
+
       let stdout_response = ui.label(stdout_text);
       if stdout_response.clicked() {
         let popup_id = egui::Id::new("external_command_stdout_popup");
@@ -653,7 +654,7 @@ impl ExternalCommand {
         ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
       }
     }
-    
+
     if !response.stderr.is_empty() {
       let available_width = (ui.available_width() - 80.0).max(30.0);
       let stderr_preview = if response.stderr.len() > 100 {
@@ -661,10 +662,11 @@ impl ExternalCommand {
       } else {
         response.stderr.replace('\n', " ")
       };
-      
-      let (truncated_stderr, _was_truncated) = super::truncate_label_by_width(ui, &stderr_preview, available_width);
+
+      let (truncated_stderr, _was_truncated) =
+        super::truncate_label_by_width(ui, &stderr_preview, available_width);
       let stderr_text = format!("⚠️  Error: {}", truncated_stderr);
-      
+
       let stderr_response = ui.small(stderr_text);
       if stderr_response.clicked() {
         let popup_id = egui::Id::new("external_command_stderr_popup");
@@ -684,7 +686,7 @@ impl ExternalCommand {
         ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
       }
     }
-    
+
     if response.stdout.is_empty() && response.stderr.is_empty() {
       ui.small("📭 No output");
     }
@@ -992,7 +994,6 @@ impl ExternalCommand {
         }
       }
     }
-
   }
 
   fn handle_all_popups(ui: &mut egui::Ui) {
@@ -1022,39 +1023,40 @@ impl ExternalCommand {
           _ => "Full Geometry Info",
         };
         // Use Area for lightweight popups instead of heavy Windows
-        if popup_id_str == "external_command_stdout_popup" || popup_id_str == "external_command_stderr_popup" {
+        if popup_id_str == "external_command_stdout_popup"
+          || popup_id_str == "external_command_stderr_popup"
+        {
           // Lightweight area-based popup for command responses
           egui::Area::new(popup_id)
             .movable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
-              egui::Frame::popup(ui.style())
-                .show(ui, |ui| {
-                  ui.set_max_width(600.0);
-                  ui.set_max_height(300.0);
-                  
-                  // Header with title and close/copy buttons
-                  ui.horizontal(|ui| {
-                    ui.strong(window_title);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                      if ui.button("✕").clicked() {
-                        is_open = false;
-                      }
-                      if ui.button("📋").on_hover_text("Copy all").clicked() {
-                        ui.ctx().copy_text(full_text.clone());
-                      }
-                    });
+              egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(600.0);
+                ui.set_max_height(300.0);
+
+                // Header with title and close/copy buttons
+                ui.horizontal(|ui| {
+                  ui.strong(window_title);
+                  ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("✕").clicked() {
+                      is_open = false;
+                    }
+                    if ui.button("📋").on_hover_text("Copy all").clicked() {
+                      ui.ctx().copy_text(full_text.clone());
+                    }
                   });
-                  
-                  ui.separator();
-                  
-                  egui::ScrollArea::vertical()
-                    .max_height(220.0)
-                    .show(ui, |ui| {
-                      ui.add(egui::Label::new(&full_text).wrap().selectable(true));
-                    });
                 });
+
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                  .max_height(220.0)
+                  .show(ui, |ui| {
+                    ui.add(egui::Label::new(&full_text).wrap().selectable(true));
+                  });
+              });
             });
         } else {
           // Keep existing window approach for geometry popups
@@ -1108,19 +1110,22 @@ impl Command for ExternalCommand {
         }
       }
     }
-    
+
     // Handle raw responses
     for response in self.common.response_rcv.try_iter() {
       self.common.raw_response = Some(response);
     }
-    
+
     if self.common.last_request > self.common.last_update
       || self.common.last_request.elapsed().as_millis() < 1_000
     {
       return;
     }
 
-    if self.cmd.run(self.common.send.clone(), self.common.response_send.clone()) {
+    if self
+      .cmd
+      .run(self.common.send.clone(), self.common.response_send.clone())
+    {
       self.common.last_request = std::time::Instant::now();
     }
   }

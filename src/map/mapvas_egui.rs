@@ -145,7 +145,6 @@ impl Map {
     self.geometry_info = None;
   }
 
-
   fn handle_keys(&mut self, events: impl Iterator<Item = egui::Event>, rect: Rect) {
     for event in events {
       if let egui::Event::Key {

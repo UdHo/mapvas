@@ -64,7 +64,6 @@ fn create_test_app_with_nested_kml() -> MapApp {
   MapApp::new(map, remote, data_holder, config)
 }
 
-
 #[tokio::test]
 async fn test_double_click_popup_nested_kml() {
   let app = create_test_app_with_nested_kml();
@@ -99,14 +98,13 @@ async fn test_double_click_popup_nested_kml() {
   // Try to double-click on a geometry in the map area
   // Note: In a real test, we would simulate double-clicking at specific coordinates
   // For now, we'll verify the UI structure exists
-  
+
   // Check that no popup windows exist initially
   // Note: We can't easily test for absence with egui_kittest, so we verify UI stability
   // The actual popup functionality is verified through the debug output in manual testing
 
   harness.snapshot("popup_nested_ready_for_interaction");
 }
-
 
 #[tokio::test]
 async fn test_popup_data_generation_functionality() {
@@ -170,7 +168,7 @@ async fn test_popup_memory_management() {
 
   let grid_only_button = harness.get_by_label("Grid Only");
   grid_only_button.click();
-  
+
   // Run several more frames to ensure stability
   for _ in 0..5 {
     harness.run();

@@ -144,7 +144,7 @@ impl Parser for GrepParser {
       Some(MapEvent::Layer(layer))
     }
   }
-  
+
   fn set_layer_name(&mut self, layer_name: String) {
     self.layer_name = layer_name;
   }
@@ -289,4 +289,3 @@ impl GrepParser {
     coordinates.is_valid().then_some(coordinates)
   }
 }
-

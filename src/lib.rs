@@ -1,3 +1,5 @@
+/// Vim-like command line interface.
+pub mod command_line;
 /// Contains the configuration for the application.
 pub mod config;
 /// Contains the main map logic, including drawing, zooming,...
@@ -12,5 +14,3 @@ pub mod profiling;
 pub mod remote;
 /// Location search functionality with multiple providers.
 pub mod search;
-/// Vim-like command line interface.
-pub mod command_line;

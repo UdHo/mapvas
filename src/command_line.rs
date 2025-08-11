@@ -3,10 +3,10 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandLineMode {
-  Normal,    // Default mode, commands start with ':'
-  Search,    // Search mode, commands start with '/'
-  Filter,    // Filter mode, commands start with '&'
-  Hidden,    // Command line is not visible
+  Normal, // Default mode, commands start with ':'
+  Search, // Search mode, commands start with '/'
+  Filter, // Filter mode, commands start with '&'
+  Hidden, // Command line is not visible
 }
 
 #[derive(Clone, Debug)]
@@ -15,30 +15,30 @@ pub enum Command {
   Quit,
   Write,
   WriteQuit,
-  
+
   // Search commands
   Search(String),
   SearchNext,
   SearchPrev,
-  
+
   // Filter commands
   Filter(String),
   ClearFilter,
-  
+
   // Navigation commands
   GoTo(String),
   Focus(String),
-  
+
   // Layer commands
   ShowLayer(String),
   HideLayer(String),
   ToggleLayer(String),
-  
+
   // View commands
   ZoomIn,
   ZoomOut,
   ZoomFit,
-  
+
   // Unknown command
   Unknown(String),
 }
@@ -70,25 +70,47 @@ impl CommandLine {
       message: None,
       command_handlers: HashMap::new(),
     };
-    
+
     cmd.setup_command_handlers();
     cmd
   }
 
   fn setup_command_handlers(&mut self) {
-    self.command_handlers.insert("q".to_string(), |_| Command::Quit);
-    self.command_handlers.insert("quit".to_string(), |_| Command::Quit);
-    self.command_handlers.insert("w".to_string(), |_| Command::Write);
-    self.command_handlers.insert("write".to_string(), |_| Command::Write);
-    self.command_handlers.insert("wq".to_string(), |_| Command::WriteQuit);
-    self.command_handlers.insert("x".to_string(), |_| Command::WriteQuit);
-    
-    self.command_handlers.insert("n".to_string(), |_| Command::SearchNext);
-    self.command_handlers.insert("N".to_string(), |_| Command::SearchPrev);
-    
-    self.command_handlers.insert("zi".to_string(), |_| Command::ZoomIn);
-    self.command_handlers.insert("zo".to_string(), |_| Command::ZoomOut);
-    self.command_handlers.insert("zf".to_string(), |_| Command::ZoomFit);
+    self
+      .command_handlers
+      .insert("q".to_string(), |_| Command::Quit);
+    self
+      .command_handlers
+      .insert("quit".to_string(), |_| Command::Quit);
+    self
+      .command_handlers
+      .insert("w".to_string(), |_| Command::Write);
+    self
+      .command_handlers
+      .insert("write".to_string(), |_| Command::Write);
+    self
+      .command_handlers
+      .insert("wq".to_string(), |_| Command::WriteQuit);
+    self
+      .command_handlers
+      .insert("x".to_string(), |_| Command::WriteQuit);
+
+    self
+      .command_handlers
+      .insert("n".to_string(), |_| Command::SearchNext);
+    self
+      .command_handlers
+      .insert("N".to_string(), |_| Command::SearchPrev);
+
+    self
+      .command_handlers
+      .insert("zi".to_string(), |_| Command::ZoomIn);
+    self
+      .command_handlers
+      .insert("zo".to_string(), |_| Command::ZoomOut);
+    self
+      .command_handlers
+      .insert("zf".to_string(), |_| Command::ZoomFit);
   }
 
   /// Enter command mode (show command line with ':')
@@ -133,12 +155,12 @@ impl CommandLine {
     if self.mode != CommandLineMode::Hidden {
       // Don't delete the command prefix (':' or '/')
       let min_len = match self.mode {
-        CommandLineMode::Normal => 1,  // Keep ':'
-        CommandLineMode::Search => 1,  // Keep '/'
-        CommandLineMode::Filter => 1,  // Keep '&'
+        CommandLineMode::Normal => 1, // Keep ':'
+        CommandLineMode::Search => 1, // Keep '/'
+        CommandLineMode::Filter => 1, // Keep '&'
         CommandLineMode::Hidden => 0,
       };
-      
+
       if self.input.len() > min_len {
         self.input.pop();
       } else if self.input.len() == min_len {
@@ -155,7 +177,7 @@ impl CommandLine {
     }
 
     let command_text = self.input.clone();
-    
+
     // Add to history if it's not empty and different from last command
     if !command_text.is_empty() && self.history.last() != Some(&command_text) {
       self.history.push(command_text.clone());
@@ -174,7 +196,7 @@ impl CommandLine {
 
     // Reset state
     self.hide();
-    
+
     result
   }
 
@@ -228,7 +250,7 @@ impl CommandLine {
     }
 
     let cmd_text = &input[1..].trim();
-    
+
     if cmd_text.is_empty() {
       return None;
     }
@@ -236,7 +258,11 @@ impl CommandLine {
     // Split command and arguments
     let parts: Vec<&str> = cmd_text.split_whitespace().collect();
     let cmd = parts[0];
-    let args = if parts.len() > 1 { parts[1..].join(" ") } else { String::new() };
+    let args = if parts.len() > 1 {
+      parts[1..].join(" ")
+    } else {
+      String::new()
+    };
 
     // Check built-in commands first
     if let Some(handler) = self.command_handlers.get(cmd) {
@@ -261,7 +287,7 @@ impl CommandLine {
     }
 
     let search_term = input[1..].to_string();
-    
+
     if search_term.is_empty() {
       return None;
     }
@@ -277,7 +303,7 @@ impl CommandLine {
     }
 
     let filter_term = input[1..].to_string();
-    
+
     if filter_term.is_empty() {
       // Empty filter means clear filter
       return Some(Command::ClearFilter);
@@ -303,16 +329,19 @@ impl CommandLine {
 }
 
 /// Handle keyboard input for vim-like command line
-pub fn handle_command_line_input(
-  cmd: &mut CommandLine,
-  ctx: &egui::Context,
-) -> Option<Command> {
+pub fn handle_command_line_input(cmd: &mut CommandLine, ctx: &egui::Context) -> Option<Command> {
   let mut result = None;
-  
+
   ctx.input(|i| {
     // Handle key presses
     for event in &i.events {
-      if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+      if let egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+      } = event
+      {
         match key {
           Key::Colon if modifiers.is_none() && !cmd.is_visible() => {
             cmd.enter_command_mode();
@@ -340,7 +369,7 @@ pub fn handle_command_line_input(
           _ => {}
         }
       }
-      
+
       // Handle text input only for activation keys when command line is not visible
       if let egui::Event::Text(text) = event {
         if !cmd.is_visible() {
@@ -379,13 +408,13 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
 
   let screen_rect = ctx.screen_rect();
   let height = 30.0;
-  
+
   egui::Area::new(egui::Id::new("command_line"))
     .fixed_pos(egui::pos2(0.0, screen_rect.max.y - height))
     .show(ctx, |ui| {
       ui.set_min_width(screen_rect.width());
       ui.set_min_height(height);
-      
+
       let frame = egui::Frame::NONE
         .fill(Color32::from_gray(40))
         .stroke(egui::Stroke::new(1.0, Color32::from_gray(80)));
@@ -394,15 +423,15 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
         ui.set_min_height(height);
         ui.horizontal(|ui| {
           ui.add_space(8.0);
-          
+
           // Show command line input
           let text_edit = egui::TextEdit::singleline(&mut cmd.input)
             .desired_width(ui.available_width() - 16.0)
             .font(egui::TextStyle::Monospace)
             .text_color(Color32::WHITE);
-            
+
           let response = ui.add(text_edit);
-          
+
           // Check if command prefix was deleted - if so, hide command line
           let expected_prefix = match cmd.mode {
             CommandLineMode::Normal => ":",
@@ -410,11 +439,11 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
             CommandLineMode::Filter => "&",
             CommandLineMode::Hidden => "",
           };
-          
+
           if cmd.is_visible() && !cmd.input.starts_with(expected_prefix) {
             cmd.hide();
           }
-          
+
           // Auto-focus the text input
           if cmd.is_visible() {
             response.request_focus();
@@ -428,19 +457,19 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
 fn show_status_message(message: &str, is_error: bool, ctx: &egui::Context) {
   let screen_rect = ctx.screen_rect();
   let height = 25.0;
-  
+
   egui::Area::new(egui::Id::new("status_message"))
     .fixed_pos(egui::pos2(0.0, screen_rect.max.y - height))
     .show(ctx, |ui| {
       ui.set_min_width(screen_rect.width());
       ui.set_min_height(height);
-      
+
       let (bg_color, text_color) = if is_error {
         (Color32::from_rgb(150, 40, 40), Color32::WHITE)
       } else {
         (Color32::from_gray(60), Color32::WHITE)
       };
-      
+
       let frame = egui::Frame::NONE
         .fill(bg_color)
         .stroke(egui::Stroke::new(1.0, Color32::from_gray(100)));

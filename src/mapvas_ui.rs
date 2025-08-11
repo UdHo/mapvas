@@ -3,12 +3,12 @@ use std::rc::Rc;
 use egui::Widget as _;
 
 use crate::{
+  command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
   config::{Config, HeadingStyle, TileProvider},
   map::mapvas_egui::{Map, MapLayerHolder},
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
-  command_line::{CommandLine, Command, handle_command_line_input, show_command_line_ui},
 };
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 
@@ -181,12 +181,16 @@ impl MapApp {
       }
       Command::Write => {
         // TODO: Implement save functionality
-        self.command_line.set_message("Write command not implemented yet".to_string(), true);
+        self
+          .command_line
+          .set_message("Write command not implemented yet".to_string(), true);
       }
       Command::WriteQuit => {
         // TODO: Implement save functionality, then quit
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        self.command_line.set_message("Write and quit".to_string(), false);
+        self
+          .command_line
+          .set_message("Write and quit".to_string(), false);
       }
       Command::Search(query) => {
         // Use the existing search functionality
@@ -194,121 +198,123 @@ impl MapApp {
         let results_count = self.map.get_search_results_count();
         if results_count > 0 {
           self.command_line.set_message(
-            format!("Found {} results for '{}'", results_count, query), 
-            false
+            format!("Found {} results for '{}'", results_count, query),
+            false,
           );
           // Show sidebar to display search results
           self.sidebar.show();
         } else {
-          self.command_line.set_message(
-            format!("No results found for '{}'", query), 
-            true
-          );
+          self
+            .command_line
+            .set_message(format!("No results found for '{}'", query), true);
         }
       }
       Command::SearchNext => {
         if self.map.next_search_result() {
           let results_count = self.map.get_search_results_count();
           self.command_line.set_message(
-            format!("Next search result ({} total)", results_count), 
-            false
+            format!("Next search result ({} total)", results_count),
+            false,
           );
         } else {
-          self.command_line.set_message("No search results available".to_string(), true);
+          self
+            .command_line
+            .set_message("No search results available".to_string(), true);
         }
       }
       Command::SearchPrev => {
         if self.map.previous_search_result() {
           let results_count = self.map.get_search_results_count();
           self.command_line.set_message(
-            format!("Previous search result ({} total)", results_count), 
-            false
+            format!("Previous search result ({} total)", results_count),
+            false,
           );
         } else {
-          self.command_line.set_message("No search results available".to_string(), true);
+          self
+            .command_line
+            .set_message("No search results available".to_string(), true);
         }
       }
       Command::Filter(query) => {
         self.map.filter_geometries(&query);
-        self.command_line.set_message(
-          format!("Applied filter: '{}'", query), 
-          false
-        );
+        self
+          .command_line
+          .set_message(format!("Applied filter: '{}'", query), false);
       }
       Command::ClearFilter => {
         self.map.clear_filter();
-        self.command_line.set_message("Filter cleared - showing all geometries".to_string(), false);
+        self
+          .command_line
+          .set_message("Filter cleared - showing all geometries".to_string(), false);
       }
       Command::GoTo(location) => {
         // TODO: Implement go to location (could use location search)
         self.command_line.set_message(
-          format!("Go to location '{}' not implemented yet", location), 
-          true
+          format!("Go to location '{}' not implemented yet", location),
+          true,
         );
       }
       Command::Focus(target) => {
         // TODO: Implement focus on specific layer or geometry
-        self.command_line.set_message(
-          format!("Focus on '{}' not implemented yet", target), 
-          true
-        );
+        self
+          .command_line
+          .set_message(format!("Focus on '{}' not implemented yet", target), true);
       }
       Command::ShowLayer(layer) => {
         if self.map.show_layer(&layer) {
-          self.command_line.set_message(
-            format!("Showed layer '{}'", layer), 
-            false
-          );
+          self
+            .command_line
+            .set_message(format!("Showed layer '{}'", layer), false);
         } else {
-          self.command_line.set_message(
-            format!("Layer '{}' not found", layer), 
-            true
-          );
+          self
+            .command_line
+            .set_message(format!("Layer '{}' not found", layer), true);
         }
       }
       Command::HideLayer(layer) => {
         if self.map.hide_layer(&layer) {
-          self.command_line.set_message(
-            format!("Hid layer '{}'", layer), 
-            false
-          );
+          self
+            .command_line
+            .set_message(format!("Hid layer '{}'", layer), false);
         } else {
-          self.command_line.set_message(
-            format!("Layer '{}' not found", layer), 
-            true
-          );
+          self
+            .command_line
+            .set_message(format!("Layer '{}' not found", layer), true);
         }
       }
       Command::ToggleLayer(layer) => {
         if self.map.toggle_layer(&layer) {
-          self.command_line.set_message(
-            format!("Toggled layer '{}'", layer), 
-            false
-          );
+          self
+            .command_line
+            .set_message(format!("Toggled layer '{}'", layer), false);
         } else {
-          self.command_line.set_message(
-            format!("Layer '{}' not found", layer), 
-            true
-          );
+          self
+            .command_line
+            .set_message(format!("Layer '{}' not found", layer), true);
         }
       }
       Command::ZoomIn => {
         self.map.zoom_in();
-        self.command_line.set_message("Zoomed in".to_string(), false);
+        self
+          .command_line
+          .set_message("Zoomed in".to_string(), false);
       }
       Command::ZoomOut => {
         self.map.zoom_out();
-        self.command_line.set_message("Zoomed out".to_string(), false);
+        self
+          .command_line
+          .set_message("Zoomed out".to_string(), false);
       }
       Command::ZoomFit => {
         self.map.zoom_fit();
-        self.command_line.set_message("Fit to view".to_string(), false);
+        self
+          .command_line
+          .set_message("Fit to view".to_string(), false);
       }
       Command::Unknown(cmd) => {
-        self.command_line.set_message(
-          format!("Unknown command: '{}'", cmd), 
-          true
-        );
+        self
+          .command_line
+          .set_message(format!("Unknown command: '{}'", cmd), true);
       }
     }
   }

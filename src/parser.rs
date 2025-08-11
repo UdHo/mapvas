@@ -90,7 +90,7 @@ pub trait FileParser {
   /// Gives an iterator over persed `MapEvents` parsed from read.
   /// This is the default method to use.
   fn parse(&mut self, file: Box<dyn BufRead>) -> Box<dyn Iterator<Item = MapEvent> + '_>;
-  
+
   /// Set the layer name for this parser (optional, defaults to parser-specific name)
   fn set_layer_name(&mut self, _layer_name: String) {
     // Default implementation does nothing - parsers can override if needed
@@ -233,7 +233,8 @@ impl AutoFileParser {
 
   pub fn parse(&mut self) -> Box<dyn Iterator<Item = MapEvent> + '_> {
     // Extract filename (without extension) for layer name
-    let layer_name = self.path
+    let layer_name = self
+      .path
       .file_stem()
       .and_then(|name| name.to_str())
       .unwrap_or("unknown")
@@ -242,7 +243,7 @@ impl AutoFileParser {
     for mut parser in self.parser_chain.drain(..) {
       // Set the layer name using FileParser trait method
       parser.set_layer_name(layer_name.clone());
-      
+
       let f = File::open(self.path.clone());
       if let Ok(f) = f {
         let read = BufReader::new(f);
@@ -275,7 +276,7 @@ pub struct ContentAutoParser {
 impl ContentAutoParser {
   #[must_use]
   pub fn new(content: String) -> Self {
-    Self { 
+    Self {
       content,
       label_pattern: None,
       invert_coordinates: false,
@@ -379,7 +380,7 @@ impl ContentAutoParser {
     for mut parser in parser_chain {
       // Set layer name to "stdin" for content parsed from stdin
       parser.set_layer_name("stdin".to_string());
-      
+
       let content_bytes = self.content.as_bytes().to_vec();
       let cursor = Cursor::new(content_bytes);
       let read: Box<dyn BufRead> = Box::new(cursor);
@@ -402,8 +403,8 @@ impl ContentAutoParser {
 #[cfg(test)]
 mod tests {
   use super::{AutoFileParser, ContentAutoParser, GeoJsonParser, GpxParser, JsonParser, KmlParser};
-  use crate::parser::{FileParser, GrepParser};
   use crate::map::map_event::MapEvent;
+  use crate::parser::{FileParser, GrepParser};
   use std::fs;
   use std::path::PathBuf;
 

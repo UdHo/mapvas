@@ -370,11 +370,15 @@ impl Layer for CommandLayer {
         continue;
       }
 
-      if let Some(distance_map_coords) = Self::calculate_distance_to_command(&**command, click_coord) {
+      if let Some(distance_map_coords) =
+        Self::calculate_distance_to_command(&**command, click_coord)
+      {
         // Convert map coordinate distance back to screen pixels
         let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
-        
-        if distance_screen_pixels < closest_distance_screen && distance_screen_pixels < tolerance_screen_pixels {
+
+        if distance_screen_pixels < closest_distance_screen
+          && distance_screen_pixels < tolerance_screen_pixels
+        {
           closest_distance_screen = distance_screen_pixels;
           found_command = Some(cmd_idx);
         }

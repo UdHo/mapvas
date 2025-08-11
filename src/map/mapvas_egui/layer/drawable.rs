@@ -95,7 +95,12 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
 
           // Draw heading arrow if present (also transparent)
           if let Some(heading) = metadata.heading {
-            let heading_shape = create_heading_arrow(center, heading, original_color.gamma_multiply(0.7), heading_style);
+            let heading_shape = create_heading_arrow(
+              center,
+              heading,
+              original_color.gamma_multiply(0.7),
+              heading_style,
+            );
             painter.add(heading_shape);
           }
 
