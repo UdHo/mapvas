@@ -18,6 +18,8 @@ pub struct TimelineLayer {
   is_playing: bool,
   /// Playback speed multiplier
   playback_speed: f32,
+  /// Step size for manual stepping (in seconds)
+  step_size: f32,
   /// Last update time for animation
   last_update: f64,
   /// Height of the timeline bar in pixels
@@ -49,6 +51,7 @@ impl TimelineLayer {
       interval_end: None,
       is_playing: false,
       playback_speed: 1.0,
+      step_size: 60.0, // Default 1 minute step in seconds
       last_update: 0.0,
       timeline_height: 60.0,
       margin: 20.0,
@@ -172,6 +175,44 @@ impl TimelineLayer {
     }
   }
 
+  /// Step the interval forward by step_size
+  fn step_forward(&mut self) {
+    if let (Some(start), Some(end)) = (self.interval_start, self.interval_end) {
+      let step_duration = Duration::seconds(self.step_size as i64);
+      let interval_duration = end.signed_duration_since(start);
+
+      let new_start = start + step_duration;
+      let new_end = new_start + interval_duration;
+
+      // Don't step beyond the total time range
+      if let Some(max_end) = self.time_end {
+        if new_end <= max_end {
+          self.interval_start = Some(new_start);
+          self.interval_end = Some(new_end);
+        }
+      }
+    }
+  }
+
+  /// Step the interval backward by step_size
+  fn step_backward(&mut self) {
+    if let (Some(start), Some(end)) = (self.interval_start, self.interval_end) {
+      let step_duration = Duration::seconds(self.step_size as i64);
+      let interval_duration = end.signed_duration_since(start);
+
+      let new_start = start - step_duration;
+      let new_end = new_start + interval_duration;
+
+      // Don't step before the total time range
+      if let Some(min_start) = self.time_start {
+        if new_start >= min_start {
+          self.interval_start = Some(new_start);
+          self.interval_end = Some(new_end);
+        }
+      }
+    }
+  }
+
   /// Format datetime intelligently based on the time span
   fn format_time(&self, time: DateTime<Utc>, is_detailed: bool) -> String {
     if let (Some(start), Some(end)) = (self.time_start, self.time_end) {
@@ -220,10 +261,12 @@ impl TimelineLayer {
   #[allow(clippy::too_many_lines)]
   fn draw_timeline(&mut self, ui: &mut Ui, screen_rect: Rect) {
     // Position timeline at bottom with better margins - adjusted height for vertical layout
-    let timeline_width = (screen_rect.width() * 0.9).max(500.0).min(screen_rect.width() - 20.0); // Wider
+    let timeline_width = (screen_rect.width() * 0.9)
+      .max(500.0)
+      .min(screen_rect.width() - 20.0); // Wider
     let timeline_x = screen_rect.center().x - timeline_width / 2.0;
     let timeline_height = 75.0; // Increased height for proper spacing
-    
+
     let timeline_rect = Rect::from_min_size(
       Pos2::new(timeline_x, screen_rect.max.y - timeline_height - 20.0),
       Vec2::new(timeline_width, timeline_height),
@@ -232,13 +275,13 @@ impl TimelineLayer {
     // Better background with rounded corners and subtle shadow
     let bg_color = Color32::from_rgba_unmultiplied(0, 0, 0, 140);
     ui.painter().rect_filled(timeline_rect, 8.0, bg_color);
-    
+
     // Add subtle border
     ui.painter().rect_stroke(
-      timeline_rect, 
-      8.0, 
+      timeline_rect,
+      8.0,
       egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
-      egui::epaint::StrokeKind::Outside
+      egui::epaint::StrokeKind::Outside,
     );
 
     // Timeline track - centered within container for balanced spacing
@@ -250,15 +293,35 @@ impl TimelineLayer {
     );
 
     // Draw the full timeline track with better styling
-    ui.painter().rect_filled(track_rect, 5.0, Color32::from_gray(40));
-    ui.painter().rect_stroke(track_rect, 5.0, egui::Stroke::new(1.0, Color32::from_gray(80)), egui::epaint::StrokeKind::Outside);
+    ui.painter()
+      .rect_filled(track_rect, 5.0, Color32::from_gray(40));
+    ui.painter().rect_stroke(
+      track_rect,
+      5.0,
+      egui::Stroke::new(1.0, Color32::from_gray(80)),
+      egui::epaint::StrokeKind::Outside,
+    );
 
-    // Control buttons - positioned below the track and centered
-    let button_size = Vec2::new(24.0, 20.0); // Smaller buttons
-    let button_spacing = 6.0; // Closer spacing for smaller buttons
-    let total_button_width = button_size.x * 2.0 + button_spacing; // Two buttons plus spacing
-    let buttons_start_x = timeline_rect.center().x - total_button_width / 2.0; // Center the buttons
-    let button_y = track_rect.max.y + 6.0; // Position closer to track to save space
+    // Control buttons and sliders - positioned below the track and centered
+    let button_size = Vec2::new(24.0, 20.0); // Button size
+    let step_button_size = Vec2::new(20.0, 20.0); // Step buttons smaller
+    let slider_width = 60.0; // Slider width
+    let spacing = 8.0; // Spacing between elements
+
+    // Layout: [Speed Slider] [◀] [▶|⏸] [⏹] [▶] [Step Slider]  (labels are above)
+    let total_control_width = slider_width
+      + spacing
+      + step_button_size.x
+      + spacing
+      + button_size.x
+      + spacing
+      + button_size.x
+      + spacing
+      + step_button_size.x
+      + spacing
+      + slider_width;
+    let controls_start_x = timeline_rect.center().x - total_control_width / 2.0;
+    let button_y = track_rect.max.y + 6.0;
 
     // Draw time labels if we have time data - positioned below buttons
     if let (Some(start), Some(end)) = (self.time_start, self.time_end) {
@@ -268,21 +331,24 @@ impl TimelineLayer {
       // Position labels better with background
       let label_bg = Color32::from_rgba_unmultiplied(0, 0, 0, 100);
       let label_padding = 4.0;
-      
+
       // Start label - positioned at same height as buttons
       let start_label_pos = Pos2::new(track_rect.min.x, button_y + button_size.y / 2.0); // Center with buttons
-      let start_text_size = ui.painter().layout_no_wrap(
-        start_text.clone(), 
-        FontId::proportional(10.0), // Smaller font
-        Color32::WHITE
-      ).size();
+      let start_text_size = ui
+        .painter()
+        .layout_no_wrap(
+          start_text.clone(),
+          FontId::proportional(10.0), // Smaller font
+          Color32::WHITE,
+        )
+        .size();
       ui.painter().rect_filled(
         Rect::from_min_size(
           start_label_pos - Vec2::new(label_padding, start_text_size.y / 2.0 + label_padding),
-          start_text_size + Vec2::splat(label_padding * 2.0)
+          start_text_size + Vec2::splat(label_padding * 2.0),
         ),
         3.0,
-        label_bg
+        label_bg,
       );
       ui.painter().text(
         start_label_pos,
@@ -294,18 +360,25 @@ impl TimelineLayer {
 
       // End label - positioned at same height as buttons
       let end_label_pos = Pos2::new(track_rect.max.x, button_y + button_size.y / 2.0); // Center with buttons
-      let end_text_size = ui.painter().layout_no_wrap(
-        end_text.clone(), 
-        FontId::proportional(10.0), // Smaller font
-        Color32::WHITE
-      ).size();
+      let end_text_size = ui
+        .painter()
+        .layout_no_wrap(
+          end_text.clone(),
+          FontId::proportional(10.0), // Smaller font
+          Color32::WHITE,
+        )
+        .size();
       ui.painter().rect_filled(
         Rect::from_min_size(
-          end_label_pos - Vec2::new(end_text_size.x + label_padding, end_text_size.y / 2.0 + label_padding),
-          end_text_size + Vec2::splat(label_padding * 2.0)
+          end_label_pos
+            - Vec2::new(
+              end_text_size.x + label_padding,
+              end_text_size.y / 2.0 + label_padding,
+            ),
+          end_text_size + Vec2::splat(label_padding * 2.0),
         ),
         3.0,
-        label_bg
+        label_bg,
       );
       ui.painter().text(
         end_label_pos,
@@ -478,18 +551,24 @@ impl TimelineLayer {
           // Background for interval labels - more opaque blue
           let label_bg = Color32::from_rgba_unmultiplied(100, 150, 255, 220); // More opaque blue
           let label_padding = 4.0; // Increased padding
-          
+
           // Start interval label - positioned above track with enough clearance
-          let start_text_size = ui.painter().layout_no_wrap(
-            interval_start_text.clone(), 
-            FontId::proportional(10.0), 
-            Color32::WHITE
-          ).size();
+          let start_text_size = ui
+            .painter()
+            .layout_no_wrap(
+              interval_start_text.clone(),
+              FontId::proportional(10.0),
+              Color32::WHITE,
+            )
+            .size();
           let start_label_pos = Pos2::new(interval_start_x, track_rect.min.y - 15.0); // Larger distance from track
           ui.painter().rect_filled(
-            Rect::from_center_size(start_label_pos, start_text_size + Vec2::splat(label_padding * 2.0)),
+            Rect::from_center_size(
+              start_label_pos,
+              start_text_size + Vec2::splat(label_padding * 2.0),
+            ),
             2.0,
-            label_bg
+            label_bg,
           );
           ui.painter().text(
             start_label_pos,
@@ -500,16 +579,22 @@ impl TimelineLayer {
           );
 
           // End interval label - positioned above track with enough clearance
-          let end_text_size = ui.painter().layout_no_wrap(
-            interval_end_text.clone(), 
-            FontId::proportional(10.0), 
-            Color32::WHITE
-          ).size();
+          let end_text_size = ui
+            .painter()
+            .layout_no_wrap(
+              interval_end_text.clone(),
+              FontId::proportional(10.0),
+              Color32::WHITE,
+            )
+            .size();
           let end_label_pos = Pos2::new(interval_end_x, track_rect.min.y - 15.0); // Larger distance from track
           ui.painter().rect_filled(
-            Rect::from_center_size(end_label_pos, end_text_size + Vec2::splat(label_padding * 2.0)),
+            Rect::from_center_size(
+              end_label_pos,
+              end_text_size + Vec2::splat(label_padding * 2.0),
+            ),
             2.0,
-            label_bg
+            label_bg,
           );
           ui.painter().text(
             end_label_pos,
@@ -522,91 +607,240 @@ impl TimelineLayer {
       }
     }
 
-    // Play/Pause button with better styling
-    let play_button_rect = Rect::from_min_size(
-      Pos2::new(buttons_start_x, button_y), 
-      button_size
+    // Layout positions for all controls
+    let mut x_pos = controls_start_x;
+
+    // Speed label to the left of slider at button level
+    let speed_text = format!("Speed: {:.1}x", self.playback_speed);
+    ui.painter().text(
+      Pos2::new(x_pos - 9.0, button_y + button_size.y / 2.0),
+      egui::Align2::RIGHT_CENTER,
+      speed_text,
+      FontId::proportional(8.0),
+      Color32::from_gray(180),
     );
 
+    let speed_slider_rect = Rect::from_min_size(
+      Pos2::new(x_pos - 2.0, button_y + 5.0), // Move slider down a few pixels
+      Vec2::new(slider_width, 10.0),          // Same height as timeline track
+    );
+    let speed_response = ui.allocate_rect(speed_slider_rect, Sense::click_and_drag());
+
+    // Draw speed slider track (exactly like timeline)
+    ui.painter()
+      .rect_filled(speed_slider_rect, 5.0, Color32::from_gray(40));
+    ui.painter().rect_stroke(
+      speed_slider_rect,
+      5.0,
+      egui::Stroke::new(1.0, Color32::from_gray(80)),
+      egui::epaint::StrokeKind::Outside,
+    );
+
+    // Handle speed slider interaction
+    if speed_response.dragged() {
+      if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+        let relative_x = (pointer_pos.x - speed_slider_rect.min.x) / speed_slider_rect.width();
+        self.playback_speed = (relative_x.clamp(0.0, 1.0) * 4.0 + 0.25).clamp(0.25, 4.0); // Range 0.25x to 4x
+      }
+    }
+
+    // Draw speed slider handle (exactly like timeline handles)
+    let speed_handle_x =
+      speed_slider_rect.min.x + ((self.playback_speed - 0.25) / 3.75) * speed_slider_rect.width();
+    let handle_size = 12.0; // Same as timeline
+    let handle_color = Color32::from_rgb(255, 255, 255); // Same as timeline
+
+    ui.painter().circle_filled(
+      Pos2::new(speed_handle_x, speed_slider_rect.center().y),
+      handle_size / 2.0,
+      if speed_response.hovered() {
+        Color32::from_rgb(255, 255, 150) // Same hover color as timeline
+      } else {
+        handle_color
+      },
+    );
+
+    x_pos += slider_width + spacing;
+
+    // Step backward button
+    let step_back_rect = Rect::from_min_size(Pos2::new(x_pos, button_y), step_button_size);
+    let step_back_response = ui.allocate_rect(step_back_rect, Sense::click());
+    if step_back_response.clicked() {
+      self.step_backward();
+    }
+
+    let step_back_bg = if step_back_response.hovered() {
+      Color32::from_rgba_unmultiplied(255, 255, 255, 40)
+    } else {
+      Color32::from_rgba_unmultiplied(255, 255, 255, 20)
+    };
+    ui.painter().rect_filled(step_back_rect, 3.0, step_back_bg);
+    ui.painter().rect_stroke(
+      step_back_rect,
+      3.0,
+      egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+      egui::epaint::StrokeKind::Outside,
+    );
+    ui.painter().text(
+      step_back_rect.center(),
+      egui::Align2::CENTER_CENTER,
+      "◀",
+      FontId::proportional(12.0),
+      Color32::WHITE,
+    );
+
+    x_pos += step_button_size.x + spacing;
+
+    // Play/Pause button
+    let play_button_rect = Rect::from_min_size(Pos2::new(x_pos, button_y), button_size);
     let play_response = ui.allocate_rect(play_button_rect, Sense::click());
     if play_response.clicked() {
       self.is_playing = !self.is_playing;
     }
 
-    // Button background
     let play_bg_color = if play_response.hovered() {
       Color32::from_rgba_unmultiplied(255, 255, 255, 40)
     } else {
       Color32::from_rgba_unmultiplied(255, 255, 255, 20)
     };
-    ui.painter().rect_filled(play_button_rect, 4.0, play_bg_color);
+    ui.painter()
+      .rect_filled(play_button_rect, 4.0, play_bg_color);
     ui.painter().rect_stroke(
-      play_button_rect, 
-      4.0, 
+      play_button_rect,
+      4.0,
       egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
-      egui::epaint::StrokeKind::Outside
+      egui::epaint::StrokeKind::Outside,
     );
-
-    let play_color = if play_response.hovered() {
-      Color32::WHITE
-    } else {
-      Color32::from_gray(220)
-    };
 
     let play_text = if self.is_playing { "⏸" } else { "▶" };
     ui.painter().text(
       play_button_rect.center(),
       egui::Align2::CENTER_CENTER,
       play_text,
-      FontId::proportional(14.0), // Smaller font for smaller buttons
-      play_color,
+      FontId::proportional(14.0),
+      Color32::WHITE,
     );
+
+    x_pos += button_size.x + spacing;
 
     // Stop button
-    let stop_button_rect = Rect::from_min_size(
-      Pos2::new(buttons_start_x + button_size.x + button_spacing, button_y), 
-      button_size
-    );
-
+    let stop_button_rect = Rect::from_min_size(Pos2::new(x_pos, button_y), button_size);
     let stop_response = ui.allocate_rect(stop_button_rect, Sense::click());
     if stop_response.clicked() {
       self.is_playing = false;
-      // Reset interval to start
-      if let (Some(time_start), Some(interval_start), Some(interval_end)) =
-        (self.time_start, self.interval_start, self.interval_end)
-      {
-        let interval_duration = interval_end.signed_duration_since(interval_start);
-        self.interval_start = Some(time_start);
-        self.interval_end = Some(time_start + interval_duration);
-      }
     }
 
-    // Button background
     let stop_bg_color = if stop_response.hovered() {
       Color32::from_rgba_unmultiplied(255, 255, 255, 40)
     } else {
       Color32::from_rgba_unmultiplied(255, 255, 255, 20)
     };
-    ui.painter().rect_filled(stop_button_rect, 4.0, stop_bg_color);
+    ui.painter()
+      .rect_filled(stop_button_rect, 4.0, stop_bg_color);
     ui.painter().rect_stroke(
-      stop_button_rect, 
-      4.0, 
+      stop_button_rect,
+      4.0,
       egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
-      egui::epaint::StrokeKind::Outside
+      egui::epaint::StrokeKind::Outside,
     );
-
-    let stop_color = if stop_response.hovered() {
-      Color32::WHITE
-    } else {
-      Color32::from_gray(220)
-    };
-
     ui.painter().text(
       stop_button_rect.center(),
       egui::Align2::CENTER_CENTER,
       "⏹",
-      FontId::proportional(14.0), // Smaller font for smaller buttons
-      stop_color,
+      FontId::proportional(14.0),
+      Color32::WHITE,
+    );
+
+    x_pos += button_size.x + spacing;
+
+    // Step forward button
+    let step_forward_rect = Rect::from_min_size(Pos2::new(x_pos, button_y), step_button_size);
+    let step_forward_response = ui.allocate_rect(step_forward_rect, Sense::click());
+    if step_forward_response.clicked() {
+      self.step_forward();
+    }
+
+    let step_forward_bg = if step_forward_response.hovered() {
+      Color32::from_rgba_unmultiplied(255, 255, 255, 40)
+    } else {
+      Color32::from_rgba_unmultiplied(255, 255, 255, 20)
+    };
+    ui.painter()
+      .rect_filled(step_forward_rect, 3.0, step_forward_bg);
+    ui.painter().rect_stroke(
+      step_forward_rect,
+      3.0,
+      egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+      egui::epaint::StrokeKind::Outside,
+    );
+    ui.painter().text(
+      step_forward_rect.center(),
+      egui::Align2::CENTER_CENTER,
+      "▶",
+      FontId::proportional(12.0),
+      Color32::WHITE,
+    );
+
+    x_pos += step_button_size.x + spacing;
+
+    // Step size slider (right side) - identical to timeline styling
+    let step_slider_rect = Rect::from_min_size(
+      Pos2::new(x_pos, button_y + 5.0), // Move slider down a few pixels
+      Vec2::new(slider_width, 10.0),    // Same height as timeline track
+    );
+    let step_response = ui.allocate_rect(step_slider_rect, Sense::click_and_drag());
+
+    // Draw step slider track (exactly like timeline)
+    ui.painter()
+      .rect_filled(step_slider_rect, 5.0, Color32::from_gray(40));
+    ui.painter().rect_stroke(
+      step_slider_rect,
+      5.0,
+      egui::Stroke::new(1.0, Color32::from_gray(80)),
+      egui::epaint::StrokeKind::Outside,
+    );
+
+    // Handle step slider interaction (logarithmic scale for better UX)
+    if step_response.dragged() {
+      if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+        let relative_x = (pointer_pos.x - step_slider_rect.min.x) / step_slider_rect.width();
+        let clamped_x = relative_x.clamp(0.0, 1.0);
+        // Logarithmic scale: 1 second to 1 day (1 to 86400 seconds)
+        self.step_size = (1.0 * (86400.0_f32).powf(clamped_x)).clamp(1.0, 86400.0);
+      }
+    }
+
+    // Draw step slider handle (exactly like timeline handles)
+    let step_handle_x = step_slider_rect.min.x
+      + (self.step_size.ln() / (86400.0_f32).ln()) * step_slider_rect.width();
+    let handle_size = 12.0; // Same as timeline
+    let handle_color = Color32::from_rgb(255, 255, 255); // Same as timeline
+
+    ui.painter().circle_filled(
+      Pos2::new(step_handle_x, step_slider_rect.center().y),
+      handle_size / 2.0,
+      if step_response.hovered() {
+        Color32::from_rgb(255, 255, 150) // Same hover color as timeline
+      } else {
+        handle_color
+      },
+    );
+
+    let step_text = if self.step_size < 60.0 {
+      format!("Step: {}s", self.step_size as i32)
+    } else if self.step_size < 3600.0 {
+      format!("Step: {}m", (self.step_size / 60.0) as i32)
+    } else if self.step_size < 86400.0 {
+      format!("Step: {:.1}h", self.step_size / 3600.0)
+    } else {
+      format!("Step: {}d", (self.step_size / 86400.0) as i32)
+    };
+    ui.painter().text(
+      Pos2::new(step_slider_rect.max.x + 5.0, button_y + button_size.y / 2.0),
+      egui::Align2::LEFT_CENTER,
+      step_text,
+      FontId::proportional(8.0),
+      Color32::from_gray(180),
     );
   }
 }
@@ -731,4 +965,3 @@ impl Layer for TimelineLayer {
     });
   }
 }
-
