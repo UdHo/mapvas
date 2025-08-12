@@ -10,7 +10,7 @@ use crate::{
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
@@ -104,13 +104,10 @@ impl eframe::App for MapApp {
       if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
         self.sidebar.toggle();
       }
-      // Temporal filter toggle
+      // Timeline layer toggle
       if i.modifiers.ctrl && i.key_pressed(egui::Key::T) {
-        self.sidebar.temporal_controls.enabled = !self.sidebar.temporal_controls.enabled;
-        // Stop playing when disabling temporal filter
-        if !self.sidebar.temporal_controls.enabled {
-          self.sidebar.temporal_controls.is_playing = false;
-        }
+        let current_visible = self.map.is_timeline_visible();
+        self.map.set_timeline_visible(!current_visible);
       }
     });
 
@@ -127,15 +124,69 @@ impl eframe::App for MapApp {
       self.last_heading_style = current_config.heading_style;
     }
 
-    // Update temporal filtering on the map (only if enabled)
-    if self.sidebar.temporal_controls.enabled {
-      self.map.set_temporal_filter(
-        self.sidebar.temporal_controls.current_time,
-        self.sidebar.temporal_controls.time_window,
-      );
-    } else {
-      // Disable temporal filtering by passing None for current_time
+    // Always refresh timeline data to check for temporal events
+    self.sidebar.temporal_controls.init_from_layers(&*self.sidebar.map_content);
+    
+    // Check if we have temporal data, and auto-activate timeline if we do
+    let has_temporal_data = self.sidebar.temporal_controls.time_start.is_some() 
+      && self.sidebar.temporal_controls.time_end.is_some();
+    
+    if !has_temporal_data {
+      // No temporal data - hide timeline and disable temporal filtering
+      self.map.set_timeline_visible(false);
       self.map.set_temporal_filter(None, None);
+    } else {
+      // We have temporal data - auto-activate the timeline if it's not visible yet
+      if !self.map.is_timeline_visible() {
+        self.map.set_timeline_visible(true);
+      }
+      
+      // Timeline is visible and we have temporal data - update it
+      
+      // Sync playback state from timeline layer back to sidebar controls
+      let (timeline_playing, timeline_speed) = self.map.get_timeline_playback_state();
+      self.sidebar.temporal_controls.is_playing = timeline_playing;
+      self.sidebar.temporal_controls.playback_speed = timeline_speed;
+
+      // Get the current interval from the timeline layer
+      let (interval_start, interval_end) = self.map.get_timeline_interval();
+      
+      // Use the midpoint of the interval as current_time and the interval size as time_window
+      let (current_time, time_window) = if let (Some(start), Some(end)) = (interval_start, interval_end) {
+        let midpoint = start + (end.signed_duration_since(start) / 2);
+        let window_size = end.signed_duration_since(start);
+        (Some(midpoint), Some(window_size))
+      } else {
+        // Fallback to old behavior if timeline doesn't have an interval yet
+        (self.sidebar.temporal_controls.current_time, self.sidebar.temporal_controls.time_window)
+      };
+      
+      self.map.set_temporal_filter(current_time, time_window);
+      
+      // Update the timeline layer with current settings
+      let time_range = (
+        self.sidebar.temporal_controls.time_start,
+        self.sidebar.temporal_controls.time_end,
+      );
+      
+      // If we don't have an interval yet from the timeline, initialize with full range
+      let current_interval = if interval_start.is_none() || interval_end.is_none() {
+        if let (Some(start), Some(end)) = time_range {
+          // Start with the full range visible
+          (Some(start), Some(end))
+        } else {
+          (None, None)
+        }
+      } else {
+        (interval_start, interval_end)
+      };
+      
+      self.map.update_timeline(
+        time_range,
+        current_interval,
+        self.sidebar.temporal_controls.is_playing,
+        self.sidebar.temporal_controls.playback_speed,
+      );
     }
 
     // Show sidebar with smooth animations
@@ -326,19 +377,12 @@ impl MapApp {
           .set_message("Fit to view".to_string(), false);
       }
       Command::ToggleTemporalFilter => {
-        self.sidebar.temporal_controls.enabled = !self.sidebar.temporal_controls.enabled;
-        // Stop playing when disabling temporal filter
-        if !self.sidebar.temporal_controls.enabled {
-          self.sidebar.temporal_controls.is_playing = false;
-        }
-        let status = if self.sidebar.temporal_controls.enabled {
-          "enabled"
-        } else {
-          "disabled"
-        };
+        let current_visible = self.map.is_timeline_visible();
+        self.map.set_timeline_visible(!current_visible);
+        let status = if !current_visible { "enabled" } else { "disabled" };
         self
           .command_line
-          .set_message(format!("Temporal filter {status}"), false);
+          .set_message(format!("Timeline {status}"), false);
       }
       Command::Unknown(cmd) => {
         self
@@ -365,8 +409,6 @@ struct Sidebar {
 /// Controls for temporal visualization
 #[derive(Default)]
 struct TemporalControls {
-  /// Whether temporal filtering is enabled at all
-  enabled: bool,
   /// Whether timeline is currently playing
   is_playing: bool,
   /// Current time position in the timeline
@@ -431,6 +473,7 @@ impl TemporalControls {
     for layer in layer_reader.get_layers() {
       // Get temporal range directly from the layer trait method
       let (layer_earliest, layer_latest) = layer.get_temporal_range();
+      
 
       if let Some(layer_earliest) = layer_earliest {
         earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
@@ -440,23 +483,27 @@ impl TemporalControls {
         latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
       }
     }
+    
 
-    // If we found temporal data, use it and enable temporal filtering
+    // Only enable temporal filtering if we found actual temporal data
     if let (Some(start), Some(end)) = (earliest, latest) {
       self.time_start = Some(start);
       self.time_end = Some(end);
       if self.current_time.is_none() {
         self.current_time = Some(start);
       }
-      // Enable temporal filtering when temporal data is detected
-      self.enabled = true;
+      
+      // Initialize with a reasonable time window (10% of total range)
+      if self.time_window.is_none() {
+        let total_duration = end.signed_duration_since(start);
+        self.time_window = Some(total_duration / 10);
+      }
     } else {
-      // Fallback to timeline that matches our KML test data (2024-01-01 10:00 to 14:00)
-      let demo_start = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(); // Start before first point
-      let demo_end = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 15, 0, 0).unwrap(); // End after last point
-      self.time_start = Some(demo_start);
-      self.time_end = Some(demo_end);
-      self.current_time = Some(demo_start);
+      // No temporal data found - clear any existing temporal settings
+      self.time_start = None;
+      self.time_end = None;
+      self.current_time = None;
+      self.time_window = None;
     }
   }
 }
@@ -557,47 +604,6 @@ impl Sidebar {
     self.animation_progress >= 0.99
   }
 
-  /// Check if the timeline should be refreshed due to new temporal data
-  fn should_refresh_timeline(&self) -> bool {
-    // Get current temporal range from layers
-    let mut layer_reader = self.map_content.get_reader();
-
-    for layer in layer_reader.get_layers() {
-      let (earliest, latest) = layer.get_temporal_range();
-
-      if earliest.is_some() && latest.is_some() {
-        // If we have temporal data but no timeline, refresh
-        if self.temporal_controls.time_start.is_none() {
-          return true;
-        }
-
-        // If we currently have demo data (2024) but now have real temporal data, refresh
-        if let Some(current_start) = self.temporal_controls.time_start {
-          if current_start.year() == 2024 && current_start.month() == 1 && current_start.day() == 1
-          {
-            return true;
-          }
-        }
-
-        // Check if the actual temporal range differs from current timeline
-        if let (Some(current_start), Some(current_end), Some(layer_start), Some(layer_end)) = (
-          self.temporal_controls.time_start,
-          self.temporal_controls.time_end,
-          earliest,
-          latest,
-        ) {
-          // If the ranges don't match exactly, refresh
-          if current_start != layer_start || current_end != layer_end {
-            return true;
-          }
-        }
-
-        break;
-      }
-    }
-
-    false
-  }
 
   /// Easing function for smooth animations
   fn ease_out_cubic(t: f32) -> f32 {
@@ -667,16 +673,7 @@ impl Sidebar {
               self.search_ui.ui(ui, &self.remote.sender());
             });
 
-          // Temporal controls
-          egui::CollapsingHeader::new("⏰ Timeline")
-            .default_open(false)
-            .show(ui, |ui| {
-              // Always check if timeline needs refresh
-              if self.temporal_controls.time_start.is_none() || self.should_refresh_timeline() {
-                self.temporal_controls.init_from_layers(&*self.map_content);
-              }
-              self.temporal_controls_ui(ui);
-            });
+          // Timeline is now controlled through the Timeline layer in Map Layers section
 
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
@@ -697,142 +694,6 @@ impl Sidebar {
     }
   }
 
-  #[allow(clippy::too_many_lines)]
-  fn temporal_controls_ui(&mut self, ui: &mut egui::Ui) {
-    ui.vertical(|ui| {
-      // Enable/Disable temporal filtering toggle
-      ui.horizontal(|ui| {
-        let toggle_text = if self.temporal_controls.enabled {
-          "🕒 Temporal Filter: ON"
-        } else {
-          "🕒 Temporal Filter: OFF"
-        };
-        if ui.button(toggle_text)
-          .on_hover_text("Toggle temporal filtering (Ctrl+T)")
-          .clicked() {
-          self.temporal_controls.enabled = !self.temporal_controls.enabled;
-          // Stop playing when disabling temporal filter
-          if !self.temporal_controls.enabled {
-            self.temporal_controls.is_playing = false;
-          }
-        }
-      });
-
-      // Only show temporal controls if temporal filtering is enabled
-      if !self.temporal_controls.enabled {
-        ui.label("⚠ Temporal filtering is disabled. All timestamped data will be visible.");
-        return;
-      }
-
-      ui.separator();
-
-      // Play/Pause button
-      ui.horizontal(|ui| {
-        let play_button_text = if self.temporal_controls.is_playing {
-          "⏸ Pause"
-        } else {
-          "▶ Play"
-        };
-        if ui.button(play_button_text).clicked() {
-          self.temporal_controls.is_playing = !self.temporal_controls.is_playing;
-        }
-
-        // Stop button (resets to start)
-        if ui.button("⏹ Stop").clicked() {
-          self.temporal_controls.is_playing = false;
-          self.temporal_controls.current_time = self.temporal_controls.time_start;
-        }
-      });
-
-      ui.separator();
-
-      // Timeline scrubber
-      if let (Some(start), Some(end), Some(current)) = (
-        self.temporal_controls.time_start,
-        self.temporal_controls.time_end,
-        self.temporal_controls.current_time,
-      ) {
-        let total_duration = end.signed_duration_since(start);
-        let current_offset = current.signed_duration_since(start);
-
-        #[allow(clippy::cast_precision_loss)]
-        let total_seconds = total_duration.num_seconds() as f32;
-        #[allow(clippy::cast_precision_loss)]
-        let current_seconds = current_offset.num_seconds() as f32;
-
-        ui.label("Timeline Position:");
-        let mut position = current_seconds;
-        if ui
-          .add(
-            egui::Slider::new(&mut position, 0.0..=total_seconds)
-              .text("Time")
-              .show_value(false),
-          )
-          .changed()
-        {
-          #[allow(clippy::cast_possible_truncation)]
-          {
-            let new_offset = chrono::Duration::seconds(position as i64);
-            self.temporal_controls.current_time = Some(start + new_offset);
-          }
-        }
-
-        // Display current time
-        ui.label(format!(
-          "Current: {}",
-          current.format("%Y-%m-%d %H:%M:%S UTC")
-        ));
-        ui.label(format!(
-          "Range: {} to {}",
-          start.format("%Y-%m-%d %H:%M:%S UTC"),
-          end.format("%Y-%m-%d %H:%M:%S UTC")
-        ));
-      }
-
-      ui.separator();
-
-      // Playback speed control
-      ui.horizontal(|ui| {
-        ui.label("Speed:");
-        ui.add(
-          egui::Slider::new(&mut self.temporal_controls.playback_speed, 0.1..=10.0)
-            .text("x")
-            .logarithmic(true),
-        );
-      });
-
-      // Time window control
-      ui.horizontal(|ui| {
-        ui.label("Time Window:");
-        let mut has_window = self.temporal_controls.time_window.is_some();
-        if ui.checkbox(&mut has_window, "Moving window").changed() {
-          if has_window {
-            self.temporal_controls.time_window = Some(chrono::Duration::minutes(10));
-          } else {
-            self.temporal_controls.time_window = None;
-          }
-        }
-      });
-
-      if let Some(window_duration) = &mut self.temporal_controls.time_window {
-        #[allow(clippy::cast_precision_loss)]
-        let mut window_minutes = window_duration.num_minutes() as f32;
-        if ui
-          .add(
-            egui::Slider::new(&mut window_minutes, 1.0..=1440.0) // Up to 1 day
-              .text("minutes")
-              .logarithmic(true),
-          )
-          .changed()
-        {
-          #[allow(clippy::cast_possible_truncation)]
-          {
-            *window_duration = chrono::Duration::minutes(window_minutes as i64);
-          }
-        }
-      }
-    });
-  }
 }
 
 #[derive(Clone)]

@@ -15,11 +15,14 @@ mod screenshot;
 mod shape_layer;
 /// Draws the map.
 mod tile_layer;
+/// Timeline overlay for temporal visualization.
+mod timeline_layer;
 
 pub use commands::{CommandLayer, ParameterUpdate};
 pub use screenshot::ScreenshotLayer;
 pub use shape_layer::ShapeLayer;
 pub use tile_layer::TileLayer;
+pub use timeline_layer::TimelineLayer;
 
 /// A layer represents everything that can be summarized as a logical unit on the map.
 /// E.g. a layer to draw the map tiles and one to draw the shapes.
@@ -50,6 +53,39 @@ pub trait Layer {
   fn has_highlighted_geometry(&self) -> bool {
     false
   }
+  
+  fn has_double_click_action(&self) -> bool {
+    false
+  }
+
+  /// Search functionality
+  fn search_geometries(&mut self, _query: &str) {
+    // Default implementation does nothing
+  }
+
+  fn next_search_result(&mut self) -> bool {
+    false
+  }
+
+  fn previous_search_result(&mut self) -> bool {
+    false
+  }
+
+  fn get_search_results_count(&self) -> usize {
+    0
+  }
+
+  fn show_search_result_popup(&mut self) {
+    // Default implementation does nothing
+  }
+
+  fn filter_geometries(&mut self, _query: &str) {
+    // Default implementation does nothing  
+  }
+
+  fn clear_filter(&mut self) {
+    // Default implementation does nothing
+  }
   /// Find the closest geometry to the given position and handle selection if applicable
   /// Returns Some(distance) if this layer can handle the click, None otherwise
   /// If Some(distance) is returned, the layer should perform its selection action immediately
@@ -68,17 +104,30 @@ pub trait Layer {
   ) {
     // Default implementation does nothing - layers can override if they support temporal filtering
   }
-  /// Allow downcasting to concrete layer types
-  fn as_any(&self) -> &dyn std::any::Any {
-    // Default implementation - layers should override this
-    panic!("as_any not implemented for this layer type")
+  /// Timeline-specific methods for temporal control layers
+  /// Update timeline with time range and current interval
+  fn update_timeline(
+    &mut self,
+    _time_range: (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>),
+    _current_interval: (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>),
+    _is_playing: bool,
+    _playback_speed: f32,
+  ) {
+    // Default implementation does nothing - only timeline layers override this
   }
 
-  /// Allow mutable downcasting to concrete layer types
-  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-    // Default implementation - layers should override this
-    panic!("as_any_mut not implemented for this layer type")
+  /// Get the current timeline interval
+  fn get_timeline_interval(&self) -> (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) {
+    // Default implementation returns None - only timeline layers override this
+    (None, None)
   }
+
+  /// Get timeline playback state
+  fn get_timeline_playback_state(&self) -> (bool, f32) {
+    // Default implementation returns (not playing, normal speed)
+    (false, 1.0)
+  }
+
 
   /// Check if this layer is visible
   fn is_visible(&self) -> bool {

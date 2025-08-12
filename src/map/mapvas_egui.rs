@@ -64,6 +64,9 @@ impl Map {
 
     let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
     let screenshot_layer_sender = screenshot_layer.get_sender();
+
+    let timeline_layer = layer::TimelineLayer::new();
+
     let (send, recv) = std::sync::mpsc::channel();
 
     let keys = command.register_keys().fold(Vec::new(), |mut acc, key| {
@@ -78,6 +81,7 @@ impl Map {
       Box::new(shape_layer),
       Box::new(command),
       Box::new(screenshot_layer),
+      Box::new(timeline_layer),
     ]));
 
     let map_data_holder = Rc::new(MapLayerHolderImpl::new(layers.clone()));
@@ -544,14 +548,8 @@ impl Map {
   pub fn has_double_click_action(&self) -> bool {
     if let Ok(layers) = self.layers.lock() {
       for layer in layers.iter() {
-        // Check if this is a shape layer with a double-click action
-        if let Some(shape_layer) = layer
-          .as_any()
-          .downcast_ref::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          if shape_layer.just_double_clicked.is_some() {
-            return true;
-          }
+        if layer.has_double_click_action() {
+          return true;
         }
       }
     }
@@ -583,17 +581,90 @@ impl Map {
     }
   }
 
+  /// Update the timeline layer with time range and current interval
+  pub fn update_timeline(
+    &mut self,
+    time_range: (
+      Option<chrono::DateTime<chrono::Utc>>,
+      Option<chrono::DateTime<chrono::Utc>>,
+    ),
+    current_interval: (
+      Option<chrono::DateTime<chrono::Utc>>,
+      Option<chrono::DateTime<chrono::Utc>>,
+    ),
+    is_playing: bool,
+    playback_speed: f32,
+  ) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.update_timeline(time_range, current_interval, is_playing, playback_speed);
+      }
+    }
+  }
+
+  /// Get the current timeline interval from the timeline layer
+  #[must_use]
+  pub fn get_timeline_interval(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        let interval = layer.get_timeline_interval();
+        if interval.0.is_some() || interval.1.is_some() {
+          return interval;
+        }
+      }
+    }
+    (None, None)
+  }
+
+  /// Get the timeline playback state from the timeline layer
+  #[must_use]
+  pub fn get_timeline_playback_state(&self) -> (bool, f32) {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        let (is_playing, speed) = layer.get_timeline_playback_state();
+        if is_playing || speed != 1.0 {
+          return (is_playing, speed);
+        }
+      }
+    }
+    (false, 1.0)
+  }
+
+  /// Set the timeline layer visibility
+  pub fn set_timeline_visible(&mut self, visible: bool) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == "Timeline" {
+          layer.set_visible(visible);
+          break;
+        }
+      }
+    }
+  }
+
+  /// Check if the timeline layer is visible
+  #[must_use]
+  pub fn is_timeline_visible(&self) -> bool {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if layer.name() == "Timeline" {
+          return layer.is_visible();
+        }
+      }
+    }
+    false
+  }
+
   /// Search geometries across all layers
   pub fn search_geometries(&mut self, query: &str) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        // Only search in shape layer for now
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          shape_layer.search_geometries(query);
-        }
+        layer.search_geometries(query);
       }
     }
   }
@@ -602,11 +673,8 @@ impl Map {
   pub fn next_search_result(&mut self) -> bool {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          return shape_layer.next_search_result();
+        if layer.next_search_result() {
+          return true;
         }
       }
     }
@@ -617,11 +685,8 @@ impl Map {
   pub fn previous_search_result(&mut self) -> bool {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          return shape_layer.previous_search_result();
+        if layer.previous_search_result() {
+          return true;
         }
       }
     }
@@ -632,13 +697,7 @@ impl Map {
   pub fn show_search_result_popup(&mut self) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          shape_layer.show_search_result_popup();
-          break;
-        }
+        layer.show_search_result_popup();
       }
     }
   }
@@ -647,12 +706,7 @@ impl Map {
   pub fn filter_geometries(&mut self, query: &str) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          shape_layer.filter_geometries(query);
-        }
+        layer.filter_geometries(query);
       }
     }
   }
@@ -661,12 +715,7 @@ impl Map {
   pub fn clear_filter(&mut self) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if let Some(shape_layer) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          shape_layer.clear_filter();
-        }
+        layer.clear_filter();
       }
     }
   }
@@ -676,11 +725,9 @@ impl Map {
   pub fn get_search_results_count(&self) -> usize {
     if let Ok(layers) = self.layers.lock() {
       for layer in layers.iter() {
-        if let Some(shape_layer) = layer
-          .as_any()
-          .downcast_ref::<crate::map::mapvas_egui::layer::ShapeLayer>()
-        {
-          return shape_layer.get_search_results().len();
+        let count = layer.get_search_results_count();
+        if count > 0 {
+          return count;
         }
       }
     }

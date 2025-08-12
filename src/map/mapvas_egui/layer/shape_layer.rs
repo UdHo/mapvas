@@ -1801,14 +1801,6 @@ impl ShapeLayer {
 const NAME: &str = "Shape Layer";
 
 impl Layer for ShapeLayer {
-  fn as_any(&self) -> &dyn std::any::Any {
-    self
-  }
-
-  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-    self
-  }
-
   /// Get temporal range from all geometries in this layer
   fn get_temporal_range(
     &self,
@@ -2053,6 +2045,41 @@ impl Layer for ShapeLayer {
 
   fn has_highlighted_geometry(&self) -> bool {
     self.geometry_highlighter.has_highlighted_geometry()
+  }
+
+  fn has_double_click_action(&self) -> bool {
+    self.just_double_clicked.is_some()
+  }
+
+  fn search_geometries(&mut self, query: &str) {
+    // Call the ShapeLayer's specific implementation
+    ShapeLayer::search_geometries(self, query);
+  }
+
+  fn next_search_result(&mut self) -> bool {
+    // Call the ShapeLayer's specific implementation  
+    ShapeLayer::next_search_result(self)
+  }
+
+  fn previous_search_result(&mut self) -> bool {
+    // Call the ShapeLayer's specific implementation
+    ShapeLayer::previous_search_result(self)
+  }
+
+  fn get_search_results_count(&self) -> usize {
+    self.get_search_results().len()
+  }
+
+  fn show_search_result_popup(&mut self) {
+    ShapeLayer::show_search_result_popup(self);
+  }
+
+  fn filter_geometries(&mut self, query: &str) {
+    ShapeLayer::filter_geometries(self, query);
+  }
+
+  fn clear_filter(&mut self) {
+    ShapeLayer::clear_filter(self);
   }
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
