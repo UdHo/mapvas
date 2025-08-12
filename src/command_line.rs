@@ -39,6 +39,9 @@ pub enum Command {
   ZoomOut,
   ZoomFit,
 
+  // Temporal commands
+  ToggleTemporalFilter,
+
   // Unknown command
   Unknown(String),
 }
@@ -112,6 +115,13 @@ impl CommandLine {
     self
       .command_handlers
       .insert("zf".to_string(), |_| Command::ZoomFit);
+
+    self
+      .command_handlers
+      .insert("temporal".to_string(), |_| Command::ToggleTemporalFilter);
+    self
+      .command_handlers
+      .insert("tt".to_string(), |_| Command::ToggleTemporalFilter);
   }
 
   /// Enter command mode (show command line with ':')

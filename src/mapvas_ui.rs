@@ -98,10 +98,19 @@ impl eframe::App for MapApp {
     // Mark frame for profiling
     crate::profiling::new_frame();
 
-    // Handle keyboard shortcut for sidebar toggle
+    // Handle keyboard shortcuts
     ctx.input(|i| {
+      // Sidebar toggle
       if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
         self.sidebar.toggle();
+      }
+      // Temporal filter toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::T) {
+        self.sidebar.temporal_controls.enabled = !self.sidebar.temporal_controls.enabled;
+        // Stop playing when disabling temporal filter
+        if !self.sidebar.temporal_controls.enabled {
+          self.sidebar.temporal_controls.is_playing = false;
+        }
       }
     });
 
@@ -118,11 +127,16 @@ impl eframe::App for MapApp {
       self.last_heading_style = current_config.heading_style;
     }
 
-    // Update temporal filtering on the map
-    self.map.set_temporal_filter(
-      self.sidebar.temporal_controls.current_time,
-      self.sidebar.temporal_controls.time_window,
-    );
+    // Update temporal filtering on the map (only if enabled)
+    if self.sidebar.temporal_controls.enabled {
+      self.map.set_temporal_filter(
+        self.sidebar.temporal_controls.current_time,
+        self.sidebar.temporal_controls.time_window,
+      );
+    } else {
+      // Disable temporal filtering by passing None for current_time
+      self.map.set_temporal_filter(None, None);
+    }
 
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
@@ -311,6 +325,21 @@ impl MapApp {
           .command_line
           .set_message("Fit to view".to_string(), false);
       }
+      Command::ToggleTemporalFilter => {
+        self.sidebar.temporal_controls.enabled = !self.sidebar.temporal_controls.enabled;
+        // Stop playing when disabling temporal filter
+        if !self.sidebar.temporal_controls.enabled {
+          self.sidebar.temporal_controls.is_playing = false;
+        }
+        let status = if self.sidebar.temporal_controls.enabled {
+          "enabled"
+        } else {
+          "disabled"
+        };
+        self
+          .command_line
+          .set_message(format!("Temporal filter {status}"), false);
+      }
       Command::Unknown(cmd) => {
         self
           .command_line
@@ -336,6 +365,8 @@ struct Sidebar {
 /// Controls for temporal visualization
 #[derive(Default)]
 struct TemporalControls {
+  /// Whether temporal filtering is enabled at all
+  enabled: bool,
   /// Whether timeline is currently playing
   is_playing: bool,
   /// Current time position in the timeline
@@ -410,13 +441,15 @@ impl TemporalControls {
       }
     }
 
-    // If we found temporal data, use it
+    // If we found temporal data, use it and enable temporal filtering
     if let (Some(start), Some(end)) = (earliest, latest) {
       self.time_start = Some(start);
       self.time_end = Some(end);
       if self.current_time.is_none() {
         self.current_time = Some(start);
       }
+      // Enable temporal filtering when temporal data is detected
+      self.enabled = true;
     } else {
       // Fallback to timeline that matches our KML test data (2024-01-01 10:00 to 14:00)
       let demo_start = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(); // Start before first point
@@ -664,8 +697,35 @@ impl Sidebar {
     }
   }
 
+  #[allow(clippy::too_many_lines)]
   fn temporal_controls_ui(&mut self, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
+      // Enable/Disable temporal filtering toggle
+      ui.horizontal(|ui| {
+        let toggle_text = if self.temporal_controls.enabled {
+          "🕒 Temporal Filter: ON"
+        } else {
+          "🕒 Temporal Filter: OFF"
+        };
+        if ui.button(toggle_text)
+          .on_hover_text("Toggle temporal filtering (Ctrl+T)")
+          .clicked() {
+          self.temporal_controls.enabled = !self.temporal_controls.enabled;
+          // Stop playing when disabling temporal filter
+          if !self.temporal_controls.enabled {
+            self.temporal_controls.is_playing = false;
+          }
+        }
+      });
+
+      // Only show temporal controls if temporal filtering is enabled
+      if !self.temporal_controls.enabled {
+        ui.label("⚠ Temporal filtering is disabled. All timestamped data will be visible.");
+        return;
+      }
+
+      ui.separator();
+
       // Play/Pause button
       ui.horizontal(|ui| {
         let play_button_text = if self.temporal_controls.is_playing {
