@@ -369,11 +369,11 @@ impl SearchUI {
     self.show_results = false;
     self.selected_index = None;
 
-    if let Some(active_query) = &self.active_search_query {
-      if active_query == &query {
-        log::debug!("Search already in progress for: {query}");
-        return;
-      }
+    if let Some(active_query) = &self.active_search_query
+      && active_query == &query
+    {
+      log::debug!("Search already in progress for: {query}");
+      return;
     }
 
     log::debug!("Starting async search for: {query}");

@@ -56,32 +56,32 @@ impl StyleParser {
     let mut style = Style::default();
     let mut has_style = false;
 
-    if let Some(color) = props.get("color").and_then(Value::as_str) {
-      if let Some(parsed_color) = Self::parse_color(color) {
-        style = style.with_color(parsed_color);
-        has_style = true;
-      }
+    if let Some(color) = props.get("color").and_then(Value::as_str)
+      && let Some(parsed_color) = Self::parse_color(color)
+    {
+      style = style.with_color(parsed_color);
+      has_style = true;
     }
 
-    if let Some(fill_color) = props.get("fillColor").and_then(Value::as_str) {
-      if let Some(parsed_color) = Self::parse_color(fill_color) {
-        style = style.with_fill_color(parsed_color);
-        has_style = true;
-      }
+    if let Some(fill_color) = props.get("fillColor").and_then(Value::as_str)
+      && let Some(parsed_color) = Self::parse_color(fill_color)
+    {
+      style = style.with_fill_color(parsed_color);
+      has_style = true;
     }
 
-    if let Some(stroke) = props.get("stroke").and_then(Value::as_str) {
-      if let Some(color) = Self::parse_color(stroke) {
-        style = style.with_color(color);
-        has_style = true;
-      }
+    if let Some(stroke) = props.get("stroke").and_then(Value::as_str)
+      && let Some(color) = Self::parse_color(stroke)
+    {
+      style = style.with_color(color);
+      has_style = true;
     }
 
-    if let Some(fill) = props.get("fill").and_then(Value::as_str) {
-      if let Some(color) = Self::parse_color(fill) {
-        style = style.with_fill_color(color);
-        has_style = true;
-      }
+    if let Some(fill) = props.get("fill").and_then(Value::as_str)
+      && let Some(color) = Self::parse_color(fill)
+    {
+      style = style.with_fill_color(color);
+      has_style = true;
     }
 
     if props.contains_key("stroke-width")

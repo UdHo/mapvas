@@ -84,10 +84,10 @@ impl GeoJsonParser {
 
     let metadata = Self::extract_metadata_from_properties(obj.get("properties"));
 
-    if let Some(geometry_value) = obj.get("geometry") {
-      if let Some(geometry) = self.parse_geometry(geometry_value, &metadata) {
-        self.geometry.push(geometry);
-      }
+    if let Some(geometry_value) = obj.get("geometry")
+      && let Some(geometry) = self.parse_geometry(geometry_value, &metadata)
+    {
+      self.geometry.push(geometry);
     }
 
     Ok(())
@@ -218,12 +218,12 @@ impl GeoJsonParser {
   /// Parse a single coordinate [lon, lat] or [lon, lat, elevation]
   #[allow(clippy::cast_possible_truncation)]
   fn parse_coordinate(coord: &Value) -> Option<PixelCoordinate> {
-    if let Some(array) = coord.as_array() {
-      if array.len() >= 2 {
-        let lon = array[0].as_f64()? as f32;
-        let lat = array[1].as_f64()? as f32;
-        return Some(PixelCoordinate::from(WGS84Coordinate::new(lat, lon)));
-      }
+    if let Some(array) = coord.as_array()
+      && array.len() >= 2
+    {
+      let lon = array[0].as_f64()? as f32;
+      let lat = array[1].as_f64()? as f32;
+      return Some(PixelCoordinate::from(WGS84Coordinate::new(lat, lon)));
     }
     None
   }
@@ -248,10 +248,10 @@ impl Parser for GeoJsonParser {
       return None;
     }
 
-    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
-      if self.parse_geojson(&parsed).is_ok() {
-        return None;
-      }
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed)
+      && self.parse_geojson(&parsed).is_ok()
+    {
+      return None;
     }
 
     self.data.push_str(line);
@@ -260,12 +260,11 @@ impl Parser for GeoJsonParser {
 
   fn finalize(&mut self) -> Option<MapEvent> {
     profile_scope!("GeoJsonParser::finalize");
-    if !self.data.is_empty() {
-      if let Ok(parsed) = serde_json::from_str::<Value>(&self.data) {
-        if let Err(e) = self.parse_geojson(&parsed) {
-          log::warn!("GeoJSON document parsing failed: {e}");
-        }
-      }
+    if !self.data.is_empty()
+      && let Ok(parsed) = serde_json::from_str::<Value>(&self.data)
+      && let Err(e) = self.parse_geojson(&parsed)
+    {
+      log::warn!("GeoJSON document parsing failed: {e}");
     }
 
     if !self.geometry.is_empty() {
@@ -525,10 +524,10 @@ mod tests {
 
       let mut parsed_colors = Vec::new();
       for geometry in &layer.geometries {
-        if let Geometry::Point(_, metadata) = geometry {
-          if let Some(style) = &metadata.style {
-            parsed_colors.push(style.color());
-          }
+        if let Geometry::Point(_, metadata) = geometry
+          && let Some(style) = &metadata.style
+        {
+          parsed_colors.push(style.color());
         }
       }
 

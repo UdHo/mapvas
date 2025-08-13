@@ -35,24 +35,23 @@ impl ExeCfg {
   fn update_paramters(&mut self, parameters: ParameterUpdate) -> bool {
     match parameters {
       ParameterUpdate::Update(key, coord) => {
-        if let Some(coord) = coord {
-          if let Some(c) = self
+        if let Some(coord) = coord
+          && let Some(c) = self
             .coordinates
             .iter_mut()
             .filter(|(k, _)| k == &key)
             .map(|(_, coord)| coord)
             .next()
-          {
-            match c {
-              OoMCoordinates::Coordinate(c) => {
-                *c = coord;
-              }
-              OoMCoordinates::Coordinates(c) => {
-                c.push(coord);
-              }
+        {
+          match c {
+            OoMCoordinates::Coordinate(c) => {
+              *c = coord;
             }
-            return true;
+            OoMCoordinates::Coordinates(c) => {
+              c.push(coord);
+            }
           }
+          return true;
         }
       }
       ParameterUpdate::DragUpdate(pos, delta, trans) => {
@@ -214,24 +213,23 @@ impl CurlCfg {
   fn update_paramters(&mut self, parameters: ParameterUpdate) -> bool {
     match parameters {
       ParameterUpdate::Update(key, coord) => {
-        if let Some(coord) = coord {
-          if let Some(c) = self
+        if let Some(coord) = coord
+          && let Some(c) = self
             .coordinates
             .iter_mut()
             .filter(|(k, _)| k == &key)
             .map(|(_, coord)| coord)
             .next()
-          {
-            match c {
-              OoMCoordinates::Coordinate(c) => {
-                *c = coord;
-              }
-              OoMCoordinates::Coordinates(c) => {
-                c.push(coord);
-              }
+        {
+          match c {
+            OoMCoordinates::Coordinate(c) => {
+              *c = coord;
             }
-            return true;
+            OoMCoordinates::Coordinates(c) => {
+              c.push(coord);
+            }
           }
+          return true;
         }
       }
       ParameterUpdate::DragUpdate(pos, delta, trans) => {
@@ -405,10 +403,10 @@ impl ExCommand {
 
   fn run(&self, sender: Sender<MapEvent>, response_sender: Sender<RawResponse>) -> bool {
     for coord in self.coordinates().iter().map(|(_, coord)| coord) {
-      if let OoMCoordinates::Coordinate(c) = coord {
-        if !c.is_valid() {
-          return false;
-        }
+      if let OoMCoordinates::Coordinate(c) = coord
+        && !c.is_valid()
+      {
+        return false;
       }
     }
     match self {

@@ -43,20 +43,21 @@ impl JsonParser {
     profile_scope!("JsonParser::find_coordinates");
     match v {
       Value::Array(vec) => {
-        if vec.len() == 2 {
-          if let (Some(lon), Some(lat)) = (vec[0].as_f64(), vec[1].as_f64()) {
-            return Some(PixelCoordinate::from(WGS84Coordinate::new(
-              lat as f32, lon as f32,
-            )));
-          }
+        if vec.len() == 2
+          && let (Some(lon), Some(lat)) = (vec[0].as_f64(), vec[1].as_f64())
+        {
+          return Some(PixelCoordinate::from(WGS84Coordinate::new(
+            lat as f32, lon as f32,
+          )));
         }
         let coords = vec
           .iter()
           .filter_map(|v| self.find_coordinates(v))
           .collect::<Vec<_>>();
-        Geometry::from_coords(coords)
-          .into_iter()
-          .for_each(|g| self.geometry.push(g));
+
+        if let Some(g) = Geometry::from_coords(coords) {
+          self.geometry.push(g);
+        }
       }
       Value::Object(map) => {
         if let Some(coord) = Self::try_get_coordinate_from_obj(map) {
@@ -220,10 +221,10 @@ mod tests {
 
       let mut parsed_colors = Vec::new();
       for geometry in &layer.geometries {
-        if let Geometry::Point(_, metadata) = geometry {
-          if let Some(style) = &metadata.style {
-            parsed_colors.push(style.color());
-          }
+        if let Geometry::Point(_, metadata) = geometry
+          && let Some(style) = &metadata.style
+        {
+          parsed_colors.push(style.color());
         }
       }
 

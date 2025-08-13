@@ -225,9 +225,6 @@ impl ShapeLayer {
 
   #[allow(clippy::too_many_lines)]
   fn show_shape_layers(&mut self, ui: &mut egui::Ui) {
-    // Update pagination to show highlighted geometry if needed
-    self.update_pagination_for_highlight();
-
     let layer_ids: Vec<String> = self.shape_map.keys().cloned().collect();
 
     for layer_id in layer_ids {
@@ -260,10 +257,10 @@ impl ShapeLayer {
       }
 
       // Open sidebar on double-click (but not hover)
-      if let Some((clicked_layer, _, _)) = &self.just_double_clicked {
-        if clicked_layer == &layer_id {
-          header = header.open(Some(true));
-        }
+      if let Some((clicked_layer, _, _)) = &self.just_double_clicked
+        && clicked_layer == &layer_id
+      {
+        header = header.open(Some(true));
       }
 
       let header_response = header.show(ui, |ui| {
@@ -706,73 +703,73 @@ impl ShapeLayer {
         .movable(true)
         .default_width(250.0)
         .show(ui.ctx(), |ui| {
-          if let Some(shapes) = self.shape_map.get_mut(&layer_id) {
-            if let Some(shape) = shapes.get_mut(shape_idx) {
-              let metadata = match shape {
-                Geometry::Point(_, metadata)
-                | Geometry::LineString(_, metadata)
-                | Geometry::Polygon(_, metadata)
-                | Geometry::GeometryCollection(_, metadata) => metadata,
-              };
+          if let Some(shapes) = self.shape_map.get_mut(&layer_id)
+            && let Some(shape) = shapes.get_mut(shape_idx)
+          {
+            let metadata = match shape {
+              Geometry::Point(_, metadata)
+              | Geometry::LineString(_, metadata)
+              | Geometry::Polygon(_, metadata)
+              | Geometry::GeometryCollection(_, metadata) => metadata,
+            };
 
-              if metadata.style.is_none() {
-                metadata.style = Some(crate::map::geometry_collection::Style::default());
-              }
+            if metadata.style.is_none() {
+              metadata.style = Some(crate::map::geometry_collection::Style::default());
+            }
 
-              if let Some(style) = &metadata.style {
-                let mut stroke_color = style.color();
-                let mut fill_color = style.fill_color();
-                let is_polygon = matches!(shape, Geometry::Polygon(_, _));
+            if let Some(style) = &metadata.style {
+              let mut stroke_color = style.color();
+              let mut fill_color = style.fill_color();
+              let is_polygon = matches!(shape, Geometry::Polygon(_, _));
 
-                if is_polygon {
-                  ui.label("Stroke Color:");
-                  if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-                    self.update_shape_stroke_color(&layer_id, shape_idx, stroke_color);
-                  }
+              if is_polygon {
+                ui.label("Stroke Color:");
+                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                  self.update_shape_stroke_color(&layer_id, shape_idx, stroke_color);
+                }
 
-                  let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
-                  egui::widgets::color_picker::color_picker_hsva_2d(
-                    ui,
-                    &mut stroke_hsva,
-                    egui::widgets::color_picker::Alpha::Opaque,
-                  );
-                  let new_stroke_color = egui::Color32::from(stroke_hsva);
-                  if new_stroke_color != stroke_color {
-                    self.update_shape_stroke_color(&layer_id, shape_idx, new_stroke_color);
-                  }
+                let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut stroke_hsva,
+                  egui::widgets::color_picker::Alpha::Opaque,
+                );
+                let new_stroke_color = egui::Color32::from(stroke_hsva);
+                if new_stroke_color != stroke_color {
+                  self.update_shape_stroke_color(&layer_id, shape_idx, new_stroke_color);
+                }
 
-                  ui.separator();
-                  ui.label("Fill Color:");
-                  if ui.color_edit_button_srgba(&mut fill_color).changed() {
-                    self.update_shape_fill_color(&layer_id, shape_idx, fill_color);
-                  }
+                ui.separator();
+                ui.label("Fill Color:");
+                if ui.color_edit_button_srgba(&mut fill_color).changed() {
+                  self.update_shape_fill_color(&layer_id, shape_idx, fill_color);
+                }
 
-                  let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
-                  egui::widgets::color_picker::color_picker_hsva_2d(
-                    ui,
-                    &mut fill_hsva,
-                    egui::widgets::color_picker::Alpha::BlendOrAdditive,
-                  );
-                  let new_fill_color = egui::Color32::from(fill_hsva);
-                  if new_fill_color != fill_color {
-                    self.update_shape_fill_color(&layer_id, shape_idx, new_fill_color);
-                  }
-                } else {
-                  if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-                    self.update_shape_color(&layer_id, shape_idx, stroke_color);
-                  }
+                let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut fill_hsva,
+                  egui::widgets::color_picker::Alpha::BlendOrAdditive,
+                );
+                let new_fill_color = egui::Color32::from(fill_hsva);
+                if new_fill_color != fill_color {
+                  self.update_shape_fill_color(&layer_id, shape_idx, new_fill_color);
+                }
+              } else {
+                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                  self.update_shape_color(&layer_id, shape_idx, stroke_color);
+                }
 
-                  ui.separator();
-                  let mut hsva = egui::ecolor::Hsva::from(stroke_color);
-                  egui::widgets::color_picker::color_picker_hsva_2d(
-                    ui,
-                    &mut hsva,
-                    egui::widgets::color_picker::Alpha::Opaque,
-                  );
-                  let new_color = egui::Color32::from(hsva);
-                  if new_color != stroke_color {
-                    self.update_shape_color(&layer_id, shape_idx, new_color);
-                  }
+                ui.separator();
+                let mut hsva = egui::ecolor::Hsva::from(stroke_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut hsva,
+                  egui::widgets::color_picker::Alpha::Opaque,
+                );
+                let new_color = egui::Color32::from(hsva);
+                if new_color != stroke_color {
+                  self.update_shape_color(&layer_id, shape_idx, new_color);
                 }
               }
             }
@@ -1118,91 +1115,90 @@ impl ShapeLayer {
     let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
 
     if icon_response.clicked() {
-      if metadata.style.is_none() {
-        if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-          if let Some(shape) = shapes.get_mut(shape_idx) {
-            let shape_metadata = match shape {
-              Geometry::Point(_, metadata)
-              | Geometry::LineString(_, metadata)
-              | Geometry::Polygon(_, metadata)
-              | Geometry::GeometryCollection(_, metadata) => metadata,
-            };
-            shape_metadata.style = Some(crate::map::geometry_collection::Style::default());
-          }
-        }
+      if metadata.style.is_none()
+        && let Some(shapes) = self.shape_map.get_mut(layer_id)
+        && let Some(shape) = shapes.get_mut(shape_idx)
+      {
+        let shape_metadata = match shape {
+          Geometry::Point(_, metadata)
+          | Geometry::LineString(_, metadata)
+          | Geometry::Polygon(_, metadata)
+          | Geometry::GeometryCollection(_, metadata) => metadata,
+        };
+        shape_metadata.style = Some(crate::map::geometry_collection::Style::default());
       }
       ui.memory_mut(|mem| mem.data.insert_temp(popup_id, true));
     }
   }
 
   fn update_shape_color(&mut self, layer_id: &str, shape_idx: usize, new_color: Color32) {
-    if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-      if let Some(shape) = shapes.get_mut(shape_idx) {
-        let metadata = match shape {
-          Geometry::Point(_, metadata)
-          | Geometry::LineString(_, metadata)
-          | Geometry::Polygon(_, metadata)
-          | Geometry::GeometryCollection(_, metadata) => metadata,
-        };
+    if let Some(shapes) = self.shape_map.get_mut(layer_id)
+      && let Some(shape) = shapes.get_mut(shape_idx)
+    {
+      let metadata = match shape {
+        Geometry::Point(_, metadata)
+        | Geometry::LineString(_, metadata)
+        | Geometry::Polygon(_, metadata)
+        | Geometry::GeometryCollection(_, metadata) => metadata,
+      };
 
-        let new_style = if let Some(existing_style) = &metadata.style {
-          Style::default()
-            .with_color(new_color)
-            .with_fill_color(existing_style.fill_color())
-            .with_visible(true)
-        } else {
-          Style::default().with_color(new_color)
-        };
-        metadata.style = Some(new_style);
-      }
+      let new_style = if let Some(existing_style) = &metadata.style {
+        Style::default()
+          .with_color(new_color)
+          .with_fill_color(existing_style.fill_color())
+          .with_visible(true)
+      } else {
+        Style::default().with_color(new_color)
+      };
+      metadata.style = Some(new_style);
     }
   }
 
   fn update_shape_stroke_color(&mut self, layer_id: &str, shape_idx: usize, new_color: Color32) {
-    if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-      if let Some(shape) = shapes.get_mut(shape_idx) {
-        let metadata = match shape {
-          Geometry::Point(_, metadata)
-          | Geometry::LineString(_, metadata)
-          | Geometry::Polygon(_, metadata)
-          | Geometry::GeometryCollection(_, metadata) => metadata,
-        };
+    if let Some(shapes) = self.shape_map.get_mut(layer_id)
+      && let Some(shape) = shapes.get_mut(shape_idx)
+    {
+      let metadata = match shape {
+        Geometry::Point(_, metadata)
+        | Geometry::LineString(_, metadata)
+        | Geometry::Polygon(_, metadata)
+        | Geometry::GeometryCollection(_, metadata) => metadata,
+      };
 
-        let new_style = if let Some(existing_style) = &metadata.style {
-          Style::default()
-            .with_color(new_color)
-            .with_fill_color(existing_style.fill_color())
-            .with_visible(true)
-        } else {
-          Style::default().with_color(new_color)
-        };
-        metadata.style = Some(new_style);
-      }
+      let new_style = if let Some(existing_style) = &metadata.style {
+        Style::default()
+          .with_color(new_color)
+          .with_fill_color(existing_style.fill_color())
+          .with_visible(true)
+      } else {
+        Style::default().with_color(new_color)
+      };
+      metadata.style = Some(new_style);
     }
   }
 
   fn update_shape_fill_color(&mut self, layer_id: &str, shape_idx: usize, new_fill_color: Color32) {
-    if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-      if let Some(shape) = shapes.get_mut(shape_idx) {
-        let metadata = match shape {
-          Geometry::Point(_, metadata)
-          | Geometry::LineString(_, metadata)
-          | Geometry::Polygon(_, metadata)
-          | Geometry::GeometryCollection(_, metadata) => metadata,
-        };
+    if let Some(shapes) = self.shape_map.get_mut(layer_id)
+      && let Some(shape) = shapes.get_mut(shape_idx)
+    {
+      let metadata = match shape {
+        Geometry::Point(_, metadata)
+        | Geometry::LineString(_, metadata)
+        | Geometry::Polygon(_, metadata)
+        | Geometry::GeometryCollection(_, metadata) => metadata,
+      };
 
-        let new_style = if let Some(existing_style) = &metadata.style {
-          Style::default()
-            .with_color(existing_style.color())
-            .with_fill_color(new_fill_color)
-            .with_visible(true)
-        } else {
-          Style::default()
-            .with_color(Color32::BLUE)
-            .with_fill_color(new_fill_color)
-        };
-        metadata.style = Some(new_style);
-      }
+      let new_style = if let Some(existing_style) = &metadata.style {
+        Style::default()
+          .with_color(existing_style.color())
+          .with_fill_color(new_fill_color)
+          .with_visible(true)
+      } else {
+        Style::default()
+          .with_color(Color32::BLUE)
+          .with_fill_color(new_fill_color)
+      };
+      metadata.style = Some(new_style);
     }
   }
 
@@ -1240,10 +1236,10 @@ impl ShapeLayer {
       }
     } else {
       // Apply temporal filtering to individual nested geometries
-      if let Some(current_time) = self.temporal_current_time {
-        if !self.is_individual_geometry_visible_at_time(geometry, current_time) {
-          return; // Skip this geometry if it's not visible at current time
-        }
+      if let Some(current_time) = self.temporal_current_time
+        && !self.is_individual_geometry_visible_at_time(geometry, current_time)
+      {
+        return;
       }
       // Check if this specific nested geometry is highlighted by ID
       let geometry_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
@@ -1259,14 +1255,6 @@ impl ShapeLayer {
         // Draw normal transparent geometry
         geometry.draw_with_style(painter, transform, self.config.heading_style);
       }
-    }
-  }
-
-  /// Update pagination to show the highlighted geometry if just highlighted
-  fn update_pagination_for_highlight(&mut self) {
-    if self.geometry_highlighter.was_just_highlighted() {
-      // For now, we'll skip pagination updates with the new ID system
-      // Could be enhanced later to maintain reverse mappings if needed
     }
   }
 
@@ -1367,23 +1355,23 @@ impl ShapeLayer {
     geometry_key: &(String, usize),
   ) {
     if ui.button("🗑 Delete Geometry").clicked() {
-      if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-        if shape_idx < shapes.len() {
-          shapes.remove(shape_idx);
-          self.geometry_visibility.remove(geometry_key);
+      if let Some(shapes) = self.shape_map.get_mut(layer_id)
+        && shape_idx < shapes.len()
+      {
+        shapes.remove(shape_idx);
+        self.geometry_visibility.remove(geometry_key);
 
-          // Update indices for remaining geometries
-          let keys_to_update: Vec<_> = self
-            .geometry_visibility
-            .keys()
-            .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
-            .cloned()
-            .collect();
+        // Update indices for remaining geometries
+        let keys_to_update: Vec<_> = self
+          .geometry_visibility
+          .keys()
+          .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
+          .cloned()
+          .collect();
 
-          for (lid, idx) in keys_to_update {
-            if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
-              self.geometry_visibility.insert((lid, idx - 1), visible);
-            }
+        for (lid, idx) in keys_to_update {
+          if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
+            self.geometry_visibility.insert((lid, idx - 1), visible);
           }
         }
       }
@@ -1443,31 +1431,31 @@ impl ShapeLayer {
     geometry_key: &(String, usize),
   ) {
     if ui.button("🗑 Delete Collection").clicked() {
-      if let Some(shapes) = self.shape_map.get_mut(layer_id) {
-        if shape_idx < shapes.len() {
-          shapes.remove(shape_idx);
-          self.geometry_visibility.remove(geometry_key);
+      if let Some(shapes) = self.shape_map.get_mut(layer_id)
+        && shape_idx < shapes.len()
+      {
+        shapes.remove(shape_idx);
+        self.geometry_visibility.remove(geometry_key);
 
-          // Clean up any nested visibility state for this collection
-          self
-            .nested_geometry_visibility
-            .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
-          self
-            .collection_expansion
-            .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+        // Clean up any nested visibility state for this collection
+        self
+          .nested_geometry_visibility
+          .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
+        self
+          .collection_expansion
+          .retain(|(lid, idx, _), _| !(lid == layer_id && *idx == shape_idx));
 
-          // Update indices for remaining geometries
-          let keys_to_update: Vec<_> = self
-            .geometry_visibility
-            .keys()
-            .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
-            .cloned()
-            .collect();
+        // Update indices for remaining geometries
+        let keys_to_update: Vec<_> = self
+          .geometry_visibility
+          .keys()
+          .filter(|(lid, idx)| lid == layer_id && *idx > shape_idx)
+          .cloned()
+          .collect();
 
-          for (lid, idx) in keys_to_update {
-            if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
-              self.geometry_visibility.insert((lid, idx - 1), visible);
-            }
+        for (lid, idx) in keys_to_update {
+          if let Some(visible) = self.geometry_visibility.remove(&(lid.clone(), idx)) {
+            self.geometry_visibility.insert((lid, idx - 1), visible);
           }
         }
       }
@@ -1534,29 +1522,27 @@ impl ShapeLayer {
   pub fn show_search_result_popup(&mut self) {
     if let Some((layer_id, shape_idx, nested_path)) =
       self.geometry_highlighter.get_highlighted_geometry()
-    {
-      if let Some(detail_info) =
+      && let Some(detail_info) =
         self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path)
+    {
+      // Find the geometry to get its representative coordinate for popup positioning
+      if let Some(coord) =
+        self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path)
       {
-        // Find the geometry to get its representative coordinate for popup positioning
-        if let Some(coord) =
-          self.get_geometry_representative_coordinate(&layer_id, shape_idx, &nested_path)
-        {
-          // Convert to screen position using current transform
-          let screen_pos = if self.current_transform.is_invalid() {
-            egui::pos2(0.0, 0.0) // Fallback position
-          } else {
-            let pixel_pos = self.current_transform.apply(coord);
-            egui::pos2(pixel_pos.x, pixel_pos.y)
-          };
+        // Convert to screen position using current transform
+        let screen_pos = if self.current_transform.is_invalid() {
+          egui::pos2(0.0, 0.0) // Fallback position
+        } else {
+          let pixel_pos = self.current_transform.apply(coord);
+          egui::pos2(pixel_pos.x, pixel_pos.y)
+        };
 
-          let creation_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64();
+        let creation_time = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .unwrap_or_default()
+          .as_secs_f64();
 
-          self.pending_detail_popup = Some((screen_pos, coord, detail_info, creation_time));
-        }
+        self.pending_detail_popup = Some((screen_pos, coord, detail_info, creation_time));
       }
     }
   }
@@ -1715,10 +1701,10 @@ impl ShapeLayer {
         return true;
       }
 
-      if let Some(description) = &label.description {
-        if Self::matches_pattern(description, pattern) {
-          return true;
-        }
+      if let Some(description) = &label.description
+        && Self::matches_pattern(description, pattern)
+      {
+        return true;
       }
     }
 
@@ -1769,10 +1755,10 @@ impl ShapeLayer {
         matches = true;
       }
 
-      if let Some(description) = &label.description {
-        if Self::matches_pattern(description, pattern) {
-          matches = true;
-        }
+      if let Some(description) = &label.description
+        && Self::matches_pattern(description, pattern)
+      {
+        matches = true;
       }
     }
 
@@ -1843,10 +1829,10 @@ impl Layer for ShapeLayer {
           let geometry_key = (layer_id.clone(), shape_idx);
           if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
             // Apply temporal filtering
-            if let Some(current_time) = self.temporal_current_time {
-              if !self.is_geometry_visible_at_time(shape, current_time) {
-                continue; // Skip this geometry if it's not visible at current time
-              }
+            if let Some(current_time) = self.temporal_current_time
+              && !self.is_geometry_visible_at_time(shape, current_time)
+            {
+              continue; // Skip this geometry if it's not visible at current time
             }
 
             // Apply filter (only show geometries that match filter pattern)
@@ -2099,10 +2085,10 @@ impl Layer for ShapeLayer {
         }
 
         // Apply temporal filtering
-        if let Some(current_time) = self.temporal_current_time {
-          if !self.is_geometry_visible_at_time(shape, current_time) {
-            continue; // Skip temporally filtered geometries
-          }
+        if let Some(current_time) = self.temporal_current_time
+          && !self.is_geometry_visible_at_time(shape, current_time)
+        {
+          continue; // Skip temporally filtered geometries
         }
 
         // Check distance to this geometry (recursively for collections)
@@ -2139,21 +2125,21 @@ impl Layer for ShapeLayer {
         }
 
         // Handle collection expansion for double-clicks on GeometryCollections
-        if let Some(shapes) = self.shape_map.get(&layer_id) {
-          if let Some(clicked_shape) = shapes.get(shape_idx) {
-            // Check if we clicked on a collection (either top-level or nested)
-            let clicked_geometry = Self::get_geometry_at_path(clicked_shape, &nested_path);
-            if let Some(Geometry::GeometryCollection(_, _)) = clicked_geometry {
-              // Toggle expansion state for this collection
-              let collection_key = (layer_id.clone(), shape_idx, nested_path.clone());
-              let current_expanded = *self
-                .collection_expansion
-                .get(&collection_key)
-                .unwrap_or(&false);
-              self
-                .collection_expansion
-                .insert(collection_key, !current_expanded);
-            }
+        if let Some(shapes) = self.shape_map.get(&layer_id)
+          && let Some(clicked_shape) = shapes.get(shape_idx)
+        {
+          // Check if we clicked on a collection (either top-level or nested)
+          let clicked_geometry = Self::get_geometry_at_path(clicked_shape, &nested_path);
+          if let Some(Geometry::GeometryCollection(_, _)) = clicked_geometry {
+            // Toggle expansion state for this collection
+            let collection_key = (layer_id.clone(), shape_idx, nested_path.clone());
+            let current_expanded = *self
+              .collection_expansion
+              .get(&collection_key)
+              .unwrap_or(&false);
+            self
+              .collection_expansion
+              .insert(collection_key, !current_expanded);
           }
         }
 
@@ -2344,15 +2330,15 @@ impl ShapeLayer {
           write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
-        if let Some(time_data) = &metadata.time_data {
-          if let Some(timestamp) = time_data.timestamp {
-            write!(
-              info,
-              "\nTimestamp: {}",
-              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            )
-            .unwrap();
-          }
+        if let Some(time_data) = &metadata.time_data
+          && let Some(timestamp) = time_data.timestamp
+        {
+          write!(
+            info,
+            "\nTimestamp: {}",
+            timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+          )
+          .unwrap();
         }
 
         write!(info, "\nLayer: {layer_id}").unwrap();
@@ -2379,15 +2365,15 @@ impl ShapeLayer {
           write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
-        if let Some(time_data) = &metadata.time_data {
-          if let Some(timestamp) = time_data.timestamp {
-            write!(
-              info,
-              "\nTimestamp: {}",
-              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            )
-            .unwrap();
-          }
+        if let Some(time_data) = &metadata.time_data
+          && let Some(timestamp) = time_data.timestamp
+        {
+          write!(
+            info,
+            "\nTimestamp: {}",
+            timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+          )
+          .unwrap();
         }
 
         write!(info, "\nLayer: {layer_id}").unwrap();
@@ -2414,15 +2400,15 @@ impl ShapeLayer {
           write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
-        if let Some(time_data) = &metadata.time_data {
-          if let Some(timestamp) = time_data.timestamp {
-            write!(
-              info,
-              "\nTimestamp: {}",
-              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            )
-            .unwrap();
-          }
+        if let Some(time_data) = &metadata.time_data
+          && let Some(timestamp) = time_data.timestamp
+        {
+          write!(
+            info,
+            "\nTimestamp: {}",
+            timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+          )
+          .unwrap();
         }
 
         write!(info, "\nLayer: {layer_id}").unwrap();
@@ -2449,15 +2435,15 @@ impl ShapeLayer {
           write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
-        if let Some(time_data) = &metadata.time_data {
-          if let Some(timestamp) = time_data.timestamp {
-            write!(
-              info,
-              "\nTimestamp: {}",
-              timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            )
-            .unwrap();
-          }
+        if let Some(time_data) = &metadata.time_data
+          && let Some(timestamp) = time_data.timestamp
+        {
+          write!(
+            info,
+            "\nTimestamp: {}",
+            timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+          )
+          .unwrap();
         }
 
         write!(info, "\nLayer: {layer_id}").unwrap();

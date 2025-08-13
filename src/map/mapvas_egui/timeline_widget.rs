@@ -276,20 +276,20 @@ impl TimelineWidget {
           let new_end = new_start + interval_duration;
 
           // Don't step beyond the total time range
-          if let Some(max_end) = self.state.time_end {
-            if new_end <= max_end {
-              self.state.interval_start = Some(new_start);
-              self.state.interval_end = Some(new_end);
-            }
+          if let Some(max_end) = self.state.time_end
+            && new_end <= max_end
+          {
+            self.state.interval_start = Some(new_start);
+            self.state.interval_end = Some(new_end);
           }
         }
         IntervalLock::Start => {
           // Start is locked - only extend end
           let new_end = end + step_duration;
-          if let Some(max_end) = self.state.time_end {
-            if new_end <= max_end {
-              self.state.interval_end = Some(new_end);
-            }
+          if let Some(max_end) = self.state.time_end
+            && new_end <= max_end
+          {
+            self.state.interval_end = Some(new_end);
           }
         }
         IntervalLock::End => {
@@ -316,11 +316,11 @@ impl TimelineWidget {
           let new_end = new_start + interval_duration;
 
           // Don't step before the total time range
-          if let Some(min_start) = self.state.time_start {
-            if new_start >= min_start {
-              self.state.interval_start = Some(new_start);
-              self.state.interval_end = Some(new_end);
-            }
+          if let Some(min_start) = self.state.time_start
+            && new_start >= min_start
+          {
+            self.state.interval_start = Some(new_start);
+            self.state.interval_end = Some(new_end);
           }
         }
         IntervalLock::Start => {
@@ -333,10 +333,10 @@ impl TimelineWidget {
         IntervalLock::End => {
           // End is locked - extend start backward (increase visible range from beginning)
           let new_start = start - step_duration;
-          if let Some(min_start) = self.state.time_start {
-            if new_start >= min_start {
-              self.state.interval_start = Some(new_start);
-            }
+          if let Some(min_start) = self.state.time_start
+            && new_start >= min_start
+          {
+            self.state.interval_start = Some(new_start);
           }
         }
       }
@@ -567,38 +567,37 @@ impl TimelineWidget {
     // Handle interval and handle interactions if we have interval data
     if let (Some(interval_start), Some(interval_end)) =
       (self.state.interval_start, self.state.interval_end)
-    {
-      if let (Some(start_pos), Some(end_pos)) = (
+      && let (Some(start_pos), Some(end_pos)) = (
         self.time_to_position(interval_start),
         self.time_to_position(interval_end),
-      ) {
-        let interval_start_x = track_rect.min.x + start_pos * track_rect.width();
-        let interval_end_x = track_rect.min.x + end_pos * track_rect.width();
+      )
+    {
+      let interval_start_x = track_rect.min.x + start_pos * track_rect.width();
+      let interval_end_x = track_rect.min.x + end_pos * track_rect.width();
 
-        // Handle interval dragging (drag the entire interval)
-        let interval_rect = Rect::from_min_max(
-          Pos2::new(interval_start_x, track_rect.min.y),
-          Pos2::new(interval_end_x, track_rect.max.y),
-        );
-        let interval_drag_response = ui.allocate_rect(interval_rect, Sense::drag());
+      // Handle interval dragging (drag the entire interval)
+      let interval_rect = Rect::from_min_max(
+        Pos2::new(interval_start_x, track_rect.min.y),
+        Pos2::new(interval_end_x, track_rect.max.y),
+      );
+      let interval_drag_response = ui.allocate_rect(interval_rect, Sense::drag());
 
-        if interval_drag_response.drag_started() {
-          self.drag.dragging_interval = true;
-          self.drag.drag_start_interval_start = self.state.interval_start;
-          self.drag.drag_start_interval_end = self.state.interval_end;
-          self.drag.drag_start_mouse_pos = ui.input(|i| i.pointer.hover_pos());
-        } else if interval_drag_response.dragged() && self.drag.dragging_interval {
-          self.handle_interval_drag(ui, track_rect);
-        } else if interval_drag_response.drag_stopped() {
-          self.drag.dragging_interval = false;
-          self.drag.drag_start_interval_start = None;
-          self.drag.drag_start_interval_end = None;
-          self.drag.drag_start_mouse_pos = None;
-        }
-
-        // Handle individual handle dragging
-        self.handle_handles_interaction(ui, track_rect, interval_start_x, interval_end_x);
+      if interval_drag_response.drag_started() {
+        self.drag.dragging_interval = true;
+        self.drag.drag_start_interval_start = self.state.interval_start;
+        self.drag.drag_start_interval_end = self.state.interval_end;
+        self.drag.drag_start_mouse_pos = ui.input(|i| i.pointer.hover_pos());
+      } else if interval_drag_response.dragged() && self.drag.dragging_interval {
+        self.handle_interval_drag(ui, track_rect);
+      } else if interval_drag_response.drag_stopped() {
+        self.drag.dragging_interval = false;
+        self.drag.drag_start_interval_start = None;
+        self.drag.drag_start_interval_end = None;
+        self.drag.drag_start_mouse_pos = None;
       }
+
+      // Handle individual handle dragging
+      self.handle_handles_interaction(ui, track_rect, interval_start_x, interval_end_x);
     }
   }
 
@@ -608,69 +607,68 @@ impl TimelineWidget {
       self.drag.drag_start_interval_start,
       self.drag.drag_start_interval_end,
       self.drag.drag_start_mouse_pos,
-    ) {
-      if let Some(current_mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
-        // Calculate the mouse movement delta since drag started
-        let mouse_delta_x = current_mouse_pos.x - start_mouse_pos.x;
-        let position_delta = mouse_delta_x / track_rect.width();
+    ) && let Some(current_mouse_pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+      // Calculate the mouse movement delta since drag started
+      let mouse_delta_x = current_mouse_pos.x - start_mouse_pos.x;
+      let position_delta = mouse_delta_x / track_rect.width();
 
-        // Convert position delta to time delta
-        if let (Some(timeline_start), Some(timeline_end)) =
-          (self.state.time_start, self.state.time_end)
-        {
-          let timeline_duration = timeline_end.signed_duration_since(timeline_start);
-          #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-          let time_delta = chrono::Duration::nanoseconds(
-            (timeline_duration.num_nanoseconds().unwrap_or(0) as f32 * position_delta) as i64,
-          );
+      // Convert position delta to time delta
+      if let (Some(timeline_start), Some(timeline_end)) =
+        (self.state.time_start, self.state.time_end)
+      {
+        let timeline_duration = timeline_end.signed_duration_since(timeline_start);
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+        let time_delta = chrono::Duration::nanoseconds(
+          (timeline_duration.num_nanoseconds().unwrap_or(0) as f32 * position_delta) as i64,
+        );
 
-          // Respect interval locks during dragging
-          match self.state.interval_lock {
-            IntervalLock::None => {
-              // Normal behavior - move entire interval
-              let new_start = orig_start + time_delta;
-              let new_end = orig_end + time_delta;
+        // Respect interval locks during dragging
+        match self.state.interval_lock {
+          IntervalLock::None => {
+            // Normal behavior - move entire interval
+            let new_start = orig_start + time_delta;
+            let new_end = orig_end + time_delta;
 
-              // Ensure the interval doesn't go outside the timeline bounds
-              if new_start >= timeline_start && new_end <= timeline_end {
-                self.state.interval_start = Some(new_start);
-                self.state.interval_end = Some(new_end);
-              } else if new_start < timeline_start {
-                // Clamp to start of timeline
-                let interval_duration = orig_end.signed_duration_since(orig_start);
-                self.state.interval_start = Some(timeline_start);
-                self.state.interval_end = Some(timeline_start + interval_duration);
-              } else if new_end > timeline_end {
-                // Clamp to end of timeline
-                let interval_duration = orig_end.signed_duration_since(orig_start);
-                self.state.interval_end = Some(timeline_end);
-                self.state.interval_start = Some(timeline_end - interval_duration);
-              }
+            // Ensure the interval doesn't go outside the timeline bounds
+            if new_start >= timeline_start && new_end <= timeline_end {
+              self.state.interval_start = Some(new_start);
+              self.state.interval_end = Some(new_end);
+            } else if new_start < timeline_start {
+              // Clamp to start of timeline
+              let interval_duration = orig_end.signed_duration_since(orig_start);
+              self.state.interval_start = Some(timeline_start);
+              self.state.interval_end = Some(timeline_start + interval_duration);
+            } else if new_end > timeline_end {
+              // Clamp to end of timeline
+              let interval_duration = orig_end.signed_duration_since(orig_start);
+              self.state.interval_end = Some(timeline_end);
+              self.state.interval_start = Some(timeline_end - interval_duration);
             }
-            IntervalLock::Start => {
-              // Start is locked, only move the end
-              let new_end = orig_end + time_delta;
+          }
+          IntervalLock::Start => {
+            // Start is locked, only move the end
+            let new_end = orig_end + time_delta;
 
-              if new_end <= timeline_end && new_end > orig_start {
-                self.state.interval_end = Some(new_end);
-              } else if new_end > timeline_end {
-                // Clamp end to timeline boundary
-                self.state.interval_end = Some(timeline_end);
-              }
-              // Start remains unchanged
+            if new_end <= timeline_end && new_end > orig_start {
+              self.state.interval_end = Some(new_end);
+            } else if new_end > timeline_end {
+              // Clamp end to timeline boundary
+              self.state.interval_end = Some(timeline_end);
             }
-            IntervalLock::End => {
-              // End is locked, only move the start
-              let new_start = orig_start + time_delta;
+            // Start remains unchanged
+          }
+          IntervalLock::End => {
+            // End is locked, only move the start
+            let new_start = orig_start + time_delta;
 
-              if new_start >= timeline_start && new_start < orig_end {
-                self.state.interval_start = Some(new_start);
-              } else if new_start < timeline_start {
-                // Clamp start to timeline boundary
-                self.state.interval_start = Some(timeline_start);
-              }
-              // End remains unchanged
+            if new_start >= timeline_start && new_start < orig_end {
+              self.state.interval_start = Some(new_start);
+            } else if new_start < timeline_start {
+              // Clamp start to timeline boundary
+              self.state.interval_start = Some(timeline_start);
             }
+            // End remains unchanged
           }
         }
       }
@@ -724,12 +722,11 @@ impl TimelineWidget {
         self.drag.dragging_start = true;
         if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
           let new_pos = ((mouse_pos.x - track_rect.min.x) / track_rect.width()).clamp(0.0, 1.0);
-          if let Some(new_time) = self.position_to_time(new_pos) {
-            if let Some(interval_end) = self.state.interval_end {
-              if new_time < interval_end {
-                self.state.interval_start = Some(new_time);
-              }
-            }
+          if let Some(new_time) = self.position_to_time(new_pos)
+            && let Some(interval_end) = self.state.interval_end
+            && new_time < interval_end
+          {
+            self.state.interval_start = Some(new_time);
           }
         }
       } else if start_handle_response.drag_stopped() {
@@ -774,12 +771,11 @@ impl TimelineWidget {
         self.drag.dragging_end = true;
         if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
           let new_pos = ((mouse_pos.x - track_rect.min.x) / track_rect.width()).clamp(0.0, 1.0);
-          if let Some(new_time) = self.position_to_time(new_pos) {
-            if let Some(interval_start) = self.state.interval_start {
-              if new_time > interval_start {
-                self.state.interval_end = Some(new_time);
-              }
-            }
+          if let Some(new_time) = self.position_to_time(new_pos)
+            && let Some(interval_start) = self.state.interval_start
+            && new_time > interval_start
+          {
+            self.state.interval_end = Some(new_time);
           }
         }
       } else if end_handle_response.drag_stopped() {
@@ -848,13 +844,13 @@ impl TimelineWidget {
     );
     let speed_response = ui.allocate_rect(speed_slider_rect, Sense::click_and_drag());
 
-    if speed_response.dragged() {
-      if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-        let relative_x = (pointer_pos.x - speed_slider_rect.min.x) / speed_slider_rect.width();
-        let normalized = relative_x.clamp(0.0, 1.0);
-        self.playback.speed =
-          (normalized * (MAX_SPEED - MIN_SPEED) + MIN_SPEED).clamp(MIN_SPEED, MAX_SPEED);
-      }
+    if speed_response.dragged()
+      && let Some(pointer_pos) = ui.ctx().pointer_interact_pos()
+    {
+      let relative_x = (pointer_pos.x - speed_slider_rect.min.x) / speed_slider_rect.width();
+      let normalized = relative_x.clamp(0.0, 1.0);
+      self.playback.speed =
+        (normalized * (MAX_SPEED - MIN_SPEED) + MIN_SPEED).clamp(MIN_SPEED, MAX_SPEED);
     }
   }
 
@@ -872,13 +868,13 @@ impl TimelineWidget {
     );
     let step_response = ui.allocate_rect(step_slider_rect, Sense::click_and_drag());
 
-    if step_response.dragged() {
-      if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-        let relative_x = (pointer_pos.x - step_slider_rect.min.x) / step_slider_rect.width();
-        let normalized = relative_x.clamp(0.0, 1.0);
-        let log_value = MIN_STEP_SIZE.ln() + normalized * (MAX_STEP_SIZE.ln() - MIN_STEP_SIZE.ln());
-        self.playback.step_size = log_value.exp().clamp(MIN_STEP_SIZE, MAX_STEP_SIZE);
-      }
+    if step_response.dragged()
+      && let Some(pointer_pos) = ui.ctx().pointer_interact_pos()
+    {
+      let relative_x = (pointer_pos.x - step_slider_rect.min.x) / step_slider_rect.width();
+      let normalized = relative_x.clamp(0.0, 1.0);
+      let log_value = MIN_STEP_SIZE.ln() + normalized * (MAX_STEP_SIZE.ln() - MIN_STEP_SIZE.ln());
+      self.playback.step_size = log_value.exp().clamp(MIN_STEP_SIZE, MAX_STEP_SIZE);
     }
   }
 
@@ -1031,43 +1027,42 @@ impl TimelineWidget {
     // Draw interval and handles if we have interval data
     if let (Some(interval_start), Some(interval_end)) =
       (self.state.interval_start, self.state.interval_end)
-    {
-      if let (Some(start_pos), Some(end_pos)) = (
+      && let (Some(start_pos), Some(end_pos)) = (
         self.time_to_position(interval_start),
         self.time_to_position(interval_end),
-      ) {
-        let interval_start_x = track_rect.min.x + start_pos * track_rect.width();
-        let interval_end_x = track_rect.min.x + end_pos * track_rect.width();
+      )
+    {
+      let interval_start_x = track_rect.min.x + start_pos * track_rect.width();
+      let interval_end_x = track_rect.min.x + end_pos * track_rect.width();
 
-        // Draw interval highlight with visual feedback for dragging state
-        let interval_rect = Rect::from_min_max(
-          Pos2::new(interval_start_x, track_rect.min.y),
-          Pos2::new(interval_end_x, track_rect.max.y),
-        );
+      // Draw interval highlight with visual feedback for dragging state
+      let interval_rect = Rect::from_min_max(
+        Pos2::new(interval_start_x, track_rect.min.y),
+        Pos2::new(interval_end_x, track_rect.max.y),
+      );
 
-        // Check hover state for interval coloring
-        let interval_hover_response = ui.allocate_rect(interval_rect, Sense::hover());
+      // Check hover state for interval coloring
+      let interval_hover_response = ui.allocate_rect(interval_rect, Sense::hover());
 
-        let interval_color = if self.drag.dragging_interval {
-          interval_drag_color()
-        } else if interval_hover_response.hovered() {
-          interval_hover_color()
-        } else {
-          interval_normal_color()
-        };
+      let interval_color = if self.drag.dragging_interval {
+        interval_drag_color()
+      } else if interval_hover_response.hovered() {
+        interval_hover_color()
+      } else {
+        interval_normal_color()
+      };
 
-        ui.painter().rect_filled(interval_rect, 5.0, interval_color);
+      ui.painter().rect_filled(interval_rect, 5.0, interval_color);
 
-        self.draw_interval_handles(ui, track_rect, interval_start_x, interval_end_x);
-        self.draw_interval_labels(
-          ui,
-          track_rect,
-          interval_start_x,
-          interval_end_x,
-          interval_start,
-          interval_end,
-        );
-      }
+      self.draw_interval_handles(ui, track_rect, interval_start_x, interval_end_x);
+      self.draw_interval_labels(
+        ui,
+        track_rect,
+        interval_start_x,
+        interval_end_x,
+        interval_start,
+        interval_end,
+      );
     }
   }
 

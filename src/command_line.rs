@@ -386,25 +386,25 @@ pub fn handle_command_line_input(cmd: &mut CommandLine, ctx: &egui::Context) -> 
       }
 
       // Handle text input only for activation keys when command line is not visible
-      if let egui::Event::Text(text) = event {
-        if !cmd.is_visible() {
-          for c in text.chars() {
-            // Handle vim-like activation keys when command line is not visible
-            match c {
-              ':' => {
-                cmd.enter_command_mode();
-              }
-              '/' => {
-                cmd.enter_search_mode();
-              }
-              _ => {
-                // Ignore other chars when not visible
-              }
+      if let egui::Event::Text(text) = event
+        && !cmd.is_visible()
+      {
+        for c in text.chars() {
+          // Handle vim-like activation keys when command line is not visible
+          match c {
+            ':' => {
+              cmd.enter_command_mode();
+            }
+            '/' => {
+              cmd.enter_search_mode();
+            }
+            _ => {
+              // Ignore other chars when not visible
             }
           }
         }
-        // When visible, let the TextEdit widget handle all text input
       }
+      // When visible, let the TextEdit widget handle all text input
     }
   });
 

@@ -273,37 +273,36 @@ impl SearchProvider for CustomProvider {
         if let (Some(coords), Some(props)) = (
           feature["geometry"]["coordinates"].as_array(),
           feature["properties"].as_object(),
-        ) {
-          if coords.len() >= 2 {
+        ) && coords.len() >= 2
+        {
+          #[allow(clippy::cast_possible_truncation)]
+          if let (Some(lon), Some(lat)) = (
+            coords[0].as_f64().map(|f| f as f32),
+            coords[1].as_f64().map(|f| f as f32),
+          ) {
+            let coordinate = WGS84Coordinate::new(lat, lon);
+
+            let name = props["name"]
+              .as_str()
+              .unwrap_or("Unknown location")
+              .to_string();
+
+            let address = props["address"]
+              .as_str()
+              .map(std::string::ToString::to_string);
+            let country = props["country"]
+              .as_str()
+              .map(std::string::ToString::to_string);
             #[allow(clippy::cast_possible_truncation)]
-            if let (Some(lon), Some(lat)) = (
-              coords[0].as_f64().map(|f| f as f32),
-              coords[1].as_f64().map(|f| f as f32),
-            ) {
-              let coordinate = WGS84Coordinate::new(lat, lon);
+            let relevance = props["relevance"].as_f64().unwrap_or(0.5) as f32;
 
-              let name = props["name"]
-                .as_str()
-                .unwrap_or("Unknown location")
-                .to_string();
-
-              let address = props["address"]
-                .as_str()
-                .map(std::string::ToString::to_string);
-              let country = props["country"]
-                .as_str()
-                .map(std::string::ToString::to_string);
-              #[allow(clippy::cast_possible_truncation)]
-              let relevance = props["relevance"].as_f64().unwrap_or(0.5) as f32;
-
-              results.push(SearchResult {
-                name,
-                coordinate,
-                address,
-                country,
-                relevance,
-              });
-            }
+            results.push(SearchResult {
+              name,
+              coordinate,
+              address,
+              country,
+              relevance,
+            });
           }
         }
       }

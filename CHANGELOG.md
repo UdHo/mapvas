@@ -2,15 +2,14 @@
 
 ## Unreleased
 
-- Temporal data in kml.
-- Add intelligent auto-parser system for automatic format detection
-  - File extension-based parser selection with smart fallback chains
-  - Content analysis for stdin/piped data with pattern detection
-  - Default auto-parser replaces manual parser selection for improved UX
-- Add optional puffin profiling with `--features profiling`
-- Add GeoJSON parser with style support
-- Add linewise GeoJSON parsing support
-- Fix jump functionality for highlighted geometries
+## 0.2.6
+
+- new formats (.gpx, .geojson, .kml) and auto parser with type detection
+- timeline support with kml timestamps
+- double click and hover
+- filtering `&` and searching `/` with vim like keybindings
+- vim like commands `:<...>`
+- double click and hover functionality
 
 ## 0.2.5
 

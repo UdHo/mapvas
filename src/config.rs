@@ -157,21 +157,21 @@ impl Config {
         });
       }
 
-      if let Some(path) = &self.tile_cache_dir {
-        if !path.exists() {
-          let _ = std::fs::create_dir_all(path).inspect_err(|e| {
-            error!("Failed to create tile cache directory: {e}");
-          });
-        }
+      if let Some(path) = &self.tile_cache_dir
+        && !path.exists()
+      {
+        let _ = std::fs::create_dir_all(path).inspect_err(|e| {
+          error!("Failed to create tile cache directory: {e}");
+        });
       }
     }
 
-    if let Some(path) = &self.commands_dir {
-      if !path.exists() {
-        let _ = std::fs::create_dir_all(path).inspect_err(|e| {
-          error!("Failed to create commands directory: {e}");
-        });
-      }
+    if let Some(path) = &self.commands_dir
+      && !path.exists()
+    {
+      let _ = std::fs::create_dir_all(path).inspect_err(|e| {
+        error!("Failed to create commands directory: {e}");
+      });
     }
 
     if let Some(path) = &self.config_path {

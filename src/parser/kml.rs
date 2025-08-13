@@ -79,16 +79,16 @@ impl KmlParser {
   fn parse_kml_style(kml_style: &kml::types::Style) -> Style {
     let mut style = Style::default();
 
-    if let Some(line_style) = &kml_style.line {
-      if let Some(parsed_color) = Self::parse_kml_color(&line_style.color) {
-        style = style.with_color(parsed_color);
-      }
+    if let Some(line_style) = &kml_style.line
+      && let Some(parsed_color) = Self::parse_kml_color(&line_style.color)
+    {
+      style = style.with_color(parsed_color);
     }
 
-    if let Some(poly_style) = &kml_style.poly {
-      if let Some(parsed_color) = Self::parse_kml_color(&poly_style.color) {
-        style = style.with_fill_color(parsed_color);
-      }
+    if let Some(poly_style) = &kml_style.poly
+      && let Some(parsed_color) = Self::parse_kml_color(&poly_style.color)
+    {
+      style = style.with_fill_color(parsed_color);
     }
 
     style
@@ -158,15 +158,14 @@ impl KmlParser {
       if child.name == "TimeStamp" {
         // Look for <when> element in TimeStamp children
         for timestamp_child in &child.children {
-          if timestamp_child.name == "when" {
-            if let Some(ref when_content) = timestamp_child.content {
-              if let Some(parsed_time) = Self::parse_kml_datetime(when_content) {
-                return Some(TimeData {
-                  timestamp: Some(parsed_time),
-                  time_span: None,
-                });
-              }
-            }
+          if timestamp_child.name == "when"
+            && let Some(ref when_content) = timestamp_child.content
+            && let Some(parsed_time) = Self::parse_kml_datetime(when_content)
+          {
+            return Some(TimeData {
+              timestamp: Some(parsed_time),
+              time_span: None,
+            });
           }
         }
       } else if child.name == "TimeSpan" {
@@ -179,10 +178,10 @@ impl KmlParser {
             if let Some(ref begin_content) = timespan_child.content {
               begin_time = Self::parse_kml_datetime(begin_content);
             }
-          } else if timespan_child.name == "end" {
-            if let Some(ref end_content) = timespan_child.content {
-              end_time = Self::parse_kml_datetime(end_content);
-            }
+          } else if timespan_child.name == "end"
+            && let Some(ref end_content) = timespan_child.content
+          {
+            end_time = Self::parse_kml_datetime(end_content);
           }
         }
 
@@ -229,13 +228,13 @@ impl KmlParser {
         let placemark_xml = &placemark_section[..placemark_end];
 
         // Look for TimeStamp within this placemark
-        if let Some(timestamp_start) = placemark_xml.find("<TimeStamp>") {
-          if let Some(when_start) = placemark_xml[timestamp_start..].find("<when>") {
-            let when_content_start = timestamp_start + when_start + 6; // Length of "<when>"
-            if let Some(when_end) = placemark_xml[when_content_start..].find("</when>") {
-              let when_content = &placemark_xml[when_content_start..when_content_start + when_end];
-              return Self::parse_kml_datetime(when_content);
-            }
+        if let Some(timestamp_start) = placemark_xml.find("<TimeStamp>")
+          && let Some(when_start) = placemark_xml[timestamp_start..].find("<when>")
+        {
+          let when_content_start = timestamp_start + when_start + 6; // Length of "<when>"
+          if let Some(when_end) = placemark_xml[when_content_start..].find("</when>") {
+            let when_content = &placemark_xml[when_content_start..when_content_start + when_end];
+            return Self::parse_kml_datetime(when_content);
           }
         }
       }
@@ -401,13 +400,12 @@ impl KmlParser {
             metadata = metadata.with_label(name.clone());
           } else {
             for element in elements {
-              if let kml::Kml::Element(el) = element {
-                if el.name == "name" {
-                  if let Some(text) = &el.content {
-                    metadata = metadata.with_label(text.clone());
-                    break;
-                  }
-                }
+              if let kml::Kml::Element(el) = element
+                && el.name == "name"
+                && let Some(text) = &el.content
+              {
+                metadata = metadata.with_label(text.clone());
+                break;
               }
             }
           }

@@ -455,10 +455,10 @@ impl Widget for &mut Map {
     });
     self.handle_keys(events.into_iter(), rect);
 
-    if response.double_clicked() {
-      if let Some(pos) = response.hover_pos() {
-        self.handle_double_click(pos);
-      }
+    if response.double_clicked()
+      && let Some(pos) = response.hover_pos()
+    {
+      self.handle_double_click(pos);
     }
 
     if !response.context_menu_opened() {
@@ -490,19 +490,20 @@ impl Widget for &mut Map {
       });
     }
 
-    if response.dragged() && response.dragged_by(PointerButton::Secondary) {
-      if let Some(hover_pos) = response.hover_pos() {
-        let delta = PixelPosition {
-          x: response.drag_delta().x,
-          y: response.drag_delta().y,
-        };
+    if response.dragged()
+      && response.dragged_by(PointerButton::Secondary)
+      && let Some(hover_pos) = response.hover_pos()
+    {
+      let delta = PixelPosition {
+        x: response.drag_delta().x,
+        y: response.drag_delta().y,
+      };
 
-        let _ = self.remote.command.send(ParameterUpdate::DragUpdate(
-          hover_pos.into(),
-          delta,
-          self.transform,
-        ));
-      }
+      let _ = self.remote.command.send(ParameterUpdate::DragUpdate(
+        hover_pos.into(),
+        delta,
+        self.transform,
+      ));
     }
 
     if response.dragged() && response.dragged_by(PointerButton::Primary) {
@@ -513,12 +514,13 @@ impl Widget for &mut Map {
     }
 
     fit_to_screen(&mut self.transform, &rect);
-
-    if ui.is_rect_visible(rect) {
+    {
       profile_scope!("Map::draw_layers");
-      if let Ok(mut layer_guard) = self.layers.try_lock().inspect_err(|e| {
-        log::error!("Failed to lock layers: {e:?}");
-      }) {
+      if ui.is_rect_visible(rect)
+        && let Ok(mut layer_guard) = self.layers.try_lock().inspect_err(|e| {
+          log::error!("Failed to lock layers: {e:?}");
+        })
+      {
         for layer in layer_guard.iter_mut() {
           profile_scope!("Layer::draw", layer.name());
           layer.draw(ui, &self.transform, rect);
