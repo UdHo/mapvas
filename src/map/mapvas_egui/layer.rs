@@ -53,7 +53,7 @@ pub trait Layer {
   fn has_highlighted_geometry(&self) -> bool {
     false
   }
-  
+
   fn has_double_click_action(&self) -> bool {
     false
   }
@@ -80,7 +80,7 @@ pub trait Layer {
   }
 
   fn filter_geometries(&mut self, _query: &str) {
-    // Default implementation does nothing  
+    // Default implementation does nothing
   }
 
   fn clear_filter(&mut self) {
@@ -108,8 +108,14 @@ pub trait Layer {
   /// Update timeline with time range and current interval
   fn update_timeline(
     &mut self,
-    _time_range: (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>),
-    _current_interval: (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>),
+    _time_range: (
+      Option<chrono::DateTime<chrono::Utc>>,
+      Option<chrono::DateTime<chrono::Utc>>,
+    ),
+    _current_interval: (
+      Option<chrono::DateTime<chrono::Utc>>,
+      Option<chrono::DateTime<chrono::Utc>>,
+    ),
     _is_playing: bool,
     _playback_speed: f32,
   ) {
@@ -117,7 +123,12 @@ pub trait Layer {
   }
 
   /// Get the current timeline interval
-  fn get_timeline_interval(&self) -> (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) {
+  fn get_timeline_interval(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
     // Default implementation returns None - only timeline layers override this
     (None, None)
   }
@@ -127,7 +138,6 @@ pub trait Layer {
     // Default implementation returns (not playing, normal speed)
     (false, 1.0)
   }
-
 
   /// Check if this layer is visible
   fn is_visible(&self) -> bool {
@@ -147,6 +157,17 @@ pub trait Layer {
     Option<chrono::DateTime<chrono::Utc>>,
   ) {
     (None, None) // Default implementation returns no temporal data
+  }
+
+  /// Toggle timeline interval lock state
+  fn toggle_timeline_interval_lock(&mut self) {
+    // Default implementation does nothing - only timeline layers override this
+  }
+
+  /// Get current timeline interval lock state
+  fn get_timeline_interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
+    // Default implementation returns None
+    crate::map::mapvas_egui::timeline_widget::IntervalLock::None
   }
 }
 

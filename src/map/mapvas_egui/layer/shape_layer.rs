@@ -2057,7 +2057,7 @@ impl Layer for ShapeLayer {
   }
 
   fn next_search_result(&mut self) -> bool {
-    // Call the ShapeLayer's specific implementation  
+    // Call the ShapeLayer's specific implementation
     ShapeLayer::next_search_result(self)
   }
 

@@ -396,7 +396,6 @@ impl Layer for CommandLayer {
       None
     }
   }
-
 }
 
 impl CommandLayer {

@@ -5,7 +5,7 @@ use egui::Widget as _;
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
   config::{Config, HeadingStyle, TileProvider},
-  map::mapvas_egui::{Map, MapLayerHolder},
+  map::mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
@@ -93,6 +93,7 @@ impl MapApp {
 }
 
 impl eframe::App for MapApp {
+  #[allow(clippy::too_many_lines)]
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     profile_scope!("MapApp::update");
     // Mark frame for profiling
@@ -108,6 +109,39 @@ impl eframe::App for MapApp {
       if i.modifiers.ctrl && i.key_pressed(egui::Key::T) {
         let current_visible = self.map.is_timeline_visible();
         self.map.set_timeline_visible(!current_visible);
+      }
+
+      // Temporal filter toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::F) {
+        let current_enabled = self.sidebar.temporal_controls.is_filter_enabled();
+        self
+          .sidebar
+          .temporal_controls
+          .set_filter_enabled(!current_enabled);
+
+        let status = if current_enabled {
+          "disabled"
+        } else {
+          "enabled"
+        };
+        self
+          .command_line
+          .set_message(format!("Temporal filtering {status}"), false);
+      }
+
+      // Timeline interval lock toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::L) {
+        self.map.toggle_timeline_interval_lock();
+
+        let lock_state = self.map.get_timeline_interval_lock();
+        let status = match lock_state {
+          IntervalLock::None => "unlocked",
+          IntervalLock::Start => "start locked",
+          IntervalLock::End => "end locked",
+        };
+        self
+          .command_line
+          .set_message(format!("Timeline interval {status}"), false);
       }
     });
 
@@ -125,68 +159,84 @@ impl eframe::App for MapApp {
     }
 
     // Always refresh timeline data to check for temporal events
-    self.sidebar.temporal_controls.init_from_layers(&*self.sidebar.map_content);
-    
+    self
+      .sidebar
+      .temporal_controls
+      .init_from_layers(&*self.sidebar.map_content);
+
     // Check if we have temporal data, and auto-activate timeline if we do
-    let has_temporal_data = self.sidebar.temporal_controls.time_start.is_some() 
+    let has_temporal_data = self.sidebar.temporal_controls.time_start.is_some()
       && self.sidebar.temporal_controls.time_end.is_some();
-    
-    if !has_temporal_data {
-      // No temporal data - hide timeline and disable temporal filtering
-      self.map.set_timeline_visible(false);
+
+    if !has_temporal_data || !self.sidebar.temporal_controls.filter_enabled {
+      // No temporal data OR user has disabled filtering - disable temporal filtering (but leave timeline visibility as-is for user control)
       self.map.set_temporal_filter(None, None);
     } else {
-      // We have temporal data - auto-activate the timeline if it's not visible yet
-      if !self.map.is_timeline_visible() {
-        self.map.set_timeline_visible(true);
-      }
-      
-      // Timeline is visible and we have temporal data - update it
-      
-      // Sync playback state from timeline layer back to sidebar controls
-      let (timeline_playing, timeline_speed) = self.map.get_timeline_playback_state();
-      self.sidebar.temporal_controls.is_playing = timeline_playing;
-      self.sidebar.temporal_controls.playback_speed = timeline_speed;
+      // We have temporal data AND filtering is enabled - update timeline and filtering
 
-      // Get the current interval from the timeline layer
-      let (interval_start, interval_end) = self.map.get_timeline_interval();
-      
-      // Use the midpoint of the interval as current_time and the interval size as time_window
-      let (current_time, time_window) = if let (Some(start), Some(end)) = (interval_start, interval_end) {
-        let midpoint = start + (end.signed_duration_since(start) / 2);
-        let window_size = end.signed_duration_since(start);
-        (Some(midpoint), Some(window_size))
-      } else {
-        // Fallback to old behavior if timeline doesn't have an interval yet
-        (self.sidebar.temporal_controls.current_time, self.sidebar.temporal_controls.time_window)
-      };
-      
-      self.map.set_temporal_filter(current_time, time_window);
-      
-      // Update the timeline layer with current settings
+      // Update the timeline layer with current settings (always, so it maintains state)
       let time_range = (
         self.sidebar.temporal_controls.time_start,
         self.sidebar.temporal_controls.time_end,
       );
-      
-      // If we don't have an interval yet from the timeline, initialize with full range
-      let current_interval = if interval_start.is_none() || interval_end.is_none() {
-        if let (Some(start), Some(end)) = time_range {
-          // Start with the full range visible
-          (Some(start), Some(end))
+
+      if self.map.is_timeline_visible() {
+        // Timeline is visible - sync with its state
+
+        // Sync playback state from timeline layer back to sidebar controls
+        let (timeline_playing, timeline_speed) = self.map.get_timeline_playback_state();
+        self.sidebar.temporal_controls.is_playing = timeline_playing;
+        self.sidebar.temporal_controls.playback_speed = timeline_speed;
+
+        // Get the current interval from the timeline layer
+        let (interval_start, interval_end) = self.map.get_timeline_interval();
+
+        // If we don't have an interval yet from the timeline, initialize with full range
+        let current_interval = if interval_start.is_none() || interval_end.is_none() {
+          if let (Some(start), Some(end)) = time_range {
+            // Start with the full range visible
+            (Some(start), Some(end))
+          } else {
+            (None, None)
+          }
         } else {
-          (None, None)
-        }
+          (interval_start, interval_end)
+        };
+
+        self.map.update_timeline(
+          time_range,
+          current_interval,
+          self.sidebar.temporal_controls.is_playing,
+          self.sidebar.temporal_controls.playback_speed,
+        );
+
+        // Use the midpoint of the interval as current_time and the interval size as time_window
+        let (current_time, time_window) =
+          if let (Some(start), Some(end)) = (current_interval.0, current_interval.1) {
+            let midpoint = start + (end.signed_duration_since(start) / 2);
+            let window_size = end.signed_duration_since(start);
+            (Some(midpoint), Some(window_size))
+          } else {
+            // Fallback to sidebar controls if timeline doesn't have an interval yet
+            (
+              self.sidebar.temporal_controls.current_time,
+              self.sidebar.temporal_controls.time_window,
+            )
+          };
+
+        self.map.set_temporal_filter(current_time, time_window);
       } else {
-        (interval_start, interval_end)
-      };
-      
-      self.map.update_timeline(
-        time_range,
-        current_interval,
-        self.sidebar.temporal_controls.is_playing,
-        self.sidebar.temporal_controls.playback_speed,
-      );
+        // Timeline is hidden - disable temporal filtering completely to show all elements
+        self.map.set_temporal_filter(None, None);
+
+        // Still update timeline layer with time range so it's ready when made visible
+        self.map.update_timeline(
+          time_range,
+          (None, None), // No active interval when hidden
+          false,        // Not playing when hidden
+          self.sidebar.temporal_controls.playback_speed,
+        );
+      }
     }
 
     // Show sidebar with smooth animations
@@ -379,7 +429,11 @@ impl MapApp {
       Command::ToggleTemporalFilter => {
         let current_visible = self.map.is_timeline_visible();
         self.map.set_timeline_visible(!current_visible);
-        let status = if !current_visible { "enabled" } else { "disabled" };
+        let status = if current_visible {
+          "disabled"
+        } else {
+          "enabled"
+        };
         self
           .command_line
           .set_message(format!("Timeline {status}"), false);
@@ -423,9 +477,36 @@ struct TemporalControls {
   time_window: Option<chrono::Duration>,
   /// Last update time for animation
   last_update: f64,
+  /// Whether temporal filtering is enabled (can be disabled by user even when temporal data exists)
+  filter_enabled: bool,
 }
 
 impl TemporalControls {
+  /// Get whether temporal filtering is enabled
+  pub fn is_filter_enabled(&self) -> bool {
+    self.filter_enabled
+  }
+
+  /// Set whether temporal filtering is enabled
+  pub fn set_filter_enabled(&mut self, enabled: bool) {
+    self.filter_enabled = enabled;
+
+    // If disabling filter, clear current filter values
+    if !enabled {
+      self.current_time = None;
+      self.time_window = None;
+    } else if let (Some(start), Some(end)) = (self.time_start, self.time_end) {
+      // If enabling filter and we have time data, restore default values
+      if self.current_time.is_none() {
+        self.current_time = Some(start);
+      }
+      if self.time_window.is_none() {
+        let total_duration = end.signed_duration_since(start);
+        self.time_window = Some(total_duration / 10);
+      }
+    }
+  }
+
   /// Update the timeline during playback
   fn update_timeline(&mut self, current_ui_time: f64) {
     if !self.is_playing {
@@ -473,7 +554,6 @@ impl TemporalControls {
     for layer in layer_reader.get_layers() {
       // Get temporal range directly from the layer trait method
       let (layer_earliest, layer_latest) = layer.get_temporal_range();
-      
 
       if let Some(layer_earliest) = layer_earliest {
         earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
@@ -483,20 +563,27 @@ impl TemporalControls {
         latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
       }
     }
-    
 
     // Only enable temporal filtering if we found actual temporal data
     if let (Some(start), Some(end)) = (earliest, latest) {
       self.time_start = Some(start);
       self.time_end = Some(end);
-      if self.current_time.is_none() {
-        self.current_time = Some(start);
-      }
-      
-      // Initialize with a reasonable time window (10% of total range)
-      if self.time_window.is_none() {
-        let total_duration = end.signed_duration_since(start);
-        self.time_window = Some(total_duration / 10);
+
+      // Only set default filter values if filtering is enabled
+      if self.filter_enabled {
+        if self.current_time.is_none() {
+          self.current_time = Some(start);
+        }
+
+        // Initialize with a reasonable time window (10% of total range)
+        if self.time_window.is_none() {
+          let total_duration = end.signed_duration_since(start);
+          self.time_window = Some(total_duration / 10);
+        }
+      } else {
+        // Filter is disabled, clear filter values
+        self.current_time = None;
+        self.time_window = None;
       }
     } else {
       // No temporal data found - clear any existing temporal settings
@@ -535,6 +622,7 @@ impl Sidebar {
       settings_dialog,
       temporal_controls: TemporalControls {
         playback_speed: 1.0,
+        filter_enabled: true, // Default to enabled when temporal data is available
         ..Default::default()
       },
     }
@@ -603,7 +691,6 @@ impl Sidebar {
   fn is_fully_visible(&self) -> bool {
     self.animation_progress >= 0.99
   }
-
 
   /// Easing function for smooth animations
   fn ease_out_cubic(t: f32) -> f32 {
@@ -693,7 +780,6 @@ impl Sidebar {
       self.settings_dialog.borrow_mut().open();
     }
   }
-
 }
 
 #[derive(Clone)]

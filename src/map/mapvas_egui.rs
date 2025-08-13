@@ -25,6 +25,7 @@ use super::{
 };
 
 mod helpers;
+pub mod timeline_widget;
 
 pub mod layer;
 pub use layer::ParameterUpdate;
@@ -627,7 +628,7 @@ impl Map {
     if let Ok(layers) = self.layers.lock() {
       for layer in layers.iter() {
         let (is_playing, speed) = layer.get_timeline_playback_state();
-        if is_playing || speed != 1.0 {
+        if is_playing || (speed - 1.0).abs() > f32::EPSILON {
           return (is_playing, speed);
         }
       }
@@ -658,6 +659,33 @@ impl Map {
       }
     }
     false
+  }
+
+  /// Toggle timeline interval lock state
+  pub fn toggle_timeline_interval_lock(&mut self) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        if layer.name() == "Timeline" {
+          layer.toggle_timeline_interval_lock();
+          return;
+        }
+      }
+    }
+  }
+
+  /// Get current timeline interval lock state
+  #[must_use]
+  pub fn get_timeline_interval_lock(
+    &self,
+  ) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if layer.name() == "Timeline" {
+          return layer.get_timeline_interval_lock();
+        }
+      }
+    }
+    crate::map::mapvas_egui::timeline_widget::IntervalLock::None
   }
 
   /// Search geometries across all layers

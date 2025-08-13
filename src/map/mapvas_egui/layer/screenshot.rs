@@ -174,5 +174,4 @@ impl Layer for ScreenshotLayer {
   }
 
   fn ui_content(&mut self, _ui: &mut egui::Ui) {}
-
 }
