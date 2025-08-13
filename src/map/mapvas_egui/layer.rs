@@ -160,9 +160,7 @@ pub trait Layer {
   }
 
   /// Toggle timeline interval lock state
-  fn toggle_timeline_interval_lock(&mut self) {
-    // Default implementation does nothing - only timeline layers override this
-  }
+  fn toggle_timeline_interval_lock(&mut self) {}
 
   /// Get current timeline interval lock state
   fn get_timeline_interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {

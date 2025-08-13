@@ -211,7 +211,7 @@ impl Layer for TimelineLayer {
   }
 
   fn bounding_box(&self) -> Option<BoundingBox> {
-    None // Timeline is a UI overlay, not geographical
+    None
   }
 
   fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
