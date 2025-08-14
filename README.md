@@ -31,7 +31,7 @@ Via brew on MacOs:
 ### mapvas
 
 Start `mapvas` and a map window will appear.
-![mapvas](https://github.com/UdHo/mapvas/blob/master/mapvas.png)
+![mapvas](https://github.com/UdHo/mapvas/blob/main/mapvas.png)
 
 #### Interface Controls
 
@@ -252,8 +252,8 @@ Example configuration:
   "tile_cache_dir": "/Users/username/.mapvas_tile_cache",
   "commands_dir": "/Users/username/.config/mapvas/commands",
   "search_providers": [
-    {"Coordinate": null},
-    {"Nominatim": {"base_url": null}}
+    { "Coordinate": null },
+    { "Nominatim": { "base_url": null } }
   ],
   "heading_style": "Arrow"
 }
@@ -276,8 +276,8 @@ puffin_viewer --url=http://127.0.0.1:8585
 
 #### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MAPVAS_CONFIG` | Custom config directory | `~/.config/mapvas` |
-| `MAPVAS_TILE_URL` | Custom tile provider URL (legacy) | Uses config file |
-| `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location | Current directory |
+| Variable                 | Description                       | Default            |
+| ------------------------ | --------------------------------- | ------------------ |
+| `MAPVAS_CONFIG`          | Custom config directory           | `~/.config/mapvas` |
+| `MAPVAS_TILE_URL`        | Custom tile provider URL (legacy) | Uses config file   |
+| `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location  | Current directory  |
