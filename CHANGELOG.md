@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+## 0.2.6
+
+- new formats (.gpx, .geojson, .kml) and auto parser with type detection
+- timeline support with kml timestamps
+- double click and hover
+- filtering `&` and searching `/` with vim like keybindings
+- vim like commands `:<...>`
+- double click and hover functionality
+
 ## 0.2.5
 
 - Sidebar, double click, ux improvements.

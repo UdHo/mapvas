@@ -1,0 +1,60 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Hex Color",
+        "stroke": "#ff0000"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.0, 52.0]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Short Hex Color",
+        "stroke": "#f00"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.1, 52.1]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "RGB Color",
+        "stroke": "rgb(0, 255, 0)"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.2, 52.2]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Named Color",
+        "stroke": "blue"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.3, 52.3]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Hex with Alpha",
+        "stroke": "#ff000080"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [10.4, 52.4]
+      }
+    }
+  ]
+}

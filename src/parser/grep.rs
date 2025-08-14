@@ -6,10 +6,13 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 use super::Parser;
-use crate::map::{
-  coordinates::WGS84Coordinate,
-  geometry_collection::{Geometry, Metadata, Style},
-  map_event::{Color, FillStyle, Layer, MapEvent},
+use crate::{
+  map::{
+    coordinates::WGS84Coordinate,
+    geometry_collection::{Geometry, Metadata, Style},
+    map_event::{Color, FillStyle, Layer, MapEvent},
+  },
+  profile_scope,
 };
 
 static COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -49,15 +52,18 @@ pub struct GrepParser {
   fill: FillStyle,
   #[serde(skip, default)]
   label_re: Option<Regex>,
+  #[serde(skip)]
+  layer_name: String,
 }
 
 impl Parser for GrepParser {
   fn parse_line(&mut self, line: &str) -> Option<MapEvent> {
+    profile_scope!("GrepParser::parse_line");
     if let Some(event) = Self::parse_clear(line) {
       return Some(event);
     }
 
-    let mut layer = Layer::new("test".to_string());
+    let mut layer = Layer::new(self.layer_name.clone());
 
     for l in line.split('\n') {
       self.parse_color(l);
@@ -69,8 +75,10 @@ impl Parser for GrepParser {
         1 => layer.geometries.push(Geometry::Point(
           coordinates[0].into(),
           Metadata {
-            label: label.clone(),
+            label: label.clone().map(std::convert::Into::into),
             style: Some(Style::default().with_color(self.color.into())),
+            heading: None,
+            time_data: None,
           },
         )),
         _ => {
@@ -78,20 +86,24 @@ impl Parser for GrepParser {
             layer.geometries.push(Geometry::LineString(
               coordinates.into_iter().map(Into::into).collect(),
               Metadata {
-                label: label.clone(),
+                label: label.clone().map(std::convert::Into::into),
                 style: Some(Style::default().with_color(self.color.into())),
+                heading: None,
+                time_data: None,
               },
             ));
           } else {
             layer.geometries.push(Geometry::Polygon(
               coordinates.into_iter().map(Into::into).collect(),
               Metadata {
-                label: label.clone(),
+                label: label.clone().map(std::convert::Into::into),
                 style: Some(
                   Style::default()
                     .with_color(self.color.into())
                     .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
                 ),
+                heading: None,
+                time_data: None,
               },
             ));
           }
@@ -104,8 +116,10 @@ impl Parser for GrepParser {
           Geometry::LineString(
             c.into_iter().map(Into::into).collect(),
             Metadata {
-              label: label.clone(),
+              label: label.clone().map(std::convert::Into::into),
               style: Some(Style::default().with_color(self.color.into())),
+              heading: None,
+              time_data: None,
             },
           )
         }));
@@ -116,8 +130,10 @@ impl Parser for GrepParser {
           Geometry::LineString(
             c.into_iter().map(Into::into).collect(),
             Metadata {
-              label: label.clone(),
+              label: label.clone().map(std::convert::Into::into),
               style: Some(Style::default().with_color(self.color.into())),
+              heading: None,
+              time_data: None,
             },
           )
         }));
@@ -127,6 +143,10 @@ impl Parser for GrepParser {
     } else {
       Some(MapEvent::Layer(layer))
     }
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 
@@ -140,6 +160,7 @@ impl GrepParser {
       color: Color::default(),
       fill: FillStyle::default(),
       label_re: None,
+      layer_name: "coordinates".to_string(), // Default name for grep parser
     }
   }
 

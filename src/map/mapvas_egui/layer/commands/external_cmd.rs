@@ -35,24 +35,23 @@ impl ExeCfg {
   fn update_paramters(&mut self, parameters: ParameterUpdate) -> bool {
     match parameters {
       ParameterUpdate::Update(key, coord) => {
-        if let Some(coord) = coord {
-          if let Some(c) = self
+        if let Some(coord) = coord
+          && let Some(c) = self
             .coordinates
             .iter_mut()
             .filter(|(k, _)| k == &key)
             .map(|(_, coord)| coord)
             .next()
-          {
-            match c {
-              OoMCoordinates::Coordinate(c) => {
-                *c = coord;
-              }
-              OoMCoordinates::Coordinates(c) => {
-                c.push(coord);
-              }
+        {
+          match c {
+            OoMCoordinates::Coordinate(c) => {
+              *c = coord;
             }
-            return true;
+            OoMCoordinates::Coordinates(c) => {
+              c.push(coord);
+            }
           }
+          return true;
         }
       }
       ParameterUpdate::DragUpdate(pos, delta, trans) => {
@@ -83,7 +82,7 @@ impl ExeCfg {
     )
   }
 
-  fn run(&self, sender: Sender<MapEvent>) {
+  fn run(&self, sender: Sender<MapEvent>, response_sender: Sender<RawResponse>) {
     let mut cmd = self.executable.clone();
     let mut args = self.args_templates.clone();
     for (key, coord) in &self.coordinates {
@@ -119,14 +118,34 @@ impl ExeCfg {
     let mut parser = self.parser.clone();
 
     tokio::spawn(async move {
-      let response = std::process::Command::new(cmd).args(args).output();
+      let response = std::process::Command::new(&cmd).args(&args).output();
 
-      if let Ok(response) = response {
-        let cursor = std::io::Cursor::new(response.stdout);
-        let buf_read: Box<dyn BufRead> = Box::new(cursor);
-        let parsed = parser.parse(buf_read);
-        for el in parsed {
-          let _ = sender.send(el);
+      match response {
+        Ok(output) => {
+          let raw_response = RawResponse {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code(),
+            command_type: CommandType::Executable,
+          };
+
+          let _ = response_sender.send(raw_response);
+
+          let cursor = std::io::Cursor::new(output.stdout);
+          let buf_read: Box<dyn BufRead> = Box::new(cursor);
+          let parsed = parser.parse(buf_read);
+          for el in parsed {
+            let _ = sender.send(el);
+          }
+        }
+        Err(e) => {
+          let raw_response = RawResponse {
+            stdout: String::new(),
+            stderr: format!("Failed to execute command '{cmd}': {e}"),
+            exit_code: None,
+            command_type: CommandType::Executable,
+          };
+          let _ = response_sender.send(raw_response);
         }
       }
     });
@@ -194,24 +213,23 @@ impl CurlCfg {
   fn update_paramters(&mut self, parameters: ParameterUpdate) -> bool {
     match parameters {
       ParameterUpdate::Update(key, coord) => {
-        if let Some(coord) = coord {
-          if let Some(c) = self
+        if let Some(coord) = coord
+          && let Some(c) = self
             .coordinates
             .iter_mut()
             .filter(|(k, _)| k == &key)
             .map(|(_, coord)| coord)
             .next()
-          {
-            match c {
-              OoMCoordinates::Coordinate(c) => {
-                *c = coord;
-              }
-              OoMCoordinates::Coordinates(c) => {
-                c.push(coord);
-              }
+        {
+          match c {
+            OoMCoordinates::Coordinate(c) => {
+              *c = coord;
             }
-            return true;
+            OoMCoordinates::Coordinates(c) => {
+              c.push(coord);
+            }
           }
+          return true;
         }
       }
       ParameterUpdate::DragUpdate(pos, delta, trans) => {
@@ -242,7 +260,7 @@ impl CurlCfg {
     )
   }
 
-  fn run(&self, sender: Sender<MapEvent>) {
+  fn run(&self, sender: Sender<MapEvent>, response_sender: Sender<RawResponse>) {
     let mut url = self.url_template.clone();
     for (key, coord) in &self.coordinates {
       match coord {
@@ -273,16 +291,37 @@ impl CurlCfg {
     let mut parser = self.parser.clone();
 
     tokio::spawn(async move {
-      let response = surf::get(url)
+      let response = surf::get(&url)
         .recv_string()
         .await
         .inspect_err(|e| error!("Could not fetch data: {e}"));
-      if let Ok(response) = response {
-        let cursor = std::io::Cursor::new(response.into_bytes());
-        let buf_read: Box<dyn BufRead> = Box::new(cursor);
-        let parsed = parser.parse(buf_read);
-        for el in parsed {
-          let _ = sender.send(el);
+
+      match response {
+        Ok(response_body) => {
+          let raw_response = RawResponse {
+            stdout: response_body.clone(),
+            stderr: String::new(),
+            exit_code: Some(200), // HTTP 200 OK
+            command_type: CommandType::Curl,
+          };
+
+          let _ = response_sender.send(raw_response);
+
+          let cursor = std::io::Cursor::new(response_body.into_bytes());
+          let buf_read: Box<dyn BufRead> = Box::new(cursor);
+          let parsed = parser.parse(buf_read);
+          for el in parsed {
+            let _ = sender.send(el);
+          }
+        }
+        Err(e) => {
+          let raw_response = RawResponse {
+            stdout: String::new(),
+            stderr: format!("Failed to fetch URL '{url}': {e}"),
+            exit_code: None,
+            command_type: CommandType::Curl,
+          };
+          let _ = response_sender.send(raw_response);
         }
       }
     });
@@ -362,17 +401,17 @@ impl ExCommand {
     }
   }
 
-  fn run(&self, sender: Sender<MapEvent>) -> bool {
+  fn run(&self, sender: Sender<MapEvent>, response_sender: Sender<RawResponse>) -> bool {
     for coord in self.coordinates().iter().map(|(_, coord)| coord) {
-      if let OoMCoordinates::Coordinate(c) = coord {
-        if !c.is_valid() {
-          return false;
-        }
+      if let OoMCoordinates::Coordinate(c) = coord
+        && !c.is_valid()
+      {
+        return false;
       }
     }
     match self {
-      ExCommand::Curl(curl) => curl.run(sender),
-      ExCommand::Exe(exe) => exe.run(sender),
+      ExCommand::Curl(curl) => curl.run(sender, response_sender),
+      ExCommand::Exe(exe) => exe.run(sender, response_sender),
     }
     true
   }
@@ -410,22 +449,43 @@ struct ExternalCommandCommon {
   visible: bool,
   send: Sender<MapEvent>,
   rcv: Receiver<MapEvent>,
+  response_send: Sender<RawResponse>,
+  response_rcv: Receiver<RawResponse>,
   last_request: std::time::Instant,
   last_update: std::time::Instant,
   result: Option<Rc<dyn Drawable>>,
+  raw_response: Option<RawResponse>,
+}
+
+#[derive(Clone, Debug)]
+struct RawResponse {
+  stdout: String,
+  stderr: String,
+  exit_code: Option<i32>,
+  command_type: CommandType,
+}
+
+#[derive(Clone, Debug)]
+enum CommandType {
+  Executable,
+  Curl,
 }
 
 impl ExternalCommandCommon {
   fn new() -> Self {
     let (send, rcv) = std::sync::mpsc::channel();
+    let (response_send, response_rcv) = std::sync::mpsc::channel();
     Self {
       locked: false,
       visible: true,
       send,
       rcv,
+      response_send,
+      response_rcv,
       last_request: std::time::Instant::now(),
       last_update: std::time::Instant::now(),
       result: None,
+      raw_response: None,
     }
   }
 
@@ -545,6 +605,91 @@ impl ExternalCommand {
     (points, lines, polygons)
   }
 
+  fn display_raw_response_info(ui: &mut egui::Ui, response: &RawResponse, _command_name: &str) {
+    let command_type_str = match response.command_type {
+      CommandType::Executable => "🔧 Executable",
+      CommandType::Curl => "🌐 HTTP Request",
+    };
+
+    ui.label(format!("Type: {command_type_str}"));
+
+    if let Some(exit_code) = response.exit_code {
+      let status_text = match response.command_type {
+        CommandType::Executable => format!("Exit Code: {exit_code}"),
+        CommandType::Curl => format!("Status: {exit_code}"),
+      };
+      ui.label(status_text);
+    }
+
+    if !response.stdout.is_empty() {
+      let available_width = (ui.available_width() - 80.0).max(30.0);
+      let stdout_preview = if response.stdout.len() > 100 {
+        format!("{}...", &response.stdout[..100].replace('\n', " "))
+      } else {
+        response.stdout.replace('\n', " ")
+      };
+
+      let (truncated_stdout, _was_truncated) =
+        super::truncate_label_by_width(ui, &stdout_preview, available_width);
+      let stdout_text = format!("📝 Output: {truncated_stdout}");
+
+      let stdout_response = ui.label(stdout_text);
+      if stdout_response.clicked() {
+        let popup_id = egui::Id::new("external_command_stdout_popup");
+        let full_text = format!(
+          "🔧 Command Output (stdout)\n\nCommand Type: {}\n{}\n\nOutput:\n{}",
+          command_type_str,
+          if let Some(code) = response.exit_code {
+            match response.command_type {
+              CommandType::Executable => format!("Exit Code: {code}"),
+              CommandType::Curl => format!("HTTP Status: {code}"),
+            }
+          } else {
+            "Status: Unknown".to_string()
+          },
+          response.stdout
+        );
+        ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+      }
+    }
+
+    if !response.stderr.is_empty() {
+      let available_width = (ui.available_width() - 80.0).max(30.0);
+      let stderr_preview = if response.stderr.len() > 100 {
+        format!("{}...", &response.stderr[..100].replace('\n', " "))
+      } else {
+        response.stderr.replace('\n', " ")
+      };
+
+      let (truncated_stderr, _was_truncated) =
+        super::truncate_label_by_width(ui, &stderr_preview, available_width);
+      let stderr_text = format!("⚠️  Error: {truncated_stderr}");
+
+      let stderr_response = ui.small(stderr_text);
+      if stderr_response.clicked() {
+        let popup_id = egui::Id::new("external_command_stderr_popup");
+        let full_text = format!(
+          "⚠️ Command Error (stderr)\n\nCommand Type: {}\n{}\n\nError Output:\n{}",
+          command_type_str,
+          if let Some(code) = response.exit_code {
+            match response.command_type {
+              CommandType::Executable => format!("Exit Code: {code}"),
+              CommandType::Curl => format!("HTTP Status: {code}"),
+            }
+          } else {
+            "Status: Unknown".to_string()
+          },
+          response.stderr
+        );
+        ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
+      }
+    }
+
+    if response.stdout.is_empty() && response.stderr.is_empty() {
+      ui.small("📭 No output");
+    }
+  }
+
   fn display_geometry_info(ui: &mut egui::Ui, drawable: &dyn Drawable) {
     if let Some(geometry) = drawable.as_geometry() {
       Self::display_geometry_details(ui, geometry);
@@ -601,16 +746,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_point_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Point Label: {label}"));
+                .insert_temp(popup_id, format!("Point Label: {}", label.full()));
             });
           }
         }
@@ -643,16 +788,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_linestring_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("LineString Label: {label}"));
+                .insert_temp(popup_id, format!("LineString Label: {}", label.full()));
             });
           }
         }
@@ -727,16 +872,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_polygon_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Polygon Label: {label}"));
+                .insert_temp(popup_id, format!("Polygon Label: {}", label.full()));
             });
           }
         }
@@ -826,16 +971,16 @@ impl ExternalCommand {
           ui.memory_mut(|mem| mem.data.insert_temp(popup_id, full_text));
         }
         if let Some(label) = &metadata.label {
-          let available_width = (ui.available_width() - 100.0).max(30.0);
+          let available_width = (ui.available_width() - 40.0).max(100.0);
           let (truncated_label, _was_label_truncated) =
-            super::truncate_label_by_width(ui, label, available_width);
+            super::truncate_label_by_width(ui, &label.short(), available_width);
           let label_response = ui.small(format!("  Label: {truncated_label}"));
           if label_response.clicked() {
             let popup_id = egui::Id::new("external_collection_label_popup");
             ui.memory_mut(|mem| {
               mem
                 .data
-                .insert_temp(popup_id, format!("Collection Label: {label}"));
+                .insert_temp(popup_id, format!("Collection Label: {}", label.full()));
             });
           }
         }
@@ -847,7 +992,9 @@ impl ExternalCommand {
         }
       }
     }
+  }
 
+  fn handle_all_popups(ui: &mut egui::Ui) {
     let external_popup_ids = [
       "external_point_popup",
       "external_point_label_popup",
@@ -860,31 +1007,77 @@ impl ExternalCommand {
       "external_polygon_bounds_popup",
       "external_collection_popup",
       "external_collection_label_popup",
+      "external_command_stdout_popup",
+      "external_command_stderr_popup",
     ];
 
     for popup_id_str in external_popup_ids {
       let popup_id = egui::Id::new(popup_id_str);
       if let Some(full_text) = ui.memory(|mem| mem.data.get_temp::<String>(popup_id)) {
         let mut is_open = true;
-        egui::Window::new("Full Geometry Info")
-          .id(popup_id)
-          .open(&mut is_open)
-          .collapsible(false)
-          .resizable(true)
-          .movable(true)
-          .default_width(500.0)
-          .min_width(400.0)
-          .max_width(800.0)
-          .max_height(400.0)
-          .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical()
-              .max_height(300.0)
-              .show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                  ui.add(egui::Label::new(&full_text).wrap());
+        let window_title = match popup_id_str {
+          "external_command_stdout_popup" => "Command Output",
+          "external_command_stderr_popup" => "Command Error",
+          _ => "Full Geometry Info",
+        };
+        // Use Area for lightweight popups instead of heavy Windows
+        if popup_id_str == "external_command_stdout_popup"
+          || popup_id_str == "external_command_stderr_popup"
+        {
+          // Lightweight area-based popup for command responses
+          egui::Area::new(popup_id)
+            .movable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+              egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(600.0);
+                ui.set_max_height(300.0);
+
+                // Header with title and close/copy buttons
+                ui.horizontal(|ui| {
+                  ui.strong(window_title);
+                  ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("✕").clicked() {
+                      is_open = false;
+                    }
+                    if ui.button("📋").on_hover_text("Copy all").clicked() {
+                      ui.ctx().copy_text(full_text.clone());
+                    }
+                  });
                 });
+
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                  .max_height(220.0)
+                  .show(ui, |ui| {
+                    ui.add(egui::Label::new(&full_text).wrap().selectable(true));
+                  });
               });
-          });
+            });
+        } else {
+          // Keep existing window approach for geometry popups
+          egui::Window::new(window_title)
+            .id(popup_id)
+            .open(&mut is_open)
+            .collapsible(false)
+            .resizable(true)
+            .movable(true)
+            .default_width(500.0)
+            .min_width(400.0)
+            .max_width(800.0)
+            .max_height(400.0)
+            .show(ui.ctx(), |ui| {
+              egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                  ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                    ui.add(egui::Label::new(&full_text).wrap());
+                  });
+                });
+            });
+        }
 
         if !is_open {
           ui.memory_mut(|mem| mem.data.remove::<String>(popup_id));
@@ -915,13 +1108,22 @@ impl Command for ExternalCommand {
         }
       }
     }
+
+    // Handle raw responses
+    for response in self.common.response_rcv.try_iter() {
+      self.common.raw_response = Some(response);
+    }
+
     if self.common.last_request > self.common.last_update
       || self.common.last_request.elapsed().as_millis() < 1_000
     {
       return;
     }
 
-    if self.cmd.run(self.common.send.clone()) {
+    if self
+      .cmd
+      .run(self.common.send.clone(), self.common.response_send.clone())
+    {
       self.common.last_request = std::time::Instant::now();
     }
   }
@@ -974,6 +1176,18 @@ impl Command for ExternalCommand {
   fn ui(&mut self, ui: &mut egui::Ui) {
     self.cmd.ui(ui);
 
+    // Show raw response if available
+    if let Some(raw_response) = &self.common.raw_response {
+      ui.separator();
+      let raw_response_header_id = egui::Id::new(format!("raw_response_{}", self.name()));
+      egui::CollapsingHeader::new("Command Response")
+        .id_salt(raw_response_header_id)
+        .default_open(false)
+        .show(ui, |ui| {
+          Self::display_raw_response_info(ui, raw_response, self.name());
+        });
+    }
+
     // Show response geometry if available
     if let Some(result) = &self.common.result {
       ui.separator();
@@ -985,6 +1199,9 @@ impl Command for ExternalCommand {
           Self::display_geometry_info(ui, result.as_ref());
         });
     }
+
+    // Handle all popups (both geometry and command response)
+    Self::handle_all_popups(ui);
   }
 
   fn name(&self) -> &str {

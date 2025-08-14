@@ -1,14 +1,15 @@
 # MapVas
 
-A **map** can**vas** showing [OSM](https://openstreetmap.org) tiles with drawing functionality.
-The repo contains two binaries,
+A **map** can**vas** showing [OSM](https://openstreetmap.org) tiles with advanced visualization capabilities including temporal data support, interactive controls, and drawing functionality.
 
-- mapvas: the map window
-- mapcat: an equivalent to [cat](<https://en.wikipedia.org/wiki/Cat_(Unix)>) to draw polygons on the map.
+The repo contains two binaries:
+
+- **mapvas**: Interactive map viewer with timeline controls, search, filtering, and drawing
+- **mapcat**: Command-line tool equivalent to [cat](<https://en.wikipedia.org/wiki/Cat_(Unix)>) for displaying geographic data on the map
 
 ## Setup
 
-Make sure you have the nighly Rust toolchain installed.
+Make sure you have Rust installed (stable toolchain recommended).
 
 - [Install Rust](https://rustup.rs).
 
@@ -33,27 +34,88 @@ Start `mapvas` and a map window will appear.
 ![mapvas](https://github.com/UdHo/mapvas/blob/master/mapvas.png)
 
 #### Interface Controls
-|Functionality | Description |
-|--------------|-------------|
-| **Sidebar** | `F1` or `Ctrl+B` to toggle sidebar visibility |
-| **Hamburger Menu** | Click the ☰ button (top-left) when sidebar is hidden |
-| **Close Sidebar** | Click the ✕ button in sidebar header |
-| **Resize Sidebar** | Drag the right edge when sidebar is fully visible |
-| zoom | Use the mouse wheel or +/- |
-| focus to drawn elements | f centers the drawn elements |
-| moving | Left mouse and dragging or arrow keys |
-| paste | pressing v will paste the clipboard into the grep parser |
-| pasting file data | dropping a file on the map will draw the contents on the map |
-| information about element | right click near an element with label will show the label. L will use the current mouse position for poor mac users. |
-| screenshot | the S key takes a screenshot of the currently displayed area |
-| delete (Fn+delete on Mac) | clears the canvas |
+
+**Navigation & View:**
+| Key/Action | Description |
+|------------|-------------|
+| **Mouse Wheel / +/-** | Zoom in and out |
+| **Left Click + Drag** | Pan the map |
+| **Arrow Keys** | Pan the map with keyboard |
+| **F** | Focus/center all drawn elements |
+| **S** | Take screenshot of current view |
+
+**Sidebar & UI:**
+| Key/Action | Description |
+|------------|-------------|
+| **F1 / Ctrl+B** | Toggle sidebar |
+| **☰ Button** | Show sidebar |
+| **✕ Button** | Close sidebar |
+
+**Search & Navigation:**
+| Key/Action | Description |
+|------------|-------------|
+| **/** | Open search mode (vim-style) |
+| **&** | Open filtering mode |
+| **:** | Enter command mode |
+| **Double-Click** | Navigate nested collections or trigger popups |
+| **Right-Click** | Show context menu with element information |
+| **L** | Show label at mouse position (Mac-friendly) |
+
+**Timeline Controls (when temporal data loaded):**
+| Key/Action | Description |
+|------------|-------------|
+| **Ctrl+L** | Toggle interval lock mode |
+| **Timeline Handles** | Drag to adjust time interval |
+| **Play/Pause** | Control temporal animation |
+| **Step Buttons** | Step forward/backward through time |
+| **Speed Slider** | Adjust playback speed (0.25x-4x) |
+
+**Data Management:**
+| Key/Action | Description |
+|------------|-------------|
+| **V** | Paste clipboard content (auto-parsed) |
+| **File Drop** | Drag and drop files onto map |
+| **Delete/Fn+Delete** | Clear all elements |
+| **C** | Copy label text (when label popup shown) |
 
 ### mapcat
 
-Mapcat currently reads only input from stdin and reads it line by line and pipes and uses it using various [parser](https://github.com/UdHo/mapvas/tree/master/src/parser).
-It then shows the parsed result on a single instance of mapvas, which it spawns if none is running.
+Mapcat reads input from stdin or files and uses intelligent auto-parsing to detect the format, or you can specify a parser explicitly. It uses various [parsers](https://github.com/UdHo/mapvas/tree/master/src/parser) to handle different data formats.
+It shows the parsed result on a single instance of mapvas, which it spawns if none is running.
 
-#### Grep (default)
+#### Auto Parser (default)
+
+The auto parser (default since v0.2.6) intelligently detects input format:
+
+- **File extension detection**: Uses `.geojson`, `.json`, `.gpx`, `.kml`, `.xml` extensions with fallback chains
+- **Content analysis**: For stdin/piped data, analyzes content patterns to determine format
+- **Smart fallbacks**: TTJson → JSON → GeoJSON → Grep for JSON files, with format-specific chains for others
+
+```bash
+# Auto-detect format from file extension
+mapcat data.geojson
+mapcat routes.gpx
+mapcat points.kml
+
+# Auto-detect format from piped content
+curl 'https://api.example.com/geojson' | mapcat
+cat coordinates.txt | mapcat
+```
+
+#### Explicit Parser Selection
+
+You can override auto-detection and specify a parser explicitly:
+
+```bash
+# Force specific parser
+mapcat -p grep data.txt
+mapcat -p geojson data.json
+mapcat -p ttjson routes.json
+```
+
+Available parsers: `auto` (default), `grep`, `ttjson`, `json`, `geojson`, `gpx`, `kml`
+
+#### Grep Parser
 
 This parser greps for coordinates latitude and longitude as float in a line. In addition it supports colors and filling of polygons.
 
@@ -145,42 +207,77 @@ Draws routes or ranges from the [TomTom routing api](https://developer.tomtom.co
 curl 'https://api.tomtom.com/routing/1...' | mapcat -p ttjson -c green
 ```
 
+#### Directional Data Support
+
+MapVas supports displaying directional information for point geometries:
+
+**Heading support:**
+
+- Supported fields: `heading`, `bearing`, `direction`, `course` (in order of precedence)
+- Works with GeoJSON, JSON, and TTJson formats
+- Heading values in degrees (0° = North, clockwise)
+- Configurable arrow styles in settings
+
+```json
+// GeoJSON example with heading
+{
+  "type": "Feature",
+  "geometry": { "type": "Point", "coordinates": [13.4, 52.5] },
+  "properties": { "heading": 45.0, "label": "Northeast direction" }
+}
+```
+
 ### Advanced usage
 
-#### UI Customization
+#### Configuration
 
-**Sidebar Features:**
-- The sidebar provides access to map layers and settings with smooth animations
-- **Toggle Methods**: Use `F1`, `Ctrl+B`, hamburger menu (☰), or close button (✕)
-- **Animations**: Smooth slide-in/out with content fade effects for polished experience
-- **Resizable**: Drag the right edge to resize between 200-600px width
-- **Scrollable Content**: Layer list and settings scroll when content exceeds height
-- **Hover Effects**: All interactive elements provide visual feedback
+MapVas uses a configuration file located at `~/.config/mapvas/config.json`. The configuration file is automatically created on first run with default settings.
 
-#### Offline usage
+You can also set `MAPVAS_CONFIG` environment variable to use a custom config directory.
 
-To cache tile images for future runs set the environment variable `TILECACHE` to an existing directory.
+Example configuration:
 
+```json
+{
+  "tile_provider": [
+    {
+      "name": "OpenStreetMap",
+      "url": "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+    },
+    {
+      "name": "TomTom",
+      "url": "https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=***"
+    }
+  ],
+  "tile_cache_dir": "/Users/username/.mapvas_tile_cache",
+  "commands_dir": "/Users/username/.config/mapvas/commands",
+  "search_providers": [
+    {"Coordinate": null},
+    {"Nominatim": {"base_url": null}}
+  ],
+  "heading_style": "Arrow"
+}
 ```
-    mkdir ~/.tilecache
-    export TILECACHE=~/.tilecache
-```
 
-#### Different map tile url
+#### Tile Caching
 
-To use tiles from a different provider than [openstreetmap] you can set a templated url. The url must contain `{zoom}`, `{x}`, and `{y}`. The tile provider should return tiles in the [pseudo/spherical-mercator projection](https://epsg.io/3857) in a size of 512x512 pixel. Examples:
+Tile caching is enabled by default and tiles are stored in `~/.mapvas_tile_cache`. You can change this location in the config file or disable it by setting `tile_cache_dir` to `null`.
 
-```
-    export MAPVAS_TILE_URL='https://tile.openstreetmap.org/{zoom}/{x}/{y}.png'
-    export MAPVAS_TILE_URL='https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=***'
-    export MAPVAS_TILE_URL='https://maps.hereapi.com/v3/background/mc/{zoom}/{x}/{y}/png8?size=512&apiKey=***'
+#### Performance Profiling
+
+```bash
+# Run with profiling enabled
+cargo run --bin mapvas --features profiling
+
+# View profiling data
+cargo install puffin_viewer
+puffin_viewer --url=http://127.0.0.1:8585
 ```
 
 #### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TILECACHE` | Directory for caching map tiles | None (no caching) |
-| `MAPVAS_TILE_URL` | Custom tile provider URL template | OpenStreetMap |
+| `MAPVAS_CONFIG` | Custom config directory | `~/.config/mapvas` |
+| `MAPVAS_TILE_URL` | Custom tile provider URL (legacy) | Uses config file |
 | `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location | Current directory |
-

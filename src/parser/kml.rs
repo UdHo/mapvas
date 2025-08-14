@@ -4,23 +4,36 @@ use std::collections::HashMap;
 
 use crate::map::{
   coordinates::{PixelCoordinate, WGS84Coordinate},
-  geometry_collection::{Geometry, Metadata, Style},
+  geometry_collection::{Geometry, Metadata, Style, TimeData, TimeSpan},
   map_event::{Layer, MapEvent},
 };
+use chrono::{DateTime, Utc};
 use egui::Color32;
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct KmlParser {
   #[serde(skip)]
   data: String,
   #[serde(skip)]
   document_styles: HashMap<String, Style>,
+  #[serde(skip)]
+  layer_name: String,
+}
+
+impl Default for KmlParser {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl KmlParser {
   #[must_use]
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      data: String::new(),
+      document_styles: HashMap::new(),
+      layer_name: "kml".to_string(),
+    }
   }
 
   fn parse_kml_color(color_str: &str) -> Option<Color32> {
@@ -66,16 +79,16 @@ impl KmlParser {
   fn parse_kml_style(kml_style: &kml::types::Style) -> Style {
     let mut style = Style::default();
 
-    if let Some(line_style) = &kml_style.line {
-      if let Some(parsed_color) = Self::parse_kml_color(&line_style.color) {
-        style = style.with_color(parsed_color);
-      }
+    if let Some(line_style) = &kml_style.line
+      && let Some(parsed_color) = Self::parse_kml_color(&line_style.color)
+    {
+      style = style.with_color(parsed_color);
     }
 
-    if let Some(poly_style) = &kml_style.poly {
-      if let Some(parsed_color) = Self::parse_kml_color(&poly_style.color) {
-        style = style.with_fill_color(parsed_color);
-      }
+    if let Some(poly_style) = &kml_style.poly
+      && let Some(parsed_color) = Self::parse_kml_color(&poly_style.color)
+    {
+      style = style.with_fill_color(parsed_color);
     }
 
     style
@@ -96,11 +109,242 @@ impl KmlParser {
     let style = self.extract_style_from_placemark(placemark);
     let mut metadata = Metadata::default().with_style(style);
 
+    // Create structured label with name and description
     if let Some(name) = &placemark.name {
-      metadata = metadata.with_label(name.clone());
+      let mut label = crate::map::geometry_collection::Label::new(name.clone());
+
+      if let Some(description) = &placemark.description {
+        // Clean up HTML tags and format the description nicely
+        let cleaned_description = description
+          .replace("<br/>", "\n")
+          .replace("<br>", "\n")
+          .replace("&lt;", "<")
+          .replace("&gt;", ">")
+          .replace("&amp;", "&");
+
+        // Remove HTML tags using a simple approach
+        let mut clean_text = String::new();
+        let mut in_tag = false;
+        for ch in cleaned_description.chars() {
+          match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => clean_text.push(ch),
+            _ => {}
+          }
+        }
+
+        if !clean_text.trim().is_empty() {
+          label = label.with_description(clean_text.trim().to_string());
+        }
+      }
+
+      metadata = metadata.with_structured_label(label);
+    }
+
+    // Extract temporal information from the raw KML data
+    if let Some(time_data) = self.extract_temporal_data(placemark) {
+      metadata = metadata.with_time_data(time_data);
     }
 
     metadata
+  }
+
+  fn extract_temporal_data(&self, placemark: &kml::types::Placemark<f64>) -> Option<TimeData> {
+    // Extract temporal data directly from placemark children elements
+    // Look for TimeStamp and TimeSpan elements in the placemark's children
+
+    for child in &placemark.children {
+      if child.name == "TimeStamp" {
+        // Look for <when> element in TimeStamp children
+        for timestamp_child in &child.children {
+          if timestamp_child.name == "when"
+            && let Some(ref when_content) = timestamp_child.content
+            && let Some(parsed_time) = Self::parse_kml_datetime(when_content)
+          {
+            return Some(TimeData {
+              timestamp: Some(parsed_time),
+              time_span: None,
+            });
+          }
+        }
+      } else if child.name == "TimeSpan" {
+        // Look for <begin> and <end> elements in TimeSpan children
+        let mut begin_time = None;
+        let mut end_time = None;
+
+        for timespan_child in &child.children {
+          if timespan_child.name == "begin" {
+            if let Some(ref begin_content) = timespan_child.content {
+              begin_time = Self::parse_kml_datetime(begin_content);
+            }
+          } else if timespan_child.name == "end"
+            && let Some(ref end_content) = timespan_child.content
+          {
+            end_time = Self::parse_kml_datetime(end_content);
+          }
+        }
+
+        if begin_time.is_some() || end_time.is_some() {
+          return Some(TimeData {
+            timestamp: None,
+            time_span: Some(TimeSpan {
+              begin: begin_time,
+              end: end_time,
+            }),
+          });
+        }
+      }
+    }
+
+    // Fallback: Find this placemark's section in the original XML data
+    if let Some(name) = &placemark.name {
+      if let Some(timestamp) = self.find_timestamp_in_xml(name) {
+        return Some(TimeData {
+          timestamp: Some(timestamp),
+          time_span: None,
+        });
+      }
+
+      if let Some(time_span) = self.find_timespan_in_xml(name) {
+        return Some(TimeData {
+          timestamp: None,
+          time_span: Some(time_span),
+        });
+      }
+    }
+
+    None
+  }
+
+  fn find_timestamp_in_xml(&self, placemark_name: &str) -> Option<DateTime<Utc>> {
+    // Look for <TimeStamp><when>...</when></TimeStamp> in a placemark with this name
+    let name_pattern = format!("<name>{placemark_name}</name>");
+
+    if let Some(placemark_start) = self.data.find(&name_pattern) {
+      // Find the end of this placemark
+      let placemark_section = &self.data[placemark_start..];
+      if let Some(placemark_end) = placemark_section.find("</Placemark>") {
+        let placemark_xml = &placemark_section[..placemark_end];
+
+        // Look for TimeStamp within this placemark
+        if let Some(timestamp_start) = placemark_xml.find("<TimeStamp>")
+          && let Some(when_start) = placemark_xml[timestamp_start..].find("<when>")
+        {
+          let when_content_start = timestamp_start + when_start + 6; // Length of "<when>"
+          if let Some(when_end) = placemark_xml[when_content_start..].find("</when>") {
+            let when_content = &placemark_xml[when_content_start..when_content_start + when_end];
+            return Self::parse_kml_datetime(when_content);
+          }
+        }
+      }
+    }
+
+    None
+  }
+
+  fn find_timespan_in_xml(&self, placemark_name: &str) -> Option<TimeSpan> {
+    // Look for <TimeSpan><begin>...</begin><end>...</end></TimeSpan> in a placemark with this name
+    let name_pattern = format!("<name>{placemark_name}</name>");
+
+    if let Some(placemark_start) = self.data.find(&name_pattern) {
+      let placemark_section = &self.data[placemark_start..];
+      if let Some(placemark_end) = placemark_section.find("</Placemark>") {
+        let placemark_xml = &placemark_section[..placemark_end];
+
+        // Look for TimeSpan within this placemark
+        if let Some(timespan_start) = placemark_xml.find("<TimeSpan>") {
+          let timespan_section = &placemark_xml[timespan_start..];
+          if let Some(timespan_end) = timespan_section.find("</TimeSpan>") {
+            let timespan_xml = &timespan_section[..timespan_end];
+
+            let mut begin_time = None;
+            let mut end_time = None;
+
+            // Parse begin time
+            if let Some(begin_start) = timespan_xml.find("<begin>") {
+              let begin_content_start = begin_start + 7; // Length of "<begin>"
+              if let Some(begin_end) = timespan_xml[begin_content_start..].find("</begin>") {
+                let begin_content =
+                  &timespan_xml[begin_content_start..begin_content_start + begin_end];
+                begin_time = Self::parse_kml_datetime(begin_content);
+              }
+            }
+
+            // Parse end time
+            if let Some(end_start) = timespan_xml.find("<end>") {
+              let end_content_start = end_start + 5; // Length of "<end>"
+              if let Some(end_end) = timespan_xml[end_content_start..].find("</end>") {
+                let end_content = &timespan_xml[end_content_start..end_content_start + end_end];
+                end_time = Self::parse_kml_datetime(end_content);
+              }
+            }
+
+            if begin_time.is_some() || end_time.is_some() {
+              return Some(TimeSpan {
+                begin: begin_time,
+                end: end_time,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    None
+  }
+
+  fn parse_kml_datetime(date_str: &str) -> Option<DateTime<Utc>> {
+    // KML supports various datetime formats:
+    // - 1997-07-16T07:30:15Z (full date-time)
+    // - 1997-07-16 (date only)
+    // - 1997-07 (year-month)
+    // - 1997 (year only)
+
+    let trimmed = date_str.trim();
+
+    // Try full datetime first
+    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
+      return Some(dt.with_timezone(&Utc));
+    }
+
+    // Try datetime without timezone (assume UTC)
+    if trimmed.len() >= 19 && trimmed.contains('T') {
+      let with_z = format!("{trimmed}Z");
+      if let Ok(dt) = DateTime::parse_from_rfc3339(&with_z) {
+        return Some(dt.with_timezone(&Utc));
+      }
+    }
+
+    // Try date only (add default time)
+    if trimmed.len() == 10
+      && trimmed.chars().nth(4) == Some('-')
+      && trimmed.chars().nth(7) == Some('-')
+    {
+      let datetime_str = format!("{trimmed}T00:00:00Z");
+      if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
+        return Some(dt.with_timezone(&Utc));
+      }
+    }
+
+    // Try year-month only
+    if trimmed.len() == 7 && trimmed.chars().nth(4) == Some('-') {
+      let datetime_str = format!("{trimmed}-01T00:00:00Z");
+      if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
+        return Some(dt.with_timezone(&Utc));
+      }
+    }
+
+    // Try year only
+    if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+      let datetime_str = format!("{trimmed}-01-01T00:00:00Z");
+      if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_str) {
+        return Some(dt.with_timezone(&Utc));
+      }
+    }
+
+    log::warn!("Failed to parse KML datetime: {date_str}");
+    None
   }
 
   fn parse_kml(&mut self) -> Vec<Geometry<PixelCoordinate>> {
@@ -135,7 +379,10 @@ impl KmlParser {
         if child_geometries.is_empty() {
           None
         } else {
-          Some(Geometry::GeometryCollection(child_geometries, Metadata::default()))
+          Some(Geometry::GeometryCollection(
+            child_geometries,
+            Metadata::default(),
+          ))
         }
       }
       kml::Kml::Document { elements, attrs } => {
@@ -149,19 +396,16 @@ impl KmlParser {
           None
         } else {
           let mut metadata = Metadata::default();
-          // Try different ways to get the document name
           if let Some(name) = attrs.get("name") {
             metadata = metadata.with_label(name.clone());
           } else {
-            // Document names might be in child elements, let's search for Name elements
             for element in elements {
-              if let kml::Kml::Element(el) = element {
-                if el.name == "name" {
-                  if let Some(text) = &el.content {
-                    metadata = metadata.with_label(text.clone());
-                    break;
-                  }
-                }
+              if let kml::Kml::Element(el) = element
+                && el.name == "name"
+                && let Some(text) = &el.content
+              {
+                metadata = metadata.with_label(text.clone());
+                break;
               }
             }
           }
@@ -179,7 +423,6 @@ impl KmlParser {
           None
         } else {
           let mut metadata = Metadata::default();
-          // Use folder name if available
           if let Some(name) = &folder.name {
             metadata = metadata.with_label(name.clone());
           }
@@ -284,6 +527,24 @@ impl KmlParser {
           }
         }
       }
+      kml::types::Geometry::MultiGeometry(multi_geom) => {
+        // Convert MultiGeometry to GeometryCollection
+        let mut child_geometries = Vec::new();
+
+        for child_geom in &multi_geom.geometries {
+          if let Some(converted) =
+            Self::convert_geometry_with_metadata(child_geom, metadata.clone())
+          {
+            child_geometries.push(converted);
+          }
+        }
+
+        if child_geometries.is_empty() {
+          None
+        } else {
+          Some(Geometry::GeometryCollection(child_geometries, metadata))
+        }
+      }
       _ => None,
     }
   }
@@ -299,27 +560,36 @@ impl Parser for KmlParser {
     let geometries = self.parse_kml();
     log::debug!("KML parser found {} geometries", geometries.len());
     if !geometries.is_empty() {
-      let mut layer = Layer::new("kml".to_string());
+      let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries = geometries;
       return Some(MapEvent::Layer(layer));
     }
     None
+  }
+
+  fn set_layer_name(&mut self, layer_name: String) {
+    self.layer_name = layer_name;
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  
-  fn extract_leaf_geometries(geom: &crate::map::geometry_collection::Geometry<crate::map::coordinates::PixelCoordinate>) -> Vec<&crate::map::geometry_collection::Geometry<crate::map::coordinates::PixelCoordinate>> {
+  use crate::map::{
+    coordinates::{PixelCoordinate, WGS84Coordinate},
+    geometry_collection::{Geometry, Metadata, Style},
+    map_event::MapEvent,
+  };
+
+  fn extract_leaf_geometries(geom: &Geometry<PixelCoordinate>) -> Vec<&Geometry<PixelCoordinate>> {
     match geom {
-      crate::map::geometry_collection::Geometry::GeometryCollection(children, _) => {
+      Geometry::GeometryCollection(children, _) => {
         let mut results = Vec::new();
         for child in children {
           results.extend(extract_leaf_geometries(child));
         }
         results
-      },
+      }
       _ => vec![geom],
     }
   }
@@ -341,26 +611,23 @@ mod tests {
     let events: Vec<_> = parser.parse(reader).collect();
 
     assert!(!events.is_empty(), "KML parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert_eq!(leaf_geometries.len(), 1, "Should have 1 point geometry");
-      
-      let expected_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
-      );
-      let expected_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let expected_metadata = crate::map::geometry_collection::Metadata::default()
+
+      let expected_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
+      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_metadata = Metadata::default()
         .with_label("Simple Point".to_string())
         .with_style(expected_style);
-      let expected_geometry = crate::map::geometry_collection::Geometry::Point(
-        expected_coord,
-        expected_metadata
+      let expected_geometry = Geometry::Point(expected_coord, expected_metadata);
+
+      assert_eq!(
+        leaf_geometries[0], &expected_geometry,
+        "Point geometry should match expected"
       );
-      
-      assert_eq!(leaf_geometries[0], &expected_geometry, "Point geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -383,34 +650,37 @@ mod tests {
     let events: Vec<_> = parser.parse(reader).collect();
 
     assert!(!events.is_empty(), "KML parser should produce events");
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
-      assert_eq!(leaf_geometries.len(), 1, "Should have 1 linestring geometry");
-      
+      assert_eq!(
+        leaf_geometries.len(),
+        1,
+        "Should have 1 linestring geometry"
+      );
+
       let expected_coords = vec![
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+          crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0),
         ),
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1)
+          crate::map::coordinates::WGS84Coordinate::new(52.1, 10.1),
         ),
         crate::map::coordinates::PixelCoordinate::from(
-          crate::map::coordinates::WGS84Coordinate::new(52.2, 10.2)
+          crate::map::coordinates::WGS84Coordinate::new(52.2, 10.2),
         ),
       ];
-      let expected_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let expected_metadata = crate::map::geometry_collection::Metadata::default()
+      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_metadata = Metadata::default()
         .with_label("Simple Line".to_string())
         .with_style(expected_style);
-      let expected_geometry = crate::map::geometry_collection::Geometry::LineString(
-        expected_coords,
-        expected_metadata
+      let expected_geometry = Geometry::LineString(expected_coords, expected_metadata);
+
+      assert_eq!(
+        leaf_geometries[0], &expected_geometry,
+        "LineString geometry should match expected"
       );
-      
-      assert_eq!(leaf_geometries[0], &expected_geometry, "LineString geometry should match expected");
     } else {
       panic!("First event should be a Layer event");
     }
@@ -436,7 +706,7 @@ mod tests {
 
     let layer_events: Vec<_> = events
       .iter()
-      .filter(|event| matches!(event, crate::map::map_event::MapEvent::Layer(_)))
+      .filter(|event| matches!(event, MapEvent::Layer(_)))
       .collect();
 
     assert!(
@@ -465,9 +735,9 @@ mod tests {
       "Styled KML parser should produce events"
     );
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert!(
         leaf_geometries.len() >= 3,
@@ -477,12 +747,10 @@ mod tests {
       let geometries_with_labels: Vec<_> = leaf_geometries
         .iter()
         .filter(|geom| match geom {
-          crate::map::geometry_collection::Geometry::Point(_, metadata)
-          | crate::map::geometry_collection::Geometry::LineString(_, metadata)
-          | crate::map::geometry_collection::Geometry::Polygon(_, metadata)
-          | crate::map::geometry_collection::Geometry::GeometryCollection(_, metadata) => {
-            metadata.label.is_some()
-          }
+          Geometry::Point(_, metadata)
+          | Geometry::LineString(_, metadata)
+          | Geometry::Polygon(_, metadata)
+          | Geometry::GeometryCollection(_, metadata) => metadata.label.is_some(),
         })
         .collect();
 
@@ -493,6 +761,24 @@ mod tests {
     } else {
       panic!("First event should be a Layer event");
     }
+  }
+
+  #[test]
+  fn test_kml_datetime_without_timezone() {
+    use chrono::{Datelike, Timelike};
+
+    // Test the exact format from the user's debug output
+    let datetime_without_tz = "1970-01-01T00:20:37";
+    let parsed = KmlParser::parse_kml_datetime(datetime_without_tz);
+
+    assert!(parsed.is_some(), "Should parse datetime without timezone");
+    let dt = parsed.unwrap();
+    assert_eq!(dt.year(), 1970);
+    assert_eq!(dt.month(), 1);
+    assert_eq!(dt.day(), 1);
+    assert_eq!(dt.hour(), 0);
+    assert_eq!(dt.minute(), 20);
+    assert_eq!(dt.second(), 37);
   }
 
   #[test]
@@ -513,19 +799,18 @@ mod tests {
 
     assert!(!events.is_empty(), "Should parse KML with styles");
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
+    if let Some(MapEvent::Layer(layer)) = events.first() {
       assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry");
-      
+
       let leaf_geometries = extract_leaf_geometries(&layer.geometries[0]);
       assert!(!leaf_geometries.is_empty(), "Should have geometries");
 
       if let Some(geometry) = leaf_geometries.first() {
         match geometry {
-          crate::map::geometry_collection::Geometry::LineString(_, metadata) => {
+          Geometry::LineString(_, metadata) => {
             assert!(metadata.style.is_some(), "Geometry should have style");
             if let Some(style) = &metadata.style {
-              // The color() method always returns a color (with default fallback)
-              let _color = style.color(); // Just verify the method works
+              let _color = style.color();
             }
           }
           _ => panic!("Expected LineString geometry"),
@@ -552,56 +837,44 @@ mod tests {
 
     assert!(!events.is_empty(), "Should parse nested KML structure");
 
-    if let Some(crate::map::map_event::MapEvent::Layer(layer)) = events.first() {
-      assert_eq!(layer.geometries.len(), 1, "Should have 1 root geometry collection");
-      
-      let nested_point_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(52.0, 10.0)
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(
+        layer.geometries.len(),
+        1,
+        "Should have 1 root geometry collection"
       );
-      let nested_point_style = crate::map::geometry_collection::Style::default()
-        .with_color(egui::Color32::BLUE);
-      let nested_point_metadata = crate::map::geometry_collection::Metadata::default()
+
+      let nested_point_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
+      let nested_point_style = Style::default().with_color(egui::Color32::BLUE);
+      let nested_point_metadata = Metadata::default()
         .with_label("Nested Point".to_string())
         .with_style(nested_point_style.clone());
-      let nested_point = crate::map::geometry_collection::Geometry::Point(
-        nested_point_coord,
-        nested_point_metadata
-      );
+      let nested_point = Geometry::Point(nested_point_coord, nested_point_metadata);
 
-      let outer_point_coord = crate::map::coordinates::PixelCoordinate::from(
-        crate::map::coordinates::WGS84Coordinate::new(53.0, 11.0)
-      );
-      let outer_point_metadata = crate::map::geometry_collection::Metadata::default()
+      let outer_point_coord = PixelCoordinate::from(WGS84Coordinate::new(53.0, 11.0));
+      let outer_point_metadata = Metadata::default()
         .with_label("Outer Point".to_string())
         .with_style(nested_point_style.clone());
-      let outer_point = crate::map::geometry_collection::Geometry::Point(
-        outer_point_coord,
-        outer_point_metadata
-      );
+      let outer_point = Geometry::Point(outer_point_coord, outer_point_metadata);
 
-      let inner_folder = crate::map::geometry_collection::Geometry::GeometryCollection(
+      let inner_folder = Geometry::GeometryCollection(
         vec![nested_point],
-        crate::map::geometry_collection::Metadata::default()
-          .with_label("Inner Folder".to_string())
+        Metadata::default().with_label("Inner Folder".to_string()),
       );
 
-      let outer_folder = crate::map::geometry_collection::Geometry::GeometryCollection(
+      let outer_folder = Geometry::GeometryCollection(
         vec![inner_folder, outer_point],
-        crate::map::geometry_collection::Metadata::default()
-          .with_label("Outer Folder".to_string())
+        Metadata::default().with_label("Outer Folder".to_string()),
       );
 
-      let document = crate::map::geometry_collection::Geometry::GeometryCollection(
-        vec![outer_folder],
-        crate::map::geometry_collection::Metadata::default()
-      );
+      let document = Geometry::GeometryCollection(vec![outer_folder], Metadata::default());
 
-      let expected_root = crate::map::geometry_collection::Geometry::GeometryCollection(
-        vec![document],
-        crate::map::geometry_collection::Metadata::default()
-      );
+      let expected_root = Geometry::GeometryCollection(vec![document], Metadata::default());
 
-      assert_eq!(layer.geometries[0], expected_root, "Nested KML structure should match expected geometry hierarchy");
+      assert_eq!(
+        layer.geometries[0], expected_root,
+        "Nested KML structure should match expected geometry hierarchy"
+      );
     } else {
       panic!("First event should be a Layer event");
     }
@@ -609,33 +882,48 @@ mod tests {
 
   #[test]
   fn test_geometry_equality() {
-    use crate::map::coordinates::PixelCoordinate;
-    use crate::map::geometry_collection::{Geometry, Metadata, Style};
-    
     let coord1 = PixelCoordinate::new(10.0, 20.0);
     let coord2 = PixelCoordinate::new(10.0, 20.0);
     let coord3 = PixelCoordinate::new(10.1, 20.0);
-    
+
     let metadata = Metadata::default().with_label("Test Point".to_string());
     let style = Style::default().with_color(egui::Color32::RED);
     let metadata_with_style = Metadata::default()
       .with_label("Test Point".to_string())
       .with_style(style);
-    
+
     let geom1 = Geometry::Point(coord1, metadata.clone());
     let geom2 = Geometry::Point(coord2, metadata.clone());
     let geom3 = Geometry::Point(coord3, metadata.clone());
     let geom4 = Geometry::Point(coord1, metadata_with_style);
-    
-    assert_eq!(geom1, geom2, "Geometries with same coordinates and metadata should be equal");
-    assert_ne!(geom1, geom3, "Geometries with different coordinates should not be equal");
-    assert_ne!(geom1, geom4, "Geometries with different metadata should not be equal");
-    
-    let collection1 = Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
-    let collection2 = Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
-    let collection3 = Geometry::GeometryCollection(vec![geom1.clone(), geom3.clone()], Metadata::default());
-    
-    assert_eq!(collection1, collection2, "Collections with same geometries should be equal");
-    assert_ne!(collection1, collection3, "Collections with different geometries should not be equal");
+
+    assert_eq!(
+      geom1, geom2,
+      "Geometries with same coordinates and metadata should be equal"
+    );
+    assert_ne!(
+      geom1, geom3,
+      "Geometries with different coordinates should not be equal"
+    );
+    assert_ne!(
+      geom1, geom4,
+      "Geometries with different metadata should not be equal"
+    );
+
+    let collection1 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
+    let collection2 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom2.clone()], Metadata::default());
+    let collection3 =
+      Geometry::GeometryCollection(vec![geom1.clone(), geom3.clone()], Metadata::default());
+
+    assert_eq!(
+      collection1, collection2,
+      "Collections with same geometries should be equal"
+    );
+    assert_ne!(
+      collection1, collection3,
+      "Collections with different geometries should not be equal"
+    );
   }
 }

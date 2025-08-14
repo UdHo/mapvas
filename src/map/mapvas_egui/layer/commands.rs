@@ -24,6 +24,7 @@ pub struct CommandLayer {
 }
 
 impl CommandLayer {
+  #[must_use]
   pub fn new() -> (Self, Sender<ParameterUpdate>) {
     let (send, recv) = std::sync::mpsc::channel();
 
@@ -47,6 +48,7 @@ impl CommandLayer {
     )
   }
 
+  #[must_use]
   pub fn register_keys(&self) -> Box<dyn Iterator<Item = &str> + '_> {
     Box::new(
       self
@@ -359,8 +361,8 @@ impl Layer for CommandLayer {
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
     let click_coord = transform.invert().apply(pos.into());
-    let tolerance_map_coords = f64::from(5.0 / transform.zoom);
-    let mut closest_distance = f64::INFINITY;
+    let tolerance_screen_pixels = 5.0; // Fixed screen pixel tolerance
+    let mut closest_distance_screen = f64::INFINITY;
     let mut found_command: Option<usize> = None;
 
     for (cmd_idx, command) in self.commands.iter().enumerate() {
@@ -368,9 +370,16 @@ impl Layer for CommandLayer {
         continue;
       }
 
-      if let Some(distance) = Self::calculate_distance_to_command(&**command, click_coord) {
-        if distance < closest_distance && distance < tolerance_map_coords {
-          closest_distance = distance;
+      if let Some(distance_map_coords) =
+        Self::calculate_distance_to_command(&**command, click_coord)
+      {
+        // Convert map coordinate distance back to screen pixels
+        let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
+
+        if distance_screen_pixels < closest_distance_screen
+          && distance_screen_pixels < tolerance_screen_pixels
+        {
+          closest_distance_screen = distance_screen_pixels;
           found_command = Some(cmd_idx);
         }
       }
@@ -380,7 +389,7 @@ impl Layer for CommandLayer {
       let was_different = self.highlighted_command != Some(cmd_idx);
       self.highlighted_command = Some(cmd_idx);
       self.just_highlighted = was_different;
-      Some(closest_distance)
+      Some(closest_distance_screen)
     } else {
       self.highlighted_command = None;
       self.just_highlighted = false;

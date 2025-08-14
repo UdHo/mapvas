@@ -3,20 +3,27 @@ use std::rc::Rc;
 use egui::Widget as _;
 
 use crate::{
-  config::{Config, TileProvider},
-  map::mapvas_egui::{Map, MapLayerHolder},
+  command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
+  config::{Config, HeadingStyle, TileProvider},
+  map::mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+  profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
 };
+use chrono::{DateTime, Utc};
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
   map: Map,
   sidebar: Sidebar,
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
+  previous_had_highlighted: bool,
+  last_heading_style: HeadingStyle,
+  command_line: CommandLine,
 }
 
 impl MapApp {
+  #[allow(clippy::needless_pass_by_value)]
   pub fn new(
     map: Map,
     remote: Remote,
@@ -25,11 +32,14 @@ impl MapApp {
   ) -> Self {
     let settings_dialog =
       std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
-    let sidebar = Sidebar::new(remote, map_content, config, settings_dialog.clone());
+    let sidebar = Sidebar::new(remote, map_content, config.clone(), settings_dialog.clone());
     Self {
       map,
       sidebar,
       settings_dialog,
+      previous_had_highlighted: false,
+      last_heading_style: config.heading_style,
+      command_line: CommandLine::new(),
     }
   }
 
@@ -80,28 +90,160 @@ impl MapApp {
         }
       });
   }
-
 }
 
 impl eframe::App for MapApp {
+  #[allow(clippy::too_many_lines)]
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-    // Handle keyboard shortcut for sidebar toggle
+    profile_scope!("MapApp::update");
+    // Mark frame for profiling
+    crate::profiling::new_frame();
+
+    // Handle keyboard shortcuts
     ctx.input(|i| {
+      // Sidebar toggle
       if i.key_pressed(egui::Key::F1) || (i.modifiers.ctrl && i.key_pressed(egui::Key::B)) {
         self.sidebar.toggle();
+      }
+      // Timeline layer toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::T) {
+        let current_visible = self.map.is_timeline_visible();
+        self.map.set_timeline_visible(!current_visible);
+      }
+
+      // Temporal filter toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::F) {
+        let current_enabled = self.sidebar.temporal_controls.is_filter_enabled();
+        self
+          .sidebar
+          .temporal_controls
+          .set_filter_enabled(!current_enabled);
+
+        let status = if current_enabled {
+          "disabled"
+        } else {
+          "enabled"
+        };
+        self
+          .command_line
+          .set_message(format!("Temporal filtering {status}"), false);
+      }
+
+      // Timeline interval lock toggle
+      if i.modifiers.ctrl && i.key_pressed(egui::Key::L) {
+        self.map.toggle_timeline_interval_lock();
+
+        let lock_state = self.map.get_timeline_interval_lock();
+        let status = match lock_state {
+          IntervalLock::None => "unlocked",
+          IntervalLock::Start => "start locked",
+          IntervalLock::End => "end locked",
+        };
+        self
+          .command_line
+          .set_message(format!("Timeline interval {status}"), false);
       }
     });
 
     // Update sidebar animation
     self.sidebar.update_animation(ctx);
 
-    // Show settings dialog if open
+    // Show settings dialog if open and check for config changes
     self.settings_dialog.borrow_mut().ui(ctx);
+
+    // Update map config if heading style has changed (for real-time updates)
+    let current_config = self.settings_dialog.borrow().get_current_config();
+    if current_config.heading_style != self.last_heading_style {
+      self.map.update_config(&current_config);
+      self.last_heading_style = current_config.heading_style;
+    }
+
+    // Always refresh timeline data to check for temporal events
+    self
+      .sidebar
+      .temporal_controls
+      .init_from_layers(&*self.sidebar.map_content);
+
+    // Check if we have temporal data, and auto-activate timeline if we do
+    let has_temporal_data = self.sidebar.temporal_controls.time_start.is_some()
+      && self.sidebar.temporal_controls.time_end.is_some();
+
+    if !has_temporal_data || !self.sidebar.temporal_controls.filter_enabled {
+      // No temporal data OR user has disabled filtering - disable temporal filtering (but leave timeline visibility as-is for user control)
+      self.map.set_temporal_filter(None, None);
+    } else {
+      // We have temporal data AND filtering is enabled - update timeline and filtering
+
+      // Update the timeline layer with current settings (always, so it maintains state)
+      let time_range = (
+        self.sidebar.temporal_controls.time_start,
+        self.sidebar.temporal_controls.time_end,
+      );
+
+      if self.map.is_timeline_visible() {
+        // Timeline is visible - sync with its state
+
+        // Sync playback state from timeline layer back to sidebar controls
+        let (timeline_playing, timeline_speed) = self.map.get_timeline_playback_state();
+        self.sidebar.temporal_controls.is_playing = timeline_playing;
+        self.sidebar.temporal_controls.playback_speed = timeline_speed;
+
+        // Get the current interval from the timeline layer
+        let (interval_start, interval_end) = self.map.get_timeline_interval();
+
+        // If we don't have an interval yet from the timeline, initialize with full range
+        let current_interval = if interval_start.is_none() || interval_end.is_none() {
+          if let (Some(start), Some(end)) = time_range {
+            // Start with the full range visible
+            (Some(start), Some(end))
+          } else {
+            (None, None)
+          }
+        } else {
+          (interval_start, interval_end)
+        };
+
+        self.map.update_timeline(
+          time_range,
+          current_interval,
+          self.sidebar.temporal_controls.is_playing,
+          self.sidebar.temporal_controls.playback_speed,
+        );
+
+        // Use the midpoint of the interval as current_time and the interval size as time_window
+        let (current_time, time_window) =
+          if let (Some(start), Some(end)) = (current_interval.0, current_interval.1) {
+            let midpoint = start + (end.signed_duration_since(start) / 2);
+            let window_size = end.signed_duration_since(start);
+            (Some(midpoint), Some(window_size))
+          } else {
+            // Fallback to sidebar controls if timeline doesn't have an interval yet
+            (
+              self.sidebar.temporal_controls.current_time,
+              self.sidebar.temporal_controls.time_window,
+            )
+          };
+
+        self.map.set_temporal_filter(current_time, time_window);
+      } else {
+        // Timeline is hidden - disable temporal filtering completely to show all elements
+        self.map.set_temporal_filter(None, None);
+
+        // Still update timeline layer with time range so it's ready when made visible
+        self.map.update_timeline(
+          time_range,
+          (None, None), // No active interval when hidden
+          false,        // Not playing when hidden
+          self.sidebar.temporal_controls.playback_speed,
+        );
+      }
+    }
 
     // Show sidebar with smooth animations
     let effective_width = self.sidebar.get_animated_width();
 
     if effective_width > 1.0 {
+      profile_scope!("MapApp::sidebar");
       egui::SidePanel::left("sidebar")
         .default_width(self.sidebar.width)
         .width_range(200.0..=600.0)
@@ -120,21 +262,192 @@ impl eframe::App for MapApp {
       self.show_sidebar_toggle_button(ctx);
     }
 
-    // Show sidebar if there's a highlighted geometry (from double-click)
-    if self.map.has_highlighted_geometry() {
+    // Show sidebar when double-click action occurs (but not on hover highlighting)
+    let has_double_click = self.map.has_double_click_action();
+    if has_double_click && !self.previous_had_highlighted {
       self.sidebar.show();
+    }
+    self.previous_had_highlighted = has_double_click;
+
+    // Handle command line input and execute commands
+    if let Some(command) = handle_command_line_input(&mut self.command_line, ctx) {
+      self.execute_command(command, ctx);
     }
 
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
       .show(ctx, |ui| {
+        profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
       });
+
+    // Show command line UI (must be after CentralPanel to appear on top)
+    show_command_line_ui(&mut self.command_line, ctx);
+  }
+}
+
+impl MapApp {
+  /// Execute a command from the command line
+  #[allow(clippy::too_many_lines)]
+  fn execute_command(&mut self, command: Command, ctx: &egui::Context) {
+    match command {
+      Command::Quit => {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.command_line.set_message("Goodbye!".to_string(), false);
+      }
+      Command::Write => {
+        // TODO: Implement save functionality
+        self
+          .command_line
+          .set_message("Write command not implemented yet".to_string(), true);
+      }
+      Command::WriteQuit => {
+        // TODO: Implement save functionality, then quit
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self
+          .command_line
+          .set_message("Write and quit".to_string(), false);
+      }
+      Command::Search(query) => {
+        // Use the existing search functionality
+        self.map.search_geometries(&query);
+        let results_count = self.map.get_search_results_count();
+        if results_count > 0 {
+          self.command_line.set_message(
+            format!("Found {results_count} results for '{query}'"),
+            false,
+          );
+          // Show sidebar to display search results
+          self.sidebar.show();
+        } else {
+          self
+            .command_line
+            .set_message(format!("No results found for '{query}'"), true);
+        }
+      }
+      Command::SearchNext => {
+        if self.map.next_search_result() {
+          let results_count = self.map.get_search_results_count();
+          self
+            .command_line
+            .set_message(format!("Next search result ({results_count} total)"), false);
+        } else {
+          self
+            .command_line
+            .set_message("No search results available".to_string(), true);
+        }
+      }
+      Command::SearchPrev => {
+        if self.map.previous_search_result() {
+          let results_count = self.map.get_search_results_count();
+          self.command_line.set_message(
+            format!("Previous search result ({results_count} total)"),
+            false,
+          );
+        } else {
+          self
+            .command_line
+            .set_message("No search results available".to_string(), true);
+        }
+      }
+      Command::Filter(query) => {
+        self.map.filter_geometries(&query);
+        self
+          .command_line
+          .set_message(format!("Applied filter: '{query}'"), false);
+      }
+      Command::ClearFilter => {
+        self.map.clear_filter();
+        self
+          .command_line
+          .set_message("Filter cleared - showing all geometries".to_string(), false);
+      }
+      Command::GoTo(location) => {
+        // TODO: Implement go to location (could use location search)
+        self.command_line.set_message(
+          format!("Go to location '{location}' not implemented yet"),
+          true,
+        );
+      }
+      Command::Focus(target) => {
+        // TODO: Implement focus on specific layer or geometry
+        self
+          .command_line
+          .set_message(format!("Focus on '{target}' not implemented yet"), true);
+      }
+      Command::ShowLayer(layer) => {
+        if self.map.show_layer(&layer) {
+          self
+            .command_line
+            .set_message(format!("Showed layer '{layer}'"), false);
+        } else {
+          self
+            .command_line
+            .set_message(format!("Layer '{layer}' not found"), true);
+        }
+      }
+      Command::HideLayer(layer) => {
+        if self.map.hide_layer(&layer) {
+          self
+            .command_line
+            .set_message(format!("Hid layer '{layer}'"), false);
+        } else {
+          self
+            .command_line
+            .set_message(format!("Layer '{layer}' not found"), true);
+        }
+      }
+      Command::ToggleLayer(layer) => {
+        if self.map.toggle_layer(&layer) {
+          self
+            .command_line
+            .set_message(format!("Toggled layer '{layer}'"), false);
+        } else {
+          self
+            .command_line
+            .set_message(format!("Layer '{layer}' not found"), true);
+        }
+      }
+      Command::ZoomIn => {
+        self.map.zoom_in();
+        self
+          .command_line
+          .set_message("Zoomed in".to_string(), false);
+      }
+      Command::ZoomOut => {
+        self.map.zoom_out();
+        self
+          .command_line
+          .set_message("Zoomed out".to_string(), false);
+      }
+      Command::ZoomFit => {
+        self.map.zoom_fit();
+        self
+          .command_line
+          .set_message("Fit to view".to_string(), false);
+      }
+      Command::ToggleTemporalFilter => {
+        let current_visible = self.map.is_timeline_visible();
+        self.map.set_timeline_visible(!current_visible);
+        let status = if current_visible {
+          "disabled"
+        } else {
+          "enabled"
+        };
+        self
+          .command_line
+          .set_message(format!("Timeline {status}"), false);
+      }
+      Command::Unknown(cmd) => {
+        self
+          .command_line
+          .set_message(format!("Unknown command: '{cmd}'"), true);
+      }
+    }
   }
 }
 
 struct Sidebar {
-  visible: bool,
   target_visible: bool,
   width: f32,
   animation_progress: f32,
@@ -144,6 +457,142 @@ struct Sidebar {
   map_content: Rc<dyn MapLayerHolder>,
   search_ui: SearchUI,
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
+  temporal_controls: TemporalControls,
+}
+
+/// Controls for temporal visualization
+#[derive(Default)]
+struct TemporalControls {
+  /// Whether timeline is currently playing
+  is_playing: bool,
+  /// Current time position in the timeline
+  current_time: Option<DateTime<Utc>>,
+  /// Start of the time range
+  time_start: Option<DateTime<Utc>>,
+  /// End of the time range
+  time_end: Option<DateTime<Utc>>,
+  /// Playback speed multiplier (1.0 = real time)
+  playback_speed: f32,
+  /// Time window duration (None = point in time, Some = duration window)
+  time_window: Option<chrono::Duration>,
+  /// Last update time for animation
+  last_update: f64,
+  /// Whether temporal filtering is enabled (can be disabled by user even when temporal data exists)
+  filter_enabled: bool,
+}
+
+impl TemporalControls {
+  /// Get whether temporal filtering is enabled
+  pub fn is_filter_enabled(&self) -> bool {
+    self.filter_enabled
+  }
+
+  /// Set whether temporal filtering is enabled
+  pub fn set_filter_enabled(&mut self, enabled: bool) {
+    self.filter_enabled = enabled;
+
+    // If disabling filter, clear current filter values
+    if !enabled {
+      self.current_time = None;
+      self.time_window = None;
+    } else if let (Some(start), Some(end)) = (self.time_start, self.time_end) {
+      // If enabling filter and we have time data, restore default values
+      if self.current_time.is_none() {
+        self.current_time = Some(start);
+      }
+      if self.time_window.is_none() {
+        let total_duration = end.signed_duration_since(start);
+        self.time_window = Some(total_duration / 10);
+      }
+    }
+  }
+
+  /// Update the timeline during playback
+  fn update_timeline(&mut self, current_ui_time: f64) {
+    if !self.is_playing {
+      return;
+    }
+
+    if let (Some(start), Some(end), Some(current)) =
+      (self.time_start, self.time_end, self.current_time)
+    {
+      let dt = if self.last_update == 0.0 {
+        0.016 // First frame, assume 60fps
+      } else {
+        (current_ui_time - self.last_update).min(0.1) // Cap at 100ms
+      };
+
+      let speed_factor = self.playback_speed * 60.0; // 60x faster than real time by default
+      #[allow(clippy::cast_possible_truncation)]
+      let time_advance =
+        chrono::Duration::milliseconds((dt * 1000.0 * f64::from(speed_factor)) as i64);
+
+      let new_time = current + time_advance;
+
+      if new_time > end {
+        // Loop back to start
+        self.current_time = Some(start);
+      } else {
+        self.current_time = Some(new_time);
+      }
+    }
+
+    self.last_update = current_ui_time;
+  }
+
+  /// Initialize time range from layer data, with demo fallback
+  fn init_from_layers(&mut self, map_content: &dyn MapLayerHolder) {
+    let mut earliest: Option<DateTime<Utc>> = None;
+    let mut latest: Option<DateTime<Utc>> = None;
+
+    // We need to access the actual geometries to extract temporal data
+    // Since the layer system doesn't directly expose geometries, we'll use a different approach
+    // For now, we'll extract temporal range through the shapelayer if possible
+
+    // Scan for temporal data by accessing the layers
+    let mut layer_reader = map_content.get_reader();
+    for layer in layer_reader.get_layers() {
+      // Get temporal range directly from the layer trait method
+      let (layer_earliest, layer_latest) = layer.get_temporal_range();
+
+      if let Some(layer_earliest) = layer_earliest {
+        earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
+      }
+
+      if let Some(layer_latest) = layer_latest {
+        latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
+      }
+    }
+
+    // Only enable temporal filtering if we found actual temporal data
+    if let (Some(start), Some(end)) = (earliest, latest) {
+      self.time_start = Some(start);
+      self.time_end = Some(end);
+
+      // Only set default filter values if filtering is enabled
+      if self.filter_enabled {
+        if self.current_time.is_none() {
+          self.current_time = Some(start);
+        }
+
+        // Initialize with a reasonable time window (10% of total range)
+        if self.time_window.is_none() {
+          let total_duration = end.signed_duration_since(start);
+          self.time_window = Some(total_duration / 10);
+        }
+      } else {
+        // Filter is disabled, clear filter values
+        self.current_time = None;
+        self.time_window = None;
+      }
+    } else {
+      // No temporal data found - clear any existing temporal settings
+      self.time_start = None;
+      self.time_end = None;
+      self.current_time = None;
+      self.time_window = None;
+    }
+  }
 }
 
 impl Sidebar {
@@ -163,7 +612,6 @@ impl Sidebar {
     };
 
     Self {
-      visible: true,
       target_visible: true,
       width: 300.0,
       animation_progress: 1.0,
@@ -172,6 +620,11 @@ impl Sidebar {
       map_content,
       search_ui: SearchUI::new(search_manager),
       settings_dialog,
+      temporal_controls: TemporalControls {
+        playback_speed: 1.0,
+        filter_enabled: true, // Default to enabled when temporal data is available
+        ..Default::default()
+      },
     }
   }
 
@@ -200,6 +653,12 @@ impl Sidebar {
     };
     self.last_frame_time = current_time;
 
+    // Update temporal controls
+    self.temporal_controls.update_timeline(current_time);
+    if self.temporal_controls.is_playing {
+      ctx.request_repaint();
+    }
+
     // Animation speed (duration in seconds)
     let animation_speed = 4.0; // Complete animation in 0.25 seconds
     #[allow(clippy::cast_possible_truncation)]
@@ -212,8 +671,6 @@ impl Sidebar {
       self.animation_progress = (self.animation_progress - delta_per_second).max(0.0);
       ctx.request_repaint();
     }
-
-    self.visible = self.animation_progress > 0.0;
   }
 
   /// Get the current animated width for the sidebar
@@ -303,6 +760,8 @@ impl Sidebar {
               self.search_ui.ui(ui, &self.remote.sender());
             });
 
+          // Timeline is now controlled through the Timeline layer in Map Layers section
+
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
             .show(ui, |ui| {
@@ -376,6 +835,11 @@ impl SettingsDialog {
     }
   }
 
+  /// Get the current config (this will include any unsaved changes made in the UI)
+  fn get_current_config(&self) -> Config {
+    self.config.clone()
+  }
+
   fn open(&mut self) {
     self.open = true;
   }
@@ -444,6 +908,26 @@ impl SettingsDialog {
         }
       });
       ui.small("Path where screenshots will be saved (use 'Desktop' for default)");
+    });
+
+    ui.group(|ui| {
+      ui.label("Heading Arrow Style:");
+      ui.horizontal(|ui| {
+        ui.label("Arrow style for points with heading:");
+        egui::ComboBox::from_id_salt("heading_style")
+          .selected_text(self.config.heading_style.name())
+          .show_ui(ui, |ui| {
+            for style in HeadingStyle::all() {
+              if ui
+                .selectable_value(&mut self.config.heading_style, *style, style.name())
+                .clicked()
+              {
+                self.settings_changed = true;
+              }
+            }
+          });
+      });
+      ui.small("Visual style for directional arrows on points with heading data");
     });
 
     ui.group(|ui| {

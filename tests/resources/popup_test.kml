@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<Style id="s0">
+<IconStyle>
+<color>FF0000FF</color>
+<Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+</IconStyle>
+<LineStyle>
+<color>FF0000FF</color>
+<width>6</width>
+</LineStyle>
+</Style>
+
+<Placemark id="simple_test">
+<name>Label NodeId: 284325 → Label coordinates: 351493784,-1173823480(29.461869,-98.388747)</name>
+<visibility>1</visibility>
+<styleUrl>#s0</styleUrl>
+<description><![CDATA[Cost: 652480 [ms]<br/>Node Id: 284325<br/>]]></description>
+<MultiGeometry>
+<LineString>
+<coordinates>
+-98.388747,29.461869
+-98.390000,29.462000
+</coordinates>
+</LineString>
+<LineString>
+<coordinates>
+-98.372446,29.543559
+-98.373000,29.544000
+</coordinates>
+</LineString>
+</MultiGeometry>
+</Placemark>
+
+</Document>
+</kml>

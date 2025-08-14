@@ -20,6 +20,7 @@ pub struct ScreenshotLayer {
 }
 
 impl ScreenshotLayer {
+  #[must_use]
   pub fn new(ctx: Context) -> Self {
     let (sender, receiver) = std::sync::mpsc::channel();
     Self {
@@ -35,6 +36,7 @@ impl ScreenshotLayer {
     }
   }
 
+  #[must_use]
   pub fn get_sender(&self) -> std::sync::mpsc::Sender<MapEvent> {
     self.sender.clone()
   }
