@@ -164,7 +164,7 @@ impl ShapeLayer {
 
   /// Update highlighting based on mouse hover position
   fn update_hover_highlighting(&mut self, mouse_pos: egui::Pos2, transform: &Transform) {
-    // Find the closest geometry to the mouse cursor
+    profile_scope!("ShapeLayer::update_hover_highlighting");
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
@@ -329,12 +329,9 @@ impl ShapeLayer {
             }
           } else {
             for (shape_idx, shape) in shapes.iter().enumerate() {
-              // Apply filter to sidebar display
-              if self.geometry_matches_filter(shape) {
-                self.show_shape_ui(ui, &layer_id, shape_idx, shape);
-                if shape_idx < shapes.len() - 1 {
-                  ui.separator();
-                }
+              self.show_shape_ui(ui, &layer_id, shape_idx, shape);
+              if shape_idx < shapes.len() - 1 {
+                ui.separator();
               }
             }
           }
