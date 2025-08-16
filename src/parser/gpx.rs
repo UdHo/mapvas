@@ -51,11 +51,10 @@ impl GpxParser {
           ));
           
           let mut metadata = Metadata::default();
-          if let Some(time) = waypoint.time.as_ref() {
-            if let Some(timestamp) = Self::convert_gpx_time_to_chrono(time) {
+          if let Some(time) = waypoint.time.as_ref()
+            && let Some(timestamp) = Self::convert_gpx_time_to_chrono(time) {
               metadata = metadata.with_timestamp(timestamp);
             }
-          }
           
           geometries.push(Geometry::Point(coord, metadata));
         }
