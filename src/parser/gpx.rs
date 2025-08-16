@@ -49,14 +49,14 @@ impl GpxParser {
             waypoint.point().y() as f32,
             waypoint.point().x() as f32,
           ));
-          
+
           let mut metadata = Metadata::default();
-          if let Some(time) = waypoint.time.as_ref() {
-            if let Some(timestamp) = Self::convert_gpx_time_to_chrono(time) {
-              metadata = metadata.with_timestamp(timestamp);
-            }
+          if let Some(time) = waypoint.time.as_ref()
+            && let Some(timestamp) = Self::convert_gpx_time_to_chrono(time)
+          {
+            metadata = metadata.with_timestamp(timestamp);
           }
-          
+
           geometries.push(Geometry::Point(coord, metadata));
         }
 
@@ -77,8 +77,10 @@ impl GpxParser {
 
             if track_points_with_time.len() >= 2 {
               // Check if we have temporal data
-              let has_timestamps = track_points_with_time.iter().any(|(_, time)| time.is_some());
-              
+              let has_timestamps = track_points_with_time
+                .iter()
+                .any(|(_, time)| time.is_some());
+
               if has_timestamps {
                 // Create individual point geometries with timestamps for temporal visualization
                 for (coord, timestamp) in &track_points_with_time {
@@ -88,13 +90,13 @@ impl GpxParser {
                   }
                 }
               }
-              
+
               // Also create the linestring for the track path
               let track_points: Vec<PixelCoordinate> = track_points_with_time
                 .iter()
                 .map(|(coord, _)| *coord)
                 .collect();
-              
+
               // Create metadata for the linestring with time span if we have timestamps
               let mut metadata = Metadata::default();
               if has_timestamps {
@@ -102,14 +104,14 @@ impl GpxParser {
                   .iter()
                   .filter_map(|(_, time)| *time)
                   .collect();
-                
+
                 if !timestamps.is_empty() {
                   let begin = timestamps.iter().min().copied();
                   let end = timestamps.iter().max().copied();
                   metadata = metadata.with_time_span(begin, end);
                 }
               }
-              
+
               geometries.push(Geometry::LineString(track_points, metadata));
             }
           }
@@ -134,20 +136,20 @@ impl GpxParser {
               .iter()
               .map(|(coord, _)| *coord)
               .collect();
-            
+
             // Create metadata with time span if we have timestamps
             let mut metadata = Metadata::default();
             let timestamps: Vec<DateTime<Utc>> = route_points_with_time
               .iter()
               .filter_map(|(_, time)| *time)
               .collect();
-            
+
             if !timestamps.is_empty() {
               let begin = timestamps.iter().min().copied();
               let end = timestamps.iter().max().copied();
               metadata = metadata.with_time_span(begin, end);
             }
-            
+
             geometries.push(Geometry::LineString(route_points, metadata));
           }
         }
@@ -366,17 +368,15 @@ mod tests {
       );
 
       // Verify that at least one geometry has proper timestamp
-      let has_valid_timestamp = layer.geometries.iter().any(|geom| {
-        match geom {
-          Geometry::Point(_, metadata) => {
-            if let Some(time_data) = &metadata.time_data {
-              time_data.timestamp.is_some()
-            } else {
-              false
-            }
+      let has_valid_timestamp = layer.geometries.iter().any(|geom| match geom {
+        Geometry::Point(_, metadata) => {
+          if let Some(time_data) = &metadata.time_data {
+            time_data.timestamp.is_some()
+          } else {
+            false
           }
-          _ => false,
         }
+        _ => false,
       });
 
       assert!(

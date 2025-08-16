@@ -1,7 +1,8 @@
 use egui::Color32;
 use serde_json::{Map, Value};
 
-use crate::map::geometry_collection::{Metadata, Style};
+use crate::map::geometry_collection::{Metadata, Style, TimeData};
+use chrono::{DateTime, Utc};
 
 /// Shared style parsing utilities for JSON-based parsers
 pub struct StyleParser;
@@ -40,6 +41,12 @@ impl StyleParser {
 
       if let Some(heading) = heading {
         metadata = metadata.with_heading(heading);
+      }
+
+      // Extract temporal data from properties
+      let time_data = Self::extract_temporal_data_from_properties(props);
+      if let Some(time_data) = time_data {
+        metadata = metadata.with_time_data(time_data);
       }
 
       let style = Self::extract_style_from_properties(props);
@@ -156,6 +163,125 @@ impl StyleParser {
       None
     }
   }
+
+  /// Extract temporal data from JSON properties
+  pub fn extract_temporal_data_from_properties(props: &Map<String, Value>) -> Option<TimeData> {
+    // Look for common timestamp property names (string or number)
+    let timestamp = props
+      .get("timestamp")
+      .or_else(|| props.get("time"))
+      .or_else(|| props.get("datetime"))
+      .or_else(|| props.get("date"))
+      .and_then(|v| {
+        // Try as string first
+        if let Some(s) = v.as_str() {
+          Self::parse_timestamp(s)
+        }
+        // Try as number (Unix timestamp)
+        else if let Some(n) = v.as_i64() {
+          Self::parse_unix_timestamp(n)
+        } else {
+          None
+        }
+      });
+
+    // Look for time span properties (string format)
+    let begin_time = props
+      .get("timeBegin")
+      .or_else(|| props.get("time_begin"))
+      .or_else(|| props.get("startTime"))
+      .or_else(|| props.get("start_time"))
+      .and_then(Value::as_str)
+      .and_then(Self::parse_timestamp);
+
+    let end_time = props
+      .get("timeEnd")
+      .or_else(|| props.get("time_end"))
+      .or_else(|| props.get("endTime"))
+      .or_else(|| props.get("end_time"))
+      .and_then(Value::as_str)
+      .and_then(Self::parse_timestamp);
+
+    // Look for time_range array format
+    let (range_begin, range_end) = if let Some(time_range) = props.get("time_range")
+      && let Some(array) = time_range.as_array()
+      && array.len() >= 2
+    {
+      let begin = array[0].as_str().and_then(Self::parse_timestamp);
+      let end = array[1].as_str().and_then(Self::parse_timestamp);
+      (begin, end)
+    } else {
+      (None, None)
+    };
+
+    // Combine time span sources (prefer explicit properties over range array)
+    let final_begin = begin_time.or(range_begin);
+    let final_end = end_time.or(range_end);
+
+    // Create TimeData if we have any temporal information
+    if timestamp.is_some() || final_begin.is_some() || final_end.is_some() {
+      Some(TimeData {
+        timestamp,
+        time_span: if final_begin.is_some() || final_end.is_some() {
+          Some(crate::map::geometry_collection::TimeSpan {
+            begin: final_begin,
+            end: final_end,
+          })
+        } else {
+          None
+        },
+      })
+    } else {
+      None
+    }
+  }
+
+  /// Parse timestamp string to `DateTime<Utc>`
+  pub fn parse_timestamp(timestamp_str: &str) -> Option<DateTime<Utc>> {
+    // Try ISO 8601 format first (most common)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp_str) {
+      return Some(dt.with_timezone(&Utc));
+    }
+
+    // Try ISO 8601 without timezone (assume UTC)
+    if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+    {
+      return Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc));
+    }
+
+    // Try date only format
+    if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(timestamp_str, "%Y-%m-%d") {
+      let naive_dt = naive_date.and_hms_opt(0, 0, 0)?;
+      return Some(DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc));
+    }
+
+    // Try Unix timestamp (seconds)
+    if let Ok(timestamp) = timestamp_str.parse::<i64>() {
+      return DateTime::<Utc>::from_timestamp(timestamp, 0);
+    }
+
+    // Try Unix timestamp (milliseconds)
+    if let Ok(timestamp_ms) = timestamp_str.parse::<i64>() {
+      return DateTime::<Utc>::from_timestamp_millis(timestamp_ms);
+    }
+
+    None
+  }
+
+  /// Parse Unix timestamp (number) to `DateTime<Utc>`
+  fn parse_unix_timestamp(timestamp: i64) -> Option<DateTime<Utc>> {
+    // Try as seconds first (most common)
+    if let Some(dt) = DateTime::<Utc>::from_timestamp(timestamp, 0) {
+      return Some(dt);
+    }
+
+    // Try as milliseconds (if number is very large)
+    if timestamp > 1_000_000_000_000 {
+      return DateTime::<Utc>::from_timestamp_millis(timestamp);
+    }
+
+    None
+  }
 }
 
 #[cfg(test)]
@@ -262,5 +388,97 @@ mod tests {
     });
     let metadata4 = StyleParser::extract_metadata_from_json(Some(&data4));
     assert_eq!(metadata4.heading, Some(90.0));
+  }
+
+  #[test]
+  fn test_temporal_data_extraction() {
+    // Test timestamp extraction
+    let data = json!({
+      "name": "Event",
+      "timestamp": "2024-01-15T08:00:00Z"
+    });
+    let metadata = StyleParser::extract_metadata_from_json(Some(&data));
+    assert!(metadata.time_data.is_some());
+    if let Some(time_data) = &metadata.time_data {
+      assert!(time_data.timestamp.is_some());
+      assert!(time_data.time_span.is_none());
+    }
+
+    // Test time span extraction
+    let data2 = json!({
+      "name": "Event Period",
+      "startTime": "2024-01-15T08:00:00Z",
+      "endTime": "2024-01-15T16:00:00Z"
+    });
+    let metadata2 = StyleParser::extract_metadata_from_json(Some(&data2));
+    assert!(metadata2.time_data.is_some());
+    if let Some(time_data) = &metadata2.time_data {
+      assert!(time_data.timestamp.is_none());
+      assert!(time_data.time_span.is_some());
+      if let Some(time_span) = &time_data.time_span {
+        assert!(time_span.begin.is_some());
+        assert!(time_span.end.is_some());
+      }
+    }
+
+    // Test different time property names
+    let data3 = json!({
+      "time": "2024-01-15T12:00:00"
+    });
+    let metadata3 = StyleParser::extract_metadata_from_json(Some(&data3));
+    assert!(metadata3.time_data.is_some());
+
+    let data4 = json!({
+      "datetime": "2024-01-15T12:00:00"
+    });
+    let metadata4 = StyleParser::extract_metadata_from_json(Some(&data4));
+    assert!(metadata4.time_data.is_some());
+
+    let data5 = json!({
+      "date": "2024-01-15"
+    });
+    let metadata5 = StyleParser::extract_metadata_from_json(Some(&data5));
+    assert!(metadata5.time_data.is_some());
+
+    // Test no temporal data
+    let data6 = json!({
+      "name": "No Time Event"
+    });
+    let metadata6 = StyleParser::extract_metadata_from_json(Some(&data6));
+    assert!(metadata6.time_data.is_none());
+
+    // Test Unix timestamp (seconds) as number
+    let data7 = json!({
+      "timestamp": 1765875780
+    });
+    let metadata7 = StyleParser::extract_metadata_from_json(Some(&data7));
+    assert!(metadata7.time_data.is_some());
+    if let Some(time_data) = &metadata7.time_data {
+      assert!(time_data.timestamp.is_some());
+    }
+
+    // Test Unix timestamp (milliseconds) as number
+    let data8 = json!({
+      "timestamp": 1765875780123i64
+    });
+    let metadata8 = StyleParser::extract_metadata_from_json(Some(&data8));
+    assert!(metadata8.time_data.is_some());
+    if let Some(time_data) = &metadata8.time_data {
+      assert!(time_data.timestamp.is_some());
+    }
+
+    // Test time_range array
+    let data9 = json!({
+      "time_range": ["2024-01-15T08:00:00Z", "2024-01-15T16:00:00Z"]
+    });
+    let metadata9 = StyleParser::extract_metadata_from_json(Some(&data9));
+    assert!(metadata9.time_data.is_some());
+    if let Some(time_data) = &metadata9.time_data {
+      assert!(time_data.time_span.is_some());
+      if let Some(time_span) = &time_data.time_span {
+        assert!(time_span.begin.is_some());
+        assert!(time_span.end.is_some());
+      }
+    }
   }
 }

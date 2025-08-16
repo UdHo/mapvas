@@ -1,0 +1,65 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [10.0, 50.0] },
+      "properties": {
+        "format_type": "ISO 8601 UTC",
+        "timestamp": "2025-08-15T14:23:00Z"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [11.0, 50.0] },
+      "properties": {
+        "format_type": "ISO 8601 with offset",
+        "timestamp": "2025-08-15T16:23:00+02:00"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [12.0, 50.0] },
+      "properties": {
+        "format_type": "ISO 8601 date only",
+        "timestamp": "2025-08-15"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [13.0, 50.0] },
+      "properties": {
+        "format_type": "Unix epoch (seconds)",
+        "timestamp": 1765875780
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [14.0, 50.0] },
+      "properties": {
+        "format_type": "Unix epoch (milliseconds)",
+        "timestamp": 1765875780123
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [15.0, 50.0] },
+      "properties": {
+        "format_type": "Time interval (ISO 8601)",
+        "time_range": ["2025-08-15T14:00:00Z", "2025-08-15T15:00:00Z"]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [16.0, 50.0] },
+      "properties": {
+        "format_type": "GeoJSON-T timespan"
+      },
+      "when": {
+        "timespans": [
+          { "start": "2025-08-15T14:00:00Z", "end": "2025-08-15T15:00:00Z" }
+        ]
+      }
+    }
+  ]
+}

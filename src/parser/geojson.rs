@@ -6,11 +6,12 @@ use serde_json::Value;
 use crate::{
   map::{
     coordinates::{PixelCoordinate, WGS84Coordinate},
-    geometry_collection::{Geometry, Metadata},
+    geometry_collection::{Geometry, Metadata, TimeData, TimeSpan},
     map_event::{Layer, MapEvent},
   },
   profile_scope,
 };
+use chrono::{DateTime, Utc};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GeoJsonParser {
@@ -82,7 +83,14 @@ impl GeoJsonParser {
   fn parse_feature(&mut self, feature: &Value) -> Result<(), String> {
     let obj = feature.as_object().ok_or("Feature must be an object")?;
 
-    let metadata = Self::extract_metadata_from_properties(obj.get("properties"));
+    let mut metadata = Self::extract_metadata_from_properties(obj.get("properties"));
+
+    // Check for GeoJSON-T "when" temporal objects
+    if let Some(when_obj) = obj.get("when")
+      && let Some(when_time_data) = Self::extract_temporal_data_from_when(when_obj)
+    {
+      metadata = metadata.with_time_data(when_time_data);
+    }
 
     if let Some(geometry_value) = obj.get("geometry")
       && let Some(geometry) = self.parse_geometry(geometry_value, &metadata)
@@ -96,6 +104,45 @@ impl GeoJsonParser {
   /// Extract metadata and style from `GeoJSON` properties
   fn extract_metadata_from_properties(properties: Option<&Value>) -> Metadata {
     StyleParser::extract_metadata_from_json(properties)
+  }
+
+  /// Extract temporal data from GeoJSON-T "when" objects
+  fn extract_temporal_data_from_when(when_obj: &Value) -> Option<TimeData> {
+    let obj = when_obj.as_object()?;
+
+    // Handle timespans array
+    if let Some(timespans) = obj.get("timespans")
+      && let Some(array) = timespans.as_array()
+      && !array.is_empty()
+    {
+      // Take the first timespan
+      if let Some(timespan) = array[0].as_object() {
+        let start = timespan
+          .get("start")
+          .and_then(Value::as_str)
+          .and_then(Self::parse_when_timestamp);
+        let end = timespan
+          .get("end")
+          .and_then(Value::as_str)
+          .and_then(Self::parse_when_timestamp);
+
+        if start.is_some() || end.is_some() {
+          return Some(TimeData {
+            timestamp: None,
+            time_span: Some(TimeSpan { begin: start, end }),
+          });
+        }
+      }
+    }
+
+    // Handle other GeoJSON-T temporal formats if needed
+    None
+  }
+
+  /// Parse timestamp from GeoJSON-T when objects
+  fn parse_when_timestamp(timestamp_str: &str) -> Option<DateTime<Utc>> {
+    // Use the same parsing logic as StyleParser
+    super::style::StyleParser::parse_timestamp(timestamp_str)
   }
 
   /// Parse `GeoJSON` geometry with metadata
@@ -682,6 +729,296 @@ mod tests {
       assert_eq!(metadata.heading, Some(90.0));
     } else {
       panic!("Fourth geometry should be a Point");
+    }
+  }
+
+  #[test]
+  fn test_geojson_temporal_features() {
+    use crate::parser::FileParser;
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let geojson_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/temporal_features.geojson"
+    );
+    let file = File::open(geojson_path).expect("Could not open temporal features GeoJSON file");
+    let reader = Box::new(BufReader::new(file));
+
+    let mut parser = GeoJsonParser::new();
+    let events: Vec<_> = parser.parse(reader).collect();
+
+    assert!(!events.is_empty(), "GeoJSON parser should produce events");
+
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(layer.id, "geojson", "Layer should be named 'geojson'");
+      assert_eq!(layer.geometries.len(), 5, "Should have 5 temporal features");
+
+      let mut features_with_timestamps = 0;
+      let mut features_with_time_spans = 0;
+
+      for geometry in &layer.geometries {
+        match geometry {
+          Geometry::Point(_, metadata) => {
+            if let Some(time_data) = &metadata.time_data {
+              if time_data.timestamp.is_some() {
+                features_with_timestamps += 1;
+              }
+            }
+          }
+          Geometry::LineString(_, metadata) => {
+            if let Some(time_data) = &metadata.time_data {
+              if time_data.time_span.is_some() {
+                features_with_time_spans += 1;
+              }
+            }
+          }
+          _ => {}
+        }
+      }
+
+      assert_eq!(
+        features_with_timestamps, 4,
+        "Should have 4 point features with timestamps"
+      );
+      assert_eq!(
+        features_with_time_spans, 1,
+        "Should have 1 linestring feature with time span"
+      );
+
+      // Test specific timestamp parsing
+      let berlin_point = &layer.geometries[0];
+      if let Geometry::Point(_, metadata) = berlin_point {
+        assert_eq!(
+          metadata.label.as_ref().map(|l| &l.name),
+          Some(&"Berlin Event".to_string())
+        );
+        assert!(
+          metadata.time_data.is_some(),
+          "Berlin event should have temporal data"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.timestamp.is_some(),
+            "Berlin event should have timestamp"
+          );
+        }
+      } else {
+        panic!("First geometry should be Berlin point");
+      }
+
+      // Test time span parsing
+      let journey_linestring = &layer.geometries[2];
+      if let Geometry::LineString(_, metadata) = journey_linestring {
+        assert_eq!(
+          metadata.label.as_ref().map(|l| &l.name),
+          Some(&"Journey Route".to_string())
+        );
+        assert!(
+          metadata.time_data.is_some(),
+          "Journey route should have temporal data"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.time_span.is_some(),
+            "Journey route should have time span"
+          );
+          if let Some(time_span) = &time_data.time_span {
+            assert!(
+              time_span.begin.is_some(),
+              "Journey route should have start time"
+            );
+            assert!(
+              time_span.end.is_some(),
+              "Journey route should have end time"
+            );
+          }
+        }
+      } else {
+        panic!("Third geometry should be Journey linestring");
+      }
+    } else {
+      panic!("First event should be a Layer event");
+    }
+  }
+
+  #[test]
+  fn test_temporal_geojson_timestamp_parsing() {
+    use crate::parser::FileParser;
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let geojson_path = concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/temporal.geojson"
+    );
+    let file = File::open(geojson_path).expect("Could not open temporal.geojson file");
+    let reader = Box::new(BufReader::new(file));
+
+    let mut parser = GeoJsonParser::new();
+    let events: Vec<_> = parser.parse(reader).collect();
+
+    assert!(!events.is_empty(), "GeoJSON parser should produce events");
+
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      assert_eq!(layer.id, "geojson", "Layer should be named 'geojson'");
+      assert_eq!(
+        layer.geometries.len(),
+        7,
+        "Should have 7 features from temporal.geojson"
+      );
+
+      let mut parsed_timestamps = 0;
+      let mut detailed_results = Vec::new();
+
+      for (i, geometry) in layer.geometries.iter().enumerate() {
+        if let Geometry::Point(_, metadata) = geometry {
+          let has_time_data = metadata.time_data.is_some();
+          let format_info = match i {
+            0 => "ISO 8601 UTC",
+            1 => "ISO 8601 with offset",
+            2 => "ISO 8601 date only",
+            3 => "Unix epoch (seconds) - as number",
+            4 => "Unix epoch (milliseconds) - as number",
+            5 => "Time interval (time_range array)",
+            6 => "GeoJSON-T timespan (when object)",
+            _ => "Unknown",
+          };
+
+          detailed_results.push((i, format_info, has_time_data));
+
+          if has_time_data {
+            parsed_timestamps += 1;
+          }
+        }
+      }
+
+      // Print detailed results for debugging
+      for (idx, format, parsed) in detailed_results {
+        println!(
+          "Feature {}: {} -> {}",
+          idx,
+          format,
+          if parsed { "PARSED" } else { "NOT PARSED" }
+        );
+      }
+
+      // All 7 timestamp formats should parse successfully:
+      // - ISO 8601 UTC (index 0) -> timestamp
+      // - ISO 8601 with offset (index 1) -> timestamp
+      // - ISO 8601 date only (index 2) -> timestamp
+      // - Unix epoch seconds (index 3) -> timestamp
+      // - Unix epoch milliseconds (index 4) -> timestamp
+      // - Time interval array (index 5) -> time span
+      // - GeoJSON-T when object (index 6) -> time span
+      assert_eq!(
+        parsed_timestamps, 7,
+        "All 7 timestamp formats should parse successfully, got {}",
+        parsed_timestamps
+      );
+
+      // Verify specific parsing of ISO 8601 formats
+      let iso_utc = &layer.geometries[0];
+      if let Geometry::Point(_, metadata) = iso_utc {
+        assert!(
+          metadata.time_data.is_some(),
+          "ISO 8601 UTC timestamp should parse"
+        );
+      }
+
+      let iso_offset = &layer.geometries[1];
+      if let Geometry::Point(_, metadata) = iso_offset {
+        assert!(
+          metadata.time_data.is_some(),
+          "ISO 8601 with offset timestamp should parse"
+        );
+      }
+
+      let iso_date = &layer.geometries[2];
+      if let Geometry::Point(_, metadata) = iso_date {
+        assert!(
+          metadata.time_data.is_some(),
+          "ISO 8601 date only should parse"
+        );
+      }
+
+      // Verify Unix timestamp parsing
+      let unix_seconds = &layer.geometries[3];
+      if let Geometry::Point(_, metadata) = unix_seconds {
+        assert!(
+          metadata.time_data.is_some(),
+          "Unix epoch (seconds) should parse"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.timestamp.is_some(),
+            "Unix seconds should have timestamp"
+          );
+        }
+      }
+
+      let unix_millis = &layer.geometries[4];
+      if let Geometry::Point(_, metadata) = unix_millis {
+        assert!(
+          metadata.time_data.is_some(),
+          "Unix epoch (milliseconds) should parse"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.timestamp.is_some(),
+            "Unix milliseconds should have timestamp"
+          );
+        }
+      }
+
+      // Verify time_range array parsing
+      let time_range = &layer.geometries[5];
+      if let Geometry::Point(_, metadata) = time_range {
+        assert!(
+          metadata.time_data.is_some(),
+          "time_range array should parse"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.time_span.is_some(),
+            "time_range should have time span"
+          );
+          if let Some(time_span) = &time_data.time_span {
+            assert!(
+              time_span.begin.is_some(),
+              "time_range should have begin time"
+            );
+            assert!(time_span.end.is_some(), "time_range should have end time");
+          }
+        }
+      }
+
+      // Verify GeoJSON-T when object parsing
+      let geojson_t = &layer.geometries[6];
+      if let Geometry::Point(_, metadata) = geojson_t {
+        assert!(
+          metadata.time_data.is_some(),
+          "GeoJSON-T when object should parse"
+        );
+        if let Some(time_data) = &metadata.time_data {
+          assert!(
+            time_data.time_span.is_some(),
+            "GeoJSON-T when should have time span"
+          );
+          if let Some(time_span) = &time_data.time_span {
+            assert!(
+              time_span.begin.is_some(),
+              "GeoJSON-T when should have begin time"
+            );
+            assert!(
+              time_span.end.is_some(),
+              "GeoJSON-T when should have end time"
+            );
+          }
+        }
+      }
+    } else {
+      panic!("First event should be a Layer event");
     }
   }
 }
