@@ -66,7 +66,7 @@ impl TileLayer {
       let tile_rect = Rect::from_min_max(nw.into(), se.into());
 
       let tint_color = if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
-        let is_even_tile = (tile.x + tile.y) % 2 == 0;
+        let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
         if is_even_tile {
           Color32::from_rgba_unmultiplied(255, 240, 240, 255)
         } else {
@@ -114,7 +114,7 @@ impl TileLayer {
       }
 
       if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
-        let is_even_tile = (tile.x + tile.y) % 2 == 0;
+        let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
         let bg_color = if is_even_tile {
           Color32::from_rgba_unmultiplied(255, 240, 240, 120)
         } else {

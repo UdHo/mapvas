@@ -346,7 +346,10 @@ impl ContentAutoParser {
 
   fn detect_format_from_content(sample: &str) -> DetectedFormat {
     // Check for GeoJSON type markers
-    if GEOJSON_TYPE_MARKERS.iter().any(|marker| sample.contains(marker)) {
+    if GEOJSON_TYPE_MARKERS
+      .iter()
+      .any(|marker| sample.contains(marker))
+    {
       return DetectedFormat::GeoJson;
     }
 
@@ -558,7 +561,11 @@ mod tests {
     assert_eq!(manual_events.len(), extension_events.len());
     assert_eq!(manual_events.len(), content_events.len());
 
-    for (i, (manual, extension)) in manual_events.iter().zip(extension_events.iter()).enumerate() {
+    for (i, (manual, extension)) in manual_events
+      .iter()
+      .zip(extension_events.iter())
+      .enumerate()
+    {
       if let (MapEvent::Layer(m), MapEvent::Layer(e)) = (manual, extension) {
         assert_eq!(m.geometries, e.geometries, "Event {i} geometries differ");
       } else {
@@ -581,7 +588,8 @@ mod tests {
 
     // GeoJSON with type marker should use [lon, lat] order
     // Berlin: lat=52.5, lon=13.4
-    let geojson_content = r#"{"type": "Feature", "geometry": {"type": "Point", "coordinates": [13.4, 52.5]}}"#;
+    let geojson_content =
+      r#"{"type": "Feature", "geometry": {"type": "Point", "coordinates": [13.4, 52.5]}}"#;
     let parser = ContentAutoParser::new(geojson_content.to_string());
     let events = parser.parse();
     assert!(!events.is_empty(), "GeoJSON should parse");
@@ -648,8 +656,14 @@ mod tests {
       // Verify coordinates are parsed correctly (GeoJSON order: [lon, lat])
       if let Geometry::Point(coord, _) = &layer.geometries[0] {
         let wgs = coord.as_wgs84();
-        assert!((wgs.lon - 10.0).abs() < 0.01, "First point lon should be 10.0");
-        assert!((wgs.lat - 50.0).abs() < 0.01, "First point lat should be 50.0");
+        assert!(
+          (wgs.lon - 10.0).abs() < 0.01,
+          "First point lon should be 10.0"
+        );
+        assert!(
+          (wgs.lat - 50.0).abs() < 0.01,
+          "First point lat should be 50.0"
+        );
       }
     }
   }
@@ -780,6 +794,9 @@ mod tests {
     let parser = ContentAutoParser::new(mixed_content.to_string());
     let events = parser.parse();
 
-    assert!(!events.is_empty(), "Mixed content should parse via grep fallback");
+    assert!(
+      !events.is_empty(),
+      "Mixed content should parse via grep fallback"
+    );
   }
 }

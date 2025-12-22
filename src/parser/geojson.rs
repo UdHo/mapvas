@@ -149,7 +149,7 @@ impl GeoJsonParser {
   #[allow(
     clippy::cast_possible_truncation,
     clippy::too_many_lines,
-    clippy::only_used_in_recursion
+    clippy::self_only_used_in_recursion
   )]
   fn parse_geometry(
     &self,

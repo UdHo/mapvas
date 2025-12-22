@@ -1,6 +1,10 @@
 # MapVas
 
+[![CI](https://github.com/UdHo/mapvas/actions/workflows/rust.yml/badge.svg)](https://github.com/UdHo/mapvas/actions/workflows/rust.yml)
 [![codecov](https://codecov.io/gh/UdHo/mapvas/graph/badge.svg)](https://codecov.io/gh/UdHo/mapvas)
+[![Crates.io](https://img.shields.io/crates/v/mapvas.svg)](https://crates.io/crates/mapvas)
+[![Downloads](https://img.shields.io/crates/d/mapvas.svg)](https://crates.io/crates/mapvas)
+[![License](https://img.shields.io/crates/l/mapvas.svg)](https://github.com/UdHo/mapvas#license)
 
 A **map** can**vas** for displaying geographic data on [OpenStreetMap](https://openstreetmap.org) tiles.
 
@@ -8,10 +12,10 @@ A **map** can**vas** for displaying geographic data on [OpenStreetMap](https://o
 
 ## Install
 
-**Cargo (all platforms):**
+**Cargo:**
 
 ```bash
-cargo install mapvas --locked
+cargo install mapvas
 ```
 
 **macOS (Homebrew):**
@@ -42,13 +46,6 @@ mapcat points.kml
 ```bash
 echo "52.521853, 13.413015" | mapcat          # Point in Berlin
 curl 'https://api.example.com/geo' | mapcat   # From API
-```
-
-**Interactive map:**
-
-```bash
-mapvas                   # Opens empty map
-mapvas data.geojson      # Open with file
 ```
 
 Or just drag and drop files onto the map window.

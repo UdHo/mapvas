@@ -1838,7 +1838,7 @@ impl Layer for ShapeLayer {
             }
 
             // Check if this top-level geometry is highlighted by ID
-            let geometry_key = (layer_id.to_string(), shape_idx, Vec::new());
+            let geometry_key = (layer_id.clone(), shape_idx, Vec::new());
             let is_highlighted = self.geometry_highlighter.is_highlighted(
               &geometry_key.0,
               geometry_key.1,

@@ -1635,7 +1635,6 @@ mod tests {
   #[case(1.5, 500, 1)]
   #[case(60.0, 0, 60)]
   #[case(60.5, 500, 60)]
-  #[allow(clippy::cast_possible_truncation)]
   fn test_step_duration_precision(
     #[case] step_size: f32,
     #[case] expected_millis: i64,
@@ -1645,14 +1644,18 @@ mod tests {
     widget.set_step_size(step_size);
 
     let expected = Duration::seconds(expected_secs) + Duration::milliseconds(expected_millis);
-    let actual = if widget.playback.step_size < 1.0 {
-      Duration::milliseconds((widget.playback.step_size * 1000.0) as i64)
-    } else {
-      Duration::seconds(widget.playback.step_size as i64)
-        + Duration::milliseconds(((widget.playback.step_size % 1.0) * 1000.0) as i64)
-    };
-
+    let actual = calc_step_duration(widget.playback.step_size);
     assert_eq!(actual, expected);
+  }
+
+  #[allow(clippy::cast_possible_truncation)]
+  fn calc_step_duration(step_size: f32) -> Duration {
+    if step_size < 1.0 {
+      Duration::milliseconds(i64::from((step_size * 1000.0) as i32))
+    } else {
+      Duration::seconds(i64::from(step_size as i32))
+        + Duration::milliseconds(i64::from(((step_size % 1.0) * 1000.0) as i32))
+    }
   }
 
   #[test]
