@@ -1,5 +1,7 @@
 # MapVas
 
+[![codecov](https://codecov.io/gh/UdHo/mapvas/graph/badge.svg)](https://codecov.io/gh/UdHo/mapvas)
+
 A **map** can**vas** for displaying geographic data on [OpenStreetMap](https://openstreetmap.org) tiles.
 
 ![mapvas](https://raw.githubusercontent.com/UdHo/mapvas/main/mapvas.png)

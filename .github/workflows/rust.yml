@@ -18,15 +18,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
-        run: rustup component add rustfmt clippy
+        run: rustup component add rustfmt clippy llvm-tools-preview
       - name: Install graphics dependencies for headless testing
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev mesa-vulkan-drivers
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
       - name: Build
         run: cargo build
-      - name: tests
-        run: xvfb-run -a cargo test
+      - name: Run tests with coverage
+        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
       - name: clippy
         run: cargo clippy --no-deps -- -D warnings
       - name: fmt
