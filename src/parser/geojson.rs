@@ -263,6 +263,7 @@ impl GeoJsonParser {
   }
 
   /// Parse a single coordinate [lon, lat] or [lon, lat, elevation]
+  /// `GeoJSON` spec requires [longitude, latitude] order
   #[allow(clippy::cast_possible_truncation)]
   fn parse_coordinate(coord: &Value) -> Option<PixelCoordinate> {
     if let Some(array) = coord.as_array()

@@ -61,6 +61,7 @@ tiny-skia = "0.11"
 egui_kittest = { version = "0.32", features = ["snapshot", "wgpu"] }
 wgpu = "25.0"
 futures = "0.3"
+rstest = "0.24"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}

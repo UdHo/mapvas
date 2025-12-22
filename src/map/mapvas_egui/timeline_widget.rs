@@ -1492,6 +1492,7 @@ impl TimelineWidget {
 mod tests {
   use super::*;
   use chrono::{TimeZone, Utc};
+  use rstest::rstest;
 
   #[test]
   fn test_step_forward_basic() {
@@ -1628,41 +1629,30 @@ mod tests {
     }
   }
 
-  #[test]
-  fn test_step_duration_precision() {
+  #[rstest]
+  #[case(0.5, 500, 0)]
+  #[case(1.0, 0, 1)]
+  #[case(1.5, 500, 1)]
+  #[case(60.0, 0, 60)]
+  #[case(60.5, 500, 60)]
+  #[allow(clippy::cast_possible_truncation)]
+  fn test_step_duration_precision(
+    #[case] step_size: f32,
+    #[case] expected_millis: i64,
+    #[case] expected_secs: i64,
+  ) {
     let mut widget = TimelineWidget::new();
+    widget.set_step_size(step_size);
 
-    // Test various step sizes and verify duration calculation
-    let test_cases = vec![
-      (0.5, Duration::milliseconds(500)),
-      (1.0, Duration::seconds(1)),
-      (1.5, Duration::seconds(1) + Duration::milliseconds(500)),
-      (60.0, Duration::seconds(60)),
-      (60.5, Duration::seconds(60) + Duration::milliseconds(500)),
-    ];
+    let expected = Duration::seconds(expected_secs) + Duration::milliseconds(expected_millis);
+    let actual = if widget.playback.step_size < 1.0 {
+      Duration::milliseconds((widget.playback.step_size * 1000.0) as i64)
+    } else {
+      Duration::seconds(widget.playback.step_size as i64)
+        + Duration::milliseconds(((widget.playback.step_size % 1.0) * 1000.0) as i64)
+    };
 
-    for (step_size, expected_duration) in test_cases {
-      widget.set_step_size(step_size);
-
-      // Calculate duration using the same logic as step_forward
-      let calculated_duration = if widget.playback.step_size < 1.0 {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-          Duration::milliseconds((widget.playback.step_size * 1000.0) as i64)
-        }
-      } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-          Duration::seconds(widget.playback.step_size as i64)
-            + Duration::milliseconds(((widget.playback.step_size % 1.0) * 1000.0) as i64)
-        }
-      };
-
-      assert_eq!(
-        calculated_duration, expected_duration,
-        "Duration calculation failed for step size {step_size}: expected {expected_duration:?}, got {calculated_duration:?}"
-      );
-    }
+    assert_eq!(actual, expected);
   }
 
   #[test]

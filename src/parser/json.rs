@@ -43,8 +43,9 @@ impl JsonParser {
     profile_scope!("JsonParser::find_coordinates");
     match v {
       Value::Array(vec) => {
+        // JSON arrays with 2 numbers: assume [lat, lon] order (human-readable order)
         if vec.len() == 2
-          && let (Some(lon), Some(lat)) = (vec[0].as_f64(), vec[1].as_f64())
+          && let (Some(lat), Some(lon)) = (vec[0].as_f64(), vec[1].as_f64())
         {
           return Some(PixelCoordinate::from(WGS84Coordinate::new(
             lat as f32, lon as f32,
@@ -82,9 +83,9 @@ impl JsonParser {
     let mut lon = None;
     for (k, v) in obj {
       if let Some(num) = v.as_f64() {
-        if k.starts_with("lat") && (-180. ..=180.).contains(&num) {
+        if k.starts_with("lat") && (-90.0..=90.0).contains(&num) {
           lat = Some(num);
-        } else if k.starts_with("lon") && (-90. ..=90.).contains(&num) {
+        } else if k.starts_with("lon") && (-180.0..=180.0).contains(&num) {
           lon = Some(num);
         }
       }

@@ -287,32 +287,22 @@ impl StyleParser {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use rstest::rstest;
   use serde_json::json;
 
-  #[test]
-  fn test_color_parsing() {
-    assert_eq!(StyleParser::parse_color("#ff0000"), Some(Color32::RED));
-    assert_eq!(StyleParser::parse_color("#f00"), Some(Color32::RED));
-    assert_eq!(
-      StyleParser::parse_color("#ff000080"),
-      Some(Color32::from_rgba_unmultiplied(255, 0, 0, 128))
-    );
-
-    assert_eq!(
-      StyleParser::parse_color("rgb(255, 0, 0)"),
-      Some(Color32::RED)
-    );
-    assert_eq!(
-      StyleParser::parse_color("rgb(0, 255, 0)"),
-      Some(Color32::GREEN)
-    );
-
-    assert_eq!(StyleParser::parse_color("red"), Some(Color32::RED));
-    assert_eq!(StyleParser::parse_color("blue"), Some(Color32::BLUE));
-    assert_eq!(StyleParser::parse_color("green"), Some(Color32::GREEN));
-
-    assert_eq!(StyleParser::parse_color("invalid"), None);
-    assert_eq!(StyleParser::parse_color("#gg0000"), None);
+  #[rstest]
+  #[case("#ff0000", Some(Color32::RED))]
+  #[case("#f00", Some(Color32::RED))]
+  #[case("#ff000080", Some(Color32::from_rgba_unmultiplied(255, 0, 0, 128)))]
+  #[case("rgb(255, 0, 0)", Some(Color32::RED))]
+  #[case("rgb(0, 255, 0)", Some(Color32::GREEN))]
+  #[case("red", Some(Color32::RED))]
+  #[case("blue", Some(Color32::BLUE))]
+  #[case("green", Some(Color32::GREEN))]
+  #[case("invalid", None)]
+  #[case("#gg0000", None)]
+  fn test_color_parsing(#[case] input: &str, #[case] expected: Option<Color32>) {
+    assert_eq!(StyleParser::parse_color(input), expected);
   }
 
   #[test]
