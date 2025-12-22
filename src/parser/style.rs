@@ -449,7 +449,7 @@ mod tests {
 
     // Test Unix timestamp (seconds) as number
     let data7 = json!({
-      "timestamp": 1765875780
+      "timestamp": 1_765_875_780
     });
     let metadata7 = StyleParser::extract_metadata_from_json(Some(&data7));
     assert!(metadata7.time_data.is_some());
@@ -459,7 +459,7 @@ mod tests {
 
     // Test Unix timestamp (milliseconds) as number
     let data8 = json!({
-      "timestamp": 1765875780123i64
+      "timestamp": 1_765_875_780_123_i64
     });
     let metadata8 = StyleParser::extract_metadata_from_json(Some(&data8));
     assert!(metadata8.time_data.is_some());

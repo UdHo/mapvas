@@ -760,17 +760,21 @@ mod tests {
       for geometry in &layer.geometries {
         match geometry {
           Geometry::Point(_, metadata) => {
-            if let Some(time_data) = &metadata.time_data {
-              if time_data.timestamp.is_some() {
-                features_with_timestamps += 1;
-              }
+            if metadata
+              .time_data
+              .as_ref()
+              .is_some_and(|td| td.timestamp.is_some())
+            {
+              features_with_timestamps += 1;
             }
           }
           Geometry::LineString(_, metadata) => {
-            if let Some(time_data) = &metadata.time_data {
-              if time_data.time_span.is_some() {
-                features_with_time_spans += 1;
-              }
+            if metadata
+              .time_data
+              .as_ref()
+              .is_some_and(|td| td.time_span.is_some())
+            {
+              features_with_time_spans += 1;
             }
           }
           _ => {}
@@ -843,6 +847,7 @@ mod tests {
   }
 
   #[test]
+  #[allow(clippy::too_many_lines)]
   fn test_temporal_geojson_timestamp_parsing() {
     use crate::parser::FileParser;
     use std::fs::File;
@@ -913,8 +918,7 @@ mod tests {
       // - GeoJSON-T when object (index 6) -> time span
       assert_eq!(
         parsed_timestamps, 7,
-        "All 7 timestamp formats should parse successfully, got {}",
-        parsed_timestamps
+        "All 7 timestamp formats should parse successfully, got {parsed_timestamps}"
       );
 
       // Verify specific parsing of ISO 8601 formats

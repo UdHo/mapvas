@@ -12,3 +12,7 @@ updates:
       cargo-dependencies:
         patterns:
           - "*"
+    ignore:
+      # wgpu must stay at 25.x to match egui_kittest's egui-wgpu dependency
+      # Remove this when egui updates to wgpu 28+
+      - dependency-name: "wgpu"

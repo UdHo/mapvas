@@ -143,7 +143,7 @@ impl SearchProvider for NominatimProvider {
       )
       .recv_json::<Value>()
       .await
-      .map_err(|e| anyhow!("Nominatim API request failed: {}", e))?;
+      .map_err(|e| anyhow!("Nominatim API request failed: {e}"))?;
 
     let mut results = Vec::new();
 
@@ -199,7 +199,7 @@ impl SearchProvider for NominatimProvider {
       )
       .recv_json::<Value>()
       .await
-      .map_err(|e| anyhow!("Nominatim reverse API request failed: {}", e))?;
+      .map_err(|e| anyhow!("Nominatim reverse API request failed: {e}"))?;
 
     if let Some(display_name) = response["display_name"].as_str() {
       let address = response["address"].as_object();
@@ -261,7 +261,7 @@ impl SearchProvider for CustomProvider {
     let response = request
       .recv_json::<Value>()
       .await
-      .map_err(|e| anyhow!("Custom API request failed: {}", e))?;
+      .map_err(|e| anyhow!("Custom API request failed: {e}"))?;
 
     // This is a basic implementation - could be extended to support
     // different response formats based on configuration

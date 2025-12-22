@@ -346,10 +346,12 @@ mod tests {
             }
           }
           Geometry::LineString(_, metadata) => {
-            if let Some(time_data) = &metadata.time_data {
-              if time_data.time_span.is_some() {
-                linestrings_with_timespan += 1;
-              }
+            if metadata
+              .time_data
+              .as_ref()
+              .is_some_and(|td| td.time_span.is_some())
+            {
+              linestrings_with_timespan += 1;
             }
           }
           _ => {}
@@ -358,13 +360,11 @@ mod tests {
 
       assert!(
         timestamped_points >= 7,
-        "Should have at least 7 timestamped points (2 waypoints + 5 track points), got {}",
-        timestamped_points
+        "Should have at least 7 timestamped points (2 waypoints + 5 track points), got {timestamped_points}"
       );
       assert_eq!(
         linestrings_with_timespan, 1,
-        "Should have exactly 1 linestring with time span, got {}",
-        linestrings_with_timespan
+        "Should have exactly 1 linestring with time span, got {linestrings_with_timespan}"
       );
 
       // Verify that at least one geometry has proper timestamp
