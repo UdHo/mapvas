@@ -91,3 +91,103 @@ pub fn distance_to_line_segment(
   let py = point.y - closest_y;
   f64::from(px * px + py * py).sqrt()
 }
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)]
+mod tests {
+  use super::*;
+  use crate::map::geometry_collection::Metadata;
+  use rstest::rstest;
+
+  fn pc(x: f32, y: f32) -> PixelCoordinate {
+    PixelCoordinate { x, y }
+  }
+
+  #[rstest]
+  #[case(pc(0.0, 5.0), pc(0.0, 0.0), pc(10.0, 0.0), 5.0)]
+  #[case(pc(5.0, 5.0), pc(0.0, 0.0), pc(10.0, 0.0), 5.0)]
+  #[case(pc(-5.0, 0.0), pc(0.0, 0.0), pc(10.0, 0.0), 5.0)]
+  #[case(pc(15.0, 0.0), pc(0.0, 0.0), pc(10.0, 0.0), 5.0)]
+  fn test_distance_to_line_segment(
+    #[case] point: PixelCoordinate,
+    #[case] start: PixelCoordinate,
+    #[case] end: PixelCoordinate,
+    #[case] expected: f64,
+  ) {
+    let dist = distance_to_line_segment(point, start, end);
+    assert!(
+      (dist - expected).abs() < 0.001,
+      "expected {expected}, got {dist}"
+    );
+  }
+
+  #[test]
+  fn test_distance_to_line_segment_degenerate() {
+    let point = pc(5.0, 5.0);
+    let same = pc(0.0, 0.0);
+    let dist = distance_to_line_segment(point, same, same);
+    assert!((dist - 7.071).abs() < 0.01);
+  }
+
+  #[test]
+  fn test_distance_to_geometry_point() {
+    let geom = Geometry::Point(pc(10.0, 0.0), Metadata::default());
+    let dist = distance_to_geometry(&geom, pc(0.0, 0.0));
+    assert_eq!(dist, Some(10.0));
+  }
+
+  #[test]
+  fn test_distance_to_geometry_linestring() {
+    let geom = Geometry::LineString(vec![pc(0.0, 0.0), pc(10.0, 0.0)], Metadata::default());
+    let dist = distance_to_geometry(&geom, pc(5.0, 5.0));
+    assert_eq!(dist, Some(5.0));
+  }
+
+  #[test]
+  fn test_distance_to_geometry_linestring_empty() {
+    let geom = Geometry::LineString(vec![], Metadata::default());
+    assert_eq!(distance_to_geometry(&geom, pc(0.0, 0.0)), None);
+  }
+
+  #[test]
+  fn test_distance_to_geometry_linestring_single() {
+    let geom = Geometry::LineString(vec![pc(10.0, 0.0)], Metadata::default());
+    let dist = distance_to_geometry(&geom, pc(0.0, 0.0));
+    assert_eq!(dist, Some(10.0));
+  }
+
+  #[test]
+  fn test_distance_to_geometry_polygon() {
+    let geom = Geometry::Polygon(
+      vec![pc(0.0, 0.0), pc(10.0, 0.0), pc(10.0, 10.0), pc(0.0, 10.0)],
+      Metadata::default(),
+    );
+    let dist = distance_to_geometry(&geom, pc(5.0, 5.0));
+    assert!(dist.is_some());
+  }
+
+  #[test]
+  fn test_distance_to_geometry_polygon_empty() {
+    let geom = Geometry::Polygon(vec![], Metadata::default());
+    assert_eq!(distance_to_geometry(&geom, pc(0.0, 0.0)), None);
+  }
+
+  #[test]
+  fn test_distance_to_geometry_collection() {
+    let geom = Geometry::GeometryCollection(
+      vec![
+        Geometry::Point(pc(100.0, 0.0), Metadata::default()),
+        Geometry::Point(pc(10.0, 0.0), Metadata::default()),
+      ],
+      Metadata::default(),
+    );
+    let dist = distance_to_geometry(&geom, pc(0.0, 0.0));
+    assert_eq!(dist, Some(10.0));
+  }
+
+  #[test]
+  fn test_distance_to_geometry_collection_empty() {
+    let geom = Geometry::GeometryCollection(vec![], Metadata::default());
+    assert_eq!(distance_to_geometry(&geom, pc(0.0, 0.0)), None);
+  }
+}

@@ -353,6 +353,7 @@ impl AddAssign for PixelPosition {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
   use super::*;
   use assert_approx_eq::assert_approx_eq;
@@ -401,5 +402,192 @@ mod tests {
       254_785.,
       1.
     );
+  }
+
+  #[test]
+  fn test_pixel_coordinate_new_and_validity() {
+    let valid = PixelCoordinate::new(100.0, 200.0);
+    assert!(valid.is_valid());
+
+    let invalid = PixelCoordinate::invalid();
+    assert!(!invalid.is_valid());
+
+    let out_of_bounds = PixelCoordinate::new(-10.0, 100.0);
+    assert!(!out_of_bounds.is_valid());
+  }
+
+  #[test]
+  fn test_pixel_coordinate_clamp() {
+    let coord = PixelCoordinate::new(-10.0, 3000.0);
+    let clamped = coord.clamp();
+    assert_eq!(clamped.x, 0.0);
+    assert_eq!(clamped.y, CANVAS_SIZE);
+  }
+
+  #[test]
+  fn test_pixel_coordinate_sq_dist() {
+    let p1 = PixelCoordinate::new(0.0, 0.0);
+    let p2 = PixelCoordinate::new(3.0, 4.0);
+    assert_eq!(p1.sq_dist(&p2), 25.0);
+  }
+
+  #[test]
+  fn test_pixel_coordinate_sq_distance_line_segment() {
+    let point = PixelCoordinate::new(5.0, 5.0);
+    let l1 = PixelCoordinate::new(0.0, 0.0);
+    let l2 = PixelCoordinate::new(10.0, 0.0);
+    assert_eq!(point.sq_distance_line_segment(&l1, &l2), 25.0);
+
+    // Degenerate line (point)
+    let same = PixelCoordinate::new(0.0, 0.0);
+    let dist = point.sq_distance_line_segment(&same, &same);
+    assert_eq!(dist, 50.0);
+  }
+
+  #[test]
+  fn test_pixel_coordinate_exact_eq() {
+    let p1 = PixelCoordinate::new(1.0, 2.0);
+    let p2 = PixelCoordinate::new(1.0, 2.0);
+    let p3 = PixelCoordinate::new(1.0, 2.1);
+    assert!(p1.exact_eq(&p2));
+    assert!(!p1.exact_eq(&p3));
+  }
+
+  #[test]
+  fn test_pixel_coordinate_ops() {
+    let mut p1 = PixelCoordinate::new(1.0, 2.0);
+    let p2 = PixelCoordinate::new(3.0, 4.0);
+
+    let sum = p1 + p2;
+    assert_eq!(sum.x, 4.0);
+    assert_eq!(sum.y, 6.0);
+
+    p1 += p2;
+    assert_eq!(p1.x, 4.0);
+    assert_eq!(p1.y, 6.0);
+
+    let scaled = p2 * 2.0;
+    assert_eq!(scaled.x, 6.0);
+    assert_eq!(scaled.y, 8.0);
+  }
+
+  #[test]
+  fn test_wgs84_coordinate_validity() {
+    let valid = WGS84Coordinate::new(52.5, 13.4);
+    assert!(valid.is_valid());
+
+    let invalid_lat = WGS84Coordinate::new(95.0, 13.4);
+    assert!(!invalid_lat.is_valid());
+
+    let invalid_lon = WGS84Coordinate::new(52.5, 200.0);
+    assert!(!invalid_lon.is_valid());
+  }
+
+  #[test]
+  fn test_wgs84_coordinate_exact_eq() {
+    let c1 = WGS84Coordinate::new(52.5, 13.4);
+    let c2 = WGS84Coordinate::new(52.5, 13.4);
+    let c3 = WGS84Coordinate::new(52.5, 13.5);
+    assert!(c1.exact_eq(&c2));
+    assert!(!c1.exact_eq(&c3));
+  }
+
+  #[test]
+  fn test_tile_coordinate_exact_eq() {
+    let t1 = TileCoordinate {
+      x: 1.0,
+      y: 2.0,
+      zoom: 3,
+    };
+    let t2 = TileCoordinate {
+      x: 1.0,
+      y: 2.0,
+      zoom: 3,
+    };
+    let t3 = TileCoordinate {
+      x: 1.0,
+      y: 2.0,
+      zoom: 4,
+    };
+    assert!(t1.exact_eq(&t2));
+    assert!(!t1.exact_eq(&t3));
+  }
+
+  #[test]
+  fn test_pixel_position_ops() {
+    let mut p1 = PixelPosition { x: 1.0, y: 2.0 };
+    let p2 = PixelPosition { x: 3.0, y: 4.0 };
+
+    let sum = p1 + p2;
+    assert_eq!(sum.x, 4.0);
+    assert_eq!(sum.y, 6.0);
+
+    p1 += p2;
+    assert_eq!(p1.x, 4.0);
+
+    let scaled = p2 * 2.0;
+    assert_eq!(scaled.x, 6.0);
+  }
+
+  #[test]
+  fn test_pixel_position_exact_eq() {
+    let p1 = PixelPosition { x: 1.0, y: 2.0 };
+    let p2 = PixelPosition { x: 1.0, y: 2.0 };
+    assert!(p1.exact_eq(&p2));
+  }
+
+  #[test]
+  fn test_pixel_position_from_egui() {
+    let pos = egui::Pos2::new(10.0, 20.0);
+    let pp = PixelPosition::from(pos);
+    assert_eq!(pp.x, 10.0);
+    assert_eq!(pp.y, 20.0);
+
+    let back: egui::Pos2 = pp.into();
+    assert_eq!(back.x, 10.0);
+    assert_eq!(back.y, 20.0);
+  }
+
+  #[test]
+  fn test_xy_trait() {
+    let pc = PixelCoordinate::new(5.0, 10.0);
+    assert_eq!(pc.x(), 5.0);
+    assert_eq!(pc.y(), 10.0);
+    assert_eq!(pc.with_x(7.0).x, 7.0);
+    assert_eq!(pc.with_y(12.0).y, 12.0);
+
+    let pp = PixelPosition { x: 5.0, y: 10.0 };
+    assert_eq!(pp.x(), 5.0);
+    assert_eq!(pp.y(), 10.0);
+    assert_eq!(pp.with_x(7.0).x, 7.0);
+    assert_eq!(pp.with_y(12.0).y, 12.0);
+  }
+
+  #[test]
+  fn test_coordinate_trait() {
+    let wgs = WGS84Coordinate::new(52.5, 13.4);
+    assert_eq!(wgs.as_wgs84(), wgs);
+    assert!(wgs.as_pixel_coordinate().is_valid());
+
+    let tile = TileCoordinate {
+      x: 1.0,
+      y: 1.0,
+      zoom: 2,
+    };
+    assert!(tile.as_wgs84().is_valid());
+    assert!(tile.as_pixel_coordinate().is_valid());
+
+    let pixel = PixelCoordinate::new(100.0, 100.0);
+    assert!(pixel.as_wgs84().is_valid());
+    assert_eq!(pixel.as_pixel_coordinate(), pixel);
+  }
+
+  #[test]
+  fn test_wgs84_to_pixel_roundtrip() {
+    let wgs = WGS84Coordinate::new(52.5, 13.4);
+    let pixel = PixelCoordinate::from(wgs);
+    let back = WGS84Coordinate::from(pixel);
+    assert_approx_eq!(back.lat, wgs.lat, 0.01);
+    assert_approx_eq!(back.lon, wgs.lon, 0.01);
   }
 }
