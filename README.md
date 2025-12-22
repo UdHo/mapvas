@@ -16,7 +16,7 @@ Make sure you have Rust installed (stable toolchain recommended).
 Manually:
 
 - Clone this repository.
-- `cd mapvas ; cargo install --path . --locked`
+- `cd mapvas ; cargo install --path .`
 
 Via cargo from [crates.io](https://crates.io/crates/mapvas):
 
@@ -276,9 +276,9 @@ puffin_viewer --url=http://127.0.0.1:8585
 
 #### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MAPVAS_CONFIG` | Custom config directory | `~/.config/mapvas` |
-| `MAPVAS_TILE_CACHE_DIR` | Custom tile cache directory | `~/.mapvas_tile_cache` |
-| `MAPVAS_TILE_URL` | Custom tile provider URL (legacy) | Uses config file |
-| `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location | Current directory |
+| Variable                 | Description                       | Default                |
+| ------------------------ | --------------------------------- | ---------------------- |
+| `MAPVAS_CONFIG`          | Custom config directory           | `~/.config/mapvas`     |
+| `MAPVAS_TILE_CACHE_DIR`  | Custom tile cache directory       | `~/.mapvas_tile_cache` |
+| `MAPVAS_TILE_URL`        | Custom tile provider URL (legacy) | Uses config file       |
+| `MAPVAS_SCREENSHOT_PATH` | Default screenshot save location  | Current directory      |
