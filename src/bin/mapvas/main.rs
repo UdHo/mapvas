@@ -19,7 +19,13 @@ fn main() -> eframe::Result {
   profiling::init_profiling();
 
   // Tokio runtime.
-  let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+  let rt = match tokio::runtime::Runtime::new() {
+    Ok(rt) => rt,
+    Err(e) => {
+      eprintln!("Error: Failed to create tokio runtime: {e}");
+      std::process::exit(1);
+    }
+  };
   let _enter = rt.enter();
 
   let options = eframe::NativeOptions {

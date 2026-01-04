@@ -602,22 +602,22 @@ impl ShapeLayer {
           let min_lat = wgs84_coords
             .iter()
             .map(|c| c.lat)
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .min_by(f32::total_cmp)
             .unwrap_or(0.0);
           let max_lat = wgs84_coords
             .iter()
             .map(|c| c.lat)
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .max_by(f32::total_cmp)
             .unwrap_or(0.0);
           let min_lon = wgs84_coords
             .iter()
             .map(|c| c.lon)
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .min_by(f32::total_cmp)
             .unwrap_or(0.0);
           let max_lon = wgs84_coords
             .iter()
             .map(|c| c.lon)
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .max_by(f32::total_cmp)
             .unwrap_or(0.0);
 
           let bounds_text = format!("{min_lat:.1},{min_lon:.1}→{max_lat:.1},{max_lon:.1}");

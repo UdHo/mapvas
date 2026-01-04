@@ -3,6 +3,7 @@ use axum::{
   extract::{DefaultBodyLimit, State},
   routing::{get, post},
 };
+use log::warn;
 use std::{net::SocketAddr, sync::mpsc::Sender};
 use tower_http::trace::{self, TraceLayer};
 
@@ -70,23 +71,47 @@ impl Remote {
   pub fn handle_map_event(&self, event: MapEvent) {
     match event {
       l @ MapEvent::Layer(_) => {
-        let _ = self.layer.send(l);
+        self
+          .layer
+          .send(l)
+          .inspect_err(|e| warn!("Failed to send layer event: {e}"))
+          .ok();
       }
       MapEvent::Focus => {
-        let _ = self.focus.send(MapEvent::Focus);
+        self
+          .focus
+          .send(MapEvent::Focus)
+          .inspect_err(|e| warn!("Failed to send focus event: {e}"))
+          .ok();
       }
       f @ MapEvent::FocusOn { .. } => {
-        let _ = self.focus.send(f);
+        self
+          .focus
+          .send(f)
+          .inspect_err(|e| warn!("Failed to send focus_on event: {e}"))
+          .ok();
       }
       MapEvent::Clear => {
-        let _ = self.clear.send(MapEvent::Clear);
+        self
+          .clear
+          .send(MapEvent::Clear)
+          .inspect_err(|e| warn!("Failed to send clear event: {e}"))
+          .ok();
       }
       MapEvent::Shutdown => {
-        let _ = self.shutdown.send(MapEvent::Shutdown);
+        self
+          .shutdown
+          .send(MapEvent::Shutdown)
+          .inspect_err(|e| warn!("Failed to send shutdown event: {e}"))
+          .ok();
       }
       e @ MapEvent::Screenshot(_) => {
         // Send screenshot events through the main event channel for proper ordering
-        let _ = self.focus.send(e);
+        self
+          .focus
+          .send(e)
+          .inspect_err(|e| warn!("Failed to send screenshot event: {e}"))
+          .ok();
       }
     }
     // Delay repaint request to avoid deadlock during UI event processing

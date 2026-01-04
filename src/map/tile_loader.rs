@@ -10,9 +10,13 @@ use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use surf::http::Method;
+
+// Compile regex once at first use
+static API_KEY_REGEX: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("API_KEY_REGEX pattern is valid"));
 use surf::{Config, Request, Url};
 use thiserror::Error;
 
@@ -167,8 +171,14 @@ impl DownloadManager<Tile> {
     tile: Tile,
     priority: TilePriority,
   ) -> Option<DownloadToken<Tile>> {
-    let mut tiles_lock = dm.tiles_in_download.lock().expect("lock");
-    let mut queue_lock = dm.priority_queue.lock().expect("queue lock");
+    let mut tiles_lock = dm
+      .tiles_in_download
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut queue_lock = dm
+      .priority_queue
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     // Check if already downloading
     if tiles_lock.contains(&tile) {
@@ -181,10 +191,18 @@ impl DownloadManager<Tile> {
       drop(tiles_lock);
       drop(queue_lock);
 
-      if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&tile) {
+      if let Some(ts) = dm
+        .last_failed_attempt
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&tile)
+      {
         let now = Instant::now();
         if now.duration_since(*ts).as_secs() < 5 {
-          dm.tiles_in_download.lock().unwrap().remove(&tile);
+          dm.tiles_in_download
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&tile);
           return None;
         }
       }
@@ -208,8 +226,14 @@ impl DownloadManager<Tile> {
 
   fn try_next_from_queue(dm: &Arc<Self>) -> Option<DownloadToken<Tile>> {
     loop {
-      let mut tiles_lock = dm.tiles_in_download.lock().expect("lock");
-      let mut queue_lock = dm.priority_queue.lock().expect("queue lock");
+      let mut tiles_lock = dm
+        .tiles_in_download
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+      let mut queue_lock = dm
+        .priority_queue
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
       if tiles_lock.len() >= dm.max_concurrent {
         return None;
@@ -221,10 +245,18 @@ impl DownloadManager<Tile> {
           drop(tiles_lock);
           drop(queue_lock);
 
-          if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&request.tile) {
+          if let Some(ts) = dm
+            .last_failed_attempt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&request.tile)
+          {
             let now = Instant::now();
             if now.duration_since(*ts).as_secs() < 5 {
-              dm.tiles_in_download.lock().unwrap().remove(&request.tile);
+              dm.tiles_in_download
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&request.tile);
               continue;
             }
           }
@@ -242,7 +274,10 @@ impl DownloadManager<Tile> {
 #[allow(dead_code)]
 impl<T: Hash + Eq + Clone> DownloadManager<T> {
   fn download(dm: &Arc<Self>, tile: T) -> Option<DownloadToken<T>> {
-    let mut lock = dm.tiles_in_download.lock().expect("lock");
+    let mut lock = dm
+      .tiles_in_download
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     if lock.contains(&tile) || lock.len() >= dm.max_concurrent {
       return None;
@@ -250,7 +285,12 @@ impl<T: Hash + Eq + Clone> DownloadManager<T> {
     lock.insert(tile.clone());
     drop(lock);
 
-    if let Some(ts) = dm.last_failed_attempt.lock().unwrap().get(&tile) {
+    if let Some(ts) = dm
+      .last_failed_attempt
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .get(&tile)
+    {
       let now = Instant::now();
       if now.duration_since(*ts).as_secs() < 5 {
         return None;
@@ -430,9 +470,8 @@ impl CachedTileLoader {
   fn from_url(url: &TileProvider, cache: Option<PathBuf>) -> Self {
     let tile_loader = TileDownloader::from_url(&url.url, url.name.clone());
     let cache_path = cache.map(|mut p| {
-      let key_re = Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("re did not compile");
       let haystack = &tile_loader.url_template;
-      let res = key_re.replace(haystack, "*");
+      let res = API_KEY_REGEX.replace(haystack, "*");
       let mut hasher = DefaultHasher::new();
       res.hash(&mut hasher);
       p.push(hasher.finish().to_string());
@@ -496,8 +535,7 @@ impl Default for CachedTileLoader {
 
     let tile_loader = TileDownloader::from_env();
     let cache_path = base_path.map(|mut p| {
-      let key_re = Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("re did not compile");
-      let res = key_re.replace(&tile_loader.url_template, "*");
+      let res = API_KEY_REGEX.replace(&tile_loader.url_template, "*");
       let mut hasher = DefaultHasher::new();
       res.hash(&mut hasher);
       p.push(hasher.finish().to_string());

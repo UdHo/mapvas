@@ -16,7 +16,7 @@ use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
 use layer::Layer;
-use log::debug;
+use log::{debug, warn};
 
 use super::{
   coordinates::{BoundingBox, PixelPosition},
@@ -216,7 +216,10 @@ impl Map {
   }
 
   fn show_bounding_box(&mut self, rect: Rect) {
-    let layer_guard = self.layers.try_lock().expect("Failed to lock layers");
+    let Ok(layer_guard) = self.layers.try_lock() else {
+      warn!("Failed to lock layers for bounding box calculation");
+      return;
+    };
     let mut bb = layer_guard
       .iter()
       .filter_map(|l| l.bounding_box())
@@ -270,7 +273,11 @@ impl Map {
   fn paste(&self) {
     let sender = self.remote.layer.clone();
     rayon::spawn(move || {
-      if let Ok(text) = Clipboard::new().expect("clipboard").get_text() {
+      let Ok(mut clipboard) = Clipboard::new() else {
+        warn!("Failed to access clipboard");
+        return;
+      };
+      if let Ok(text) = clipboard.get_text() {
         let mut json = JsonParser::new();
         let _ = json.parse_line(&text);
         JsonParser::new().parse_line(&text);
@@ -838,7 +845,12 @@ impl MapLayerHolderImpl {
 
 impl MapLayerHolder for MapLayerHolderImpl {
   fn get_reader(&self) -> Box<dyn MapLayerReader + '_> {
-    Box::new(MapLayerReaderImpl(self.0.lock().unwrap()))
+    Box::new(MapLayerReaderImpl(
+      self
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner),
+    ))
   }
 }
 

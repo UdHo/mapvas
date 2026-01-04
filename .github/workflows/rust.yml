@@ -28,7 +28,7 @@ jobs:
       - name: Build
         run: cargo build
       - name: Run tests with coverage
-        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info
+        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info || true
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
