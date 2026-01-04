@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Auto parser for paste functionality. Supports multiple formats.
+
 ## 0.2.6
 
 - new formats (.gpx, .geojson, .kml) and auto parser with type detection
