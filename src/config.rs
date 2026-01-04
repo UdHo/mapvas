@@ -100,7 +100,7 @@ impl Config {
     let commands_dir = config_path.as_ref().map(|p| p.join("commands"));
 
     Self {
-      config_path: config_path.clone(),
+      config_path,
       tile_provider: tile_urls,
       tile_cache_dir,
       commands_dir,
@@ -193,14 +193,15 @@ impl Config {
 impl Default for Config {
   fn default() -> Self {
     let config_path = home_dir().map(|p| p.join(".config").join("mapvas"));
+    let commands_dir = config_path.as_ref().map(|p| p.join("commands"));
     Self {
-      config_path: config_path.clone(),
+      config_path,
       tile_provider: vec![TileProvider {
         name: "OpenStreetMap".to_string(),
         url: DEFAULT_TILE_URL.to_string(),
       }],
       tile_cache_dir: home_dir().map(|p| p.join(".mapvas_tile_cache")),
-      commands_dir: config_path.map(|p| p.join("commands")),
+      commands_dir,
       search_providers: vec![
         SearchProviderConfig::Coordinate,
         SearchProviderConfig::Nominatim { base_url: None },

@@ -4,13 +4,21 @@ use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
+
+// Compile regexes once at first use
+static DECIMAL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"^\s*(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)\s*$")
+    .expect("DECIMAL_REGEX pattern is valid")
+});
+
+static DMS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"^\s*(\d+)°\s*(\d+)'\s*([NS])\s*[,\s]\s*(\d+)°\s*(\d+)'\s*([EW])\s*$")
+    .expect("DMS_REGEX pattern is valid")
+});
 
 /// Built-in coordinate parser that handles various coordinate formats
-pub struct CoordinateParser {
-  // Common coordinate patterns
-  decimal_regex: Regex,
-  dms_regex: Regex,
-}
+pub struct CoordinateParser;
 
 impl Default for CoordinateParser {
   fn default() -> Self {
@@ -21,13 +29,7 @@ impl Default for CoordinateParser {
 impl CoordinateParser {
   #[must_use]
   pub fn new() -> Self {
-    Self {
-      // Matches: "52.5, 13.4" or "52.5,13.4" or "52.5 13.4"
-      decimal_regex: Regex::new(r"^\s*(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)\s*$").unwrap(),
-      // Matches: "52°30'N 13°24'E" or "52° 30' N, 13° 24' E"
-      dms_regex: Regex::new(r"^\s*(\d+)°\s*(\d+)'\s*([NS])\s*[,\s]\s*(\d+)°\s*(\d+)'\s*([EW])\s*$")
-        .unwrap(),
-    }
+    Self
   }
 
   /// Try to parse a coordinate from various formats
@@ -36,7 +38,7 @@ impl CoordinateParser {
     log::debug!("Attempting to parse coordinate: '{input}'");
 
     // Try decimal degrees first
-    if let Some(coord) = self.parse_decimal(input) {
+    if let Some(coord) = Self::parse_decimal(input) {
       log::debug!(
         "Successfully parsed decimal coordinate: {:.4}, {:.4}",
         coord.lat,
@@ -52,7 +54,7 @@ impl CoordinateParser {
     }
 
     // Try degrees/minutes/seconds
-    if let Some(coord) = self.parse_dms(input) {
+    if let Some(coord) = Self::parse_dms(input) {
       return Some(SearchResult {
         name: format!("{:.4}°, {:.4}°", coord.lat, coord.lon),
         coordinate: coord,
@@ -66,8 +68,8 @@ impl CoordinateParser {
     None
   }
 
-  fn parse_decimal(&self, input: &str) -> Option<WGS84Coordinate> {
-    let caps = self.decimal_regex.captures(input)?;
+  fn parse_decimal(input: &str) -> Option<WGS84Coordinate> {
+    let caps = DECIMAL_REGEX.captures(input)?;
 
     let lat: f32 = caps.get(1)?.as_str().parse().ok()?;
     let lon: f32 = caps.get(2)?.as_str().parse().ok()?;
@@ -80,8 +82,8 @@ impl CoordinateParser {
     }
   }
 
-  fn parse_dms(&self, input: &str) -> Option<WGS84Coordinate> {
-    let caps = self.dms_regex.captures(input)?;
+  fn parse_dms(input: &str) -> Option<WGS84Coordinate> {
+    let caps = DMS_REGEX.captures(input)?;
 
     let lat_deg: f32 = caps.get(1)?.as_str().parse().ok()?;
     let lat_min: f32 = caps.get(2)?.as_str().parse().ok()?;

@@ -55,9 +55,13 @@ fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
     res.push(Box::new(std::io::stdin().lock()));
   } else {
     for f in paths {
-      res.push(Box::new(BufReader::new(
-        File::open(f).expect("File exists"),
-      )));
+      match File::open(f) {
+        Ok(file) => res.push(Box::new(BufReader::new(file))),
+        Err(e) => {
+          eprintln!("Error: Failed to open file '{}': {}", f.display(), e);
+          std::process::exit(1);
+        }
+      }
     }
   }
   res
@@ -86,9 +90,10 @@ async fn main() {
       // Use content-based auto-parser for stdin
       log::info!("Auto parser analyzing stdin content...");
       let mut content = String::new();
-      std::io::stdin()
-        .read_to_string(&mut content)
-        .expect("Failed to read from stdin");
+      if let Err(e) = std::io::stdin().read_to_string(&mut content) {
+        eprintln!("Error: Failed to read from stdin: {e}");
+        std::process::exit(1);
+      }
 
       let content_parser = mapvas::parser::ContentAutoParser::new(content)
         .with_label_pattern(&args.label_pattern)
@@ -138,9 +143,16 @@ async fn main() {
   }
 
   if !args.screenshot.is_empty() {
-    sender.send_event(MapEvent::Screenshot(
-      std::path::absolute(Path::new(&args.screenshot.trim())).unwrap(),
-    ));
+    match std::path::absolute(Path::new(&args.screenshot.trim())) {
+      Ok(path) => sender.send_event(MapEvent::Screenshot(path)),
+      Err(e) => {
+        eprintln!(
+          "Error: Invalid screenshot path '{}': {}",
+          args.screenshot, e
+        );
+        std::process::exit(1);
+      }
+    }
   }
 
   sender.finalize().await;

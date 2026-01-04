@@ -157,11 +157,23 @@ impl MapSender {
   }
 
   pub fn send_event(&self, event: MapEvent) {
-    self.sender.send(Some(event)).inspect_err(|e| warn!("Failed to send event to queue: {e}")).ok();
+    self
+      .sender
+      .send(Some(event))
+      .inspect_err(|e| warn!("Failed to send event to queue: {e}"))
+      .ok();
   }
 
   pub async fn finalize(self) {
-    self.sender.send(None).inspect_err(|e| warn!("Failed to send finalize signal: {e}")).ok();
-    self.inner_join_handle.await.inspect_err(|e| error!("Sender task failed: {e}")).ok();
+    self
+      .sender
+      .send(None)
+      .inspect_err(|e| warn!("Failed to send finalize signal: {e}"))
+      .ok();
+    self
+      .inner_join_handle
+      .await
+      .inspect_err(|e| error!("Sender task failed: {e}"))
+      .ok();
   }
 }
