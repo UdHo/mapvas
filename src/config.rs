@@ -42,10 +42,37 @@ impl HeadingStyle {
   }
 }
 
+/// Type of tile data served by a tile provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum TileType {
+  /// Raster tiles (PNG, JPEG) - rendered images from the server.
+  #[default]
+  Raster,
+  /// Vector tiles (MVT/PBF) - raw geometry data rendered client-side.
+  Vector,
+}
+
+impl TileType {
+  #[must_use]
+  pub fn name(&self) -> &'static str {
+    match self {
+      TileType::Raster => "Raster",
+      TileType::Vector => "Vector",
+    }
+  }
+
+  #[must_use]
+  pub fn all() -> &'static [TileType] {
+    &[TileType::Raster, TileType::Vector]
+  }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TileProvider {
   pub name: String,
   pub url: String,
+  #[serde(default)]
+  pub tile_type: TileType,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,6 +86,8 @@ pub struct Config {
 }
 
 const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
+const DEFAULT_VECTOR_TILE_URL: &str =
+  "https://tiles.openfreemap.org/planet/20251231_001001_pt/{zoom}/{x}/{y}.pbf";
 
 impl Config {
   #[must_use]
@@ -90,6 +119,7 @@ impl Config {
           vec![TileProvider {
             name: "ENV".to_string(),
             url: v,
+            tile_type: TileType::default(),
           }]
         });
 
@@ -196,10 +226,18 @@ impl Default for Config {
     let commands_dir = config_path.as_ref().map(|p| p.join("commands"));
     Self {
       config_path,
-      tile_provider: vec![TileProvider {
-        name: "OpenStreetMap".to_string(),
-        url: DEFAULT_TILE_URL.to_string(),
-      }],
+      tile_provider: vec![
+        TileProvider {
+          name: "OpenStreetMap".to_string(),
+          url: DEFAULT_TILE_URL.to_string(),
+          tile_type: TileType::Raster,
+        },
+        TileProvider {
+          name: "OpenFreeMap Vector (experimental)".to_string(),
+          url: DEFAULT_VECTOR_TILE_URL.to_string(),
+          tile_type: TileType::Vector,
+        },
+      ],
       tile_cache_dir: home_dir().map(|p| p.join(".mapvas_tile_cache")),
       commands_dir,
       search_providers: vec![

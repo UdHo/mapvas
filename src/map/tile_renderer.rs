@@ -1,6 +1,8 @@
 mod raster;
+mod vector;
 
 pub use raster::RasterTileRenderer;
+pub use vector::VectorTileRenderer;
 
 use egui::ColorImage;
 use thiserror::Error;

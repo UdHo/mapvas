@@ -4,13 +4,14 @@ use egui::{Color32, ColorImage, Pos2, Rect, Ui, Widget};
 use log::error;
 
 use crate::{
+  config::TileType,
   map::{
     coordinates::{
       TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
       tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
-    tile_renderer::{RasterTileRenderer, TileRenderer},
+    tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer},
   },
   profile_scope,
 };
@@ -36,7 +37,8 @@ pub struct TileLayer {
   layer_properties: LayerProperties,
   tile_source: TileSource,
   coordinate_display_mode: CoordinateDisplayMode,
-  renderer: Arc<dyn TileRenderer>,
+  raster_renderer: Arc<dyn TileRenderer>,
+  vector_renderer: Arc<dyn TileRenderer>,
 }
 
 const NAME: &str = "Tile Layer";
@@ -58,7 +60,8 @@ impl TileLayer {
       layer_properties: LayerProperties::default(),
       tile_source: TileSource::All,
       coordinate_display_mode: CoordinateDisplayMode::Off,
-      renderer: Arc::new(RasterTileRenderer::new()),
+      raster_renderer: Arc::new(RasterTileRenderer::new()),
+      vector_renderer: Arc::new(VectorTileRenderer::new()),
     }
   }
 
@@ -184,6 +187,13 @@ impl TileLayer {
     self.all_tile_loader[self.tile_loader_index].clone()
   }
 
+  fn renderer_for_tile_type(&self, tile_type: TileType) -> Arc<dyn TileRenderer> {
+    match tile_type {
+      TileType::Raster => self.raster_renderer.clone(),
+      TileType::Vector => self.vector_renderer.clone(),
+    }
+  }
+
   fn get_tile(&self, tile: Tile) {
     self.get_tile_with_priority(tile, TilePriority::Current);
   }
@@ -193,12 +203,26 @@ impl TileLayer {
     let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
     let tile_source = self.tile_source;
-    let renderer = self.renderer.clone();
+    let tile_type = tile_loader.tile_type();
+    let renderer = self.renderer_for_tile_type(tile_type);
+    log::info!(
+      "Loading tile {:?} with {} renderer (tile_type: {:?})",
+      tile,
+      renderer.name(),
+      tile_type
+    );
     if !self.loaded_tiles.contains_key(&tile) {
       tokio::spawn(async move {
         let tile_data = tile_loader
           .tile_data_with_priority(&tile, tile_source, priority)
           .await;
+        match &tile_data {
+          Ok(data) => log::info!("Tile {:?} data received: {} bytes", tile, data.len()),
+          Err(e) => {
+            log::info!("Failed to fetch tile {tile:?}: {e}");
+            return;
+          }
+        }
         if let Ok(tile_data) = tile_data {
           let egui_image = match renderer.render(&tile, &tile_data) {
             Ok(image) => image,
