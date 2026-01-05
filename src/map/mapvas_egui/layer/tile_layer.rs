@@ -10,6 +10,7 @@ use crate::{
       tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+    tile_renderer::{RasterTileRenderer, TileRenderer},
   },
   profile_scope,
 };
@@ -35,6 +36,7 @@ pub struct TileLayer {
   layer_properties: LayerProperties,
   tile_source: TileSource,
   coordinate_display_mode: CoordinateDisplayMode,
+  renderer: Arc<dyn TileRenderer>,
 }
 
 const NAME: &str = "Tile Layer";
@@ -56,6 +58,7 @@ impl TileLayer {
       layer_properties: LayerProperties::default(),
       tile_source: TileSource::All,
       coordinate_display_mode: CoordinateDisplayMode::Off,
+      renderer: Arc::new(RasterTileRenderer::new()),
     }
   }
 
@@ -190,31 +193,20 @@ impl TileLayer {
     let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
     let tile_source = self.tile_source;
+    let renderer = self.renderer.clone();
     if !self.loaded_tiles.contains_key(&tile) {
       tokio::spawn(async move {
-        let image_data = tile_loader
+        let tile_data = tile_loader
           .tile_data_with_priority(&tile, tile_source, priority)
           .await;
-        if let Ok(image_data) = image_data {
-          let img_reader =
-            match image::ImageReader::new(std::io::Cursor::new(image_data)).with_guessed_format() {
-              Ok(reader) => reader,
-              Err(e) => {
-                error!("Failed to create image reader for {tile:?}: {e}");
-                return;
-              }
-            };
-          let img = match img_reader.decode() {
+        if let Ok(tile_data) = tile_data {
+          let egui_image = match renderer.render(&tile, &tile_data) {
             Ok(image) => image,
             Err(e) => {
-              error!("Failed to decode image for {tile:?}: {e}");
+              error!("Failed to render tile {tile:?}: {e}");
               return;
             }
           };
-          let size = [img.width() as _, img.height() as _];
-          let image_buffer = img.to_rgba8();
-          let pixel = image_buffer.as_flat_samples();
-          let egui_image = egui::ColorImage::from_rgba_unmultiplied(size, pixel.as_slice());
           let _ = sender
             .send((tile, egui_image))
             .inspect_err(|e| error!("Failed to send tile: {e}"));
