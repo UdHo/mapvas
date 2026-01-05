@@ -2,3 +2,8 @@
 .DS_Store
 .claude
 CLAUDE.md
+
+# Snapshot test temporary files (egui_kittest)
+*.new.png
+*.diff.png
+*.old.png
