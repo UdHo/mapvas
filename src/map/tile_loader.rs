@@ -1,4 +1,4 @@
-use crate::config::TileProvider;
+use crate::config::{TileProvider, TileType};
 use crate::map::coordinates::{Tile, TilePriority};
 use anyhow::Result;
 use log::{debug, error, trace};
@@ -100,14 +100,19 @@ pub trait TileLoader {
 #[derive(Debug, Clone)]
 struct TileCache {
   base_path: Option<PathBuf>,
+  tile_type: TileType,
 }
 
 impl TileCache {
   fn path(&self, tile: &Tile) -> Option<PathBuf> {
+    let ext = match self.tile_type {
+      TileType::Raster => "png",
+      TileType::Vector => "pbf",
+    };
     self
       .base_path
       .clone()
-      .map(|b| b.join(format!("{}_{}_{}.png", tile.zoom, tile.x, tile.y)))
+      .map(|b| b.join(format!("{}_{}_{}.{}", tile.zoom, tile.x, tile.y, ext)))
   }
 
   fn cache_tile(&self, tile: &Tile, data: &[u8]) {
@@ -425,6 +430,14 @@ impl TileLoader for TileDownloader {
           .body_bytes()
           .await
           .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })
+          .and_then(|data| {
+            if data.is_empty() {
+              error!("Tile {tile:?} has empty response");
+              Err(TileLoaderError::TileNotAvailable { tile: *tile })
+            } else {
+              Ok(data)
+            }
+          })
       } else {
         self
           .download_manager
@@ -451,13 +464,18 @@ impl TileLoader for TileDownloader {
 
 #[derive(Debug)]
 pub struct CachedTileLoader {
-  tile_cache: TileCache,
-  tile_loader: TileDownloader,
+  cache: TileCache,
+  loader: TileDownloader,
+  format: TileType,
 }
 
 impl CachedTileLoader {
   pub fn name(&self) -> &str {
-    self.tile_loader.name()
+    self.loader.name()
+  }
+
+  pub fn tile_type(&self) -> TileType {
+    self.format
   }
 
   pub fn from_config(config: &crate::config::Config) -> impl Iterator<Item = Self> {
@@ -467,8 +485,8 @@ impl CachedTileLoader {
       .map(|url| CachedTileLoader::from_url(url, config.tile_cache_dir.clone()))
   }
 
-  fn from_url(url: &TileProvider, cache: Option<PathBuf>) -> Self {
-    let tile_loader = TileDownloader::from_url(&url.url, url.name.clone());
+  fn from_url(provider: &TileProvider, cache: Option<PathBuf>) -> Self {
+    let tile_loader = TileDownloader::from_url(&provider.url, provider.name.clone());
     let cache_path = cache.map(|mut p| {
       let haystack = &tile_loader.url_template;
       let res = API_KEY_REGEX.replace(haystack, "*");
@@ -480,17 +498,20 @@ impl CachedTileLoader {
 
     Self::create_cache(cache_path.as_ref());
 
+    let tile_type = provider.tile_type;
     let tile_cache = TileCache {
       base_path: cache_path,
+      tile_type,
     };
     CachedTileLoader {
-      tile_cache,
-      tile_loader,
+      cache: tile_cache,
+      loader: tile_loader,
+      format: tile_type,
     }
   }
 
   pub async fn get_from_cache(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
-    self.tile_cache.tile_data(tile, tile_source).await
+    self.cache.tile_data(tile, tile_source).await
   }
 
   fn create_cache(cache_path: Option<&PathBuf>) {
@@ -510,12 +531,12 @@ impl CachedTileLoader {
     priority: TilePriority,
   ) -> Result<TileData> {
     match self
-      .tile_loader
+      .loader
       .tile_data_with_priority(tile, tile_source, priority)
       .await
     {
       Ok(data) => {
-        self.tile_cache.cache_tile(tile, &data);
+        self.cache.cache_tile(tile, &data);
         match data.len() {
           0..=100 => Err(TileLoaderError::TileNotAvailable { tile: *tile }.into()),
           _ => Ok(data),
@@ -545,11 +566,13 @@ impl Default for CachedTileLoader {
     Self::create_cache(cache_path.as_ref());
     let tile_cache = TileCache {
       base_path: cache_path,
+      tile_type: TileType::Raster,
     };
 
     CachedTileLoader {
-      tile_cache,
-      tile_loader,
+      cache: tile_cache,
+      loader: tile_loader,
+      format: TileType::Raster,
     }
   }
 }

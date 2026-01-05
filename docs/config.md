@@ -9,11 +9,13 @@ MapVas stores configuration at `~/.config/mapvas/config.json` (created on first 
   "tile_provider": [
     {
       "name": "OpenStreetMap",
-      "url": "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+      "url": "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+      "tile_type": "Raster"
     },
     {
-      "name": "TomTom",
-      "url": "https://api.tomtom.com/map/1/tile/basic/main/{zoom}/{x}/{y}.png?tileSize=512&key=YOUR_KEY"
+      "name": "OpenFreeMap Vector",
+      "url": "https://tiles.openfreemap.org/planet/20251231_001001_pt/{zoom}/{x}/{y}.pbf",
+      "tile_type": "Vector"
     }
   ],
   "tile_cache_dir": "/Users/username/.mapvas_tile_cache",
@@ -30,10 +32,19 @@ MapVas stores configuration at `~/.config/mapvas/config.json` (created on first 
 
 Add multiple tile providers in the config. Switch between them in the sidebar settings.
 
+**Fields:**
+- `name` - Display name for the provider
+- `url` - Tile URL template
+- `tile_type` - Either `"Raster"` (default) or `"Vector"`
+
 **URL placeholders:**
 - `{zoom}` - Zoom level
 - `{x}` - Tile X coordinate
 - `{y}` - Tile Y coordinate
+
+**Tile Types:**
+- `Raster` - PNG/JPEG tiles (default, used by OpenStreetMap)
+- `Vector` - MVT/PBF tiles (Mapbox Vector Tiles, rendered client-side with OSM-style colors)
 
 ## Tile Caching
 

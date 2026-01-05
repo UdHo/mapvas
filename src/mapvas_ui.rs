@@ -4,7 +4,7 @@ use egui::Widget as _;
 
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
-  config::{Config, HeadingStyle, TileProvider},
+  config::{Config, HeadingStyle, TileProvider, TileType},
   map::mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
   profile_scope,
   remote::Remote,
@@ -790,6 +790,7 @@ struct SettingsDialog {
   selected_tab: SettingsTab,
   new_provider_name: String,
   new_provider_url: String,
+  new_provider_tile_type: TileType,
   cache_directory: String,
   screenshot_path: String,
   settings_changed: bool,
@@ -825,6 +826,7 @@ impl SettingsDialog {
       selected_tab: SettingsTab::General,
       new_provider_name: String::new(),
       new_provider_url: String::new(),
+      new_provider_tile_type: TileType::default(),
       cache_directory,
       screenshot_path,
       settings_changed: false,
@@ -968,6 +970,7 @@ impl SettingsDialog {
       for (i, provider) in self.tile_providers.iter().enumerate() {
         ui.horizontal(|ui| {
           ui.label(&provider.name);
+          ui.label(format!("[{}]", provider.tile_type.name()));
           ui.label("-");
           ui.small(&provider.url);
           if ui.small_button("🗑").clicked() && self.tile_providers.len() > 1 {
@@ -994,14 +997,30 @@ impl SettingsDialog {
         ui.label("URL:");
         ui.text_edit_singleline(&mut self.new_provider_url);
       });
+      ui.horizontal(|ui| {
+        ui.label("Type:");
+        egui::ComboBox::from_id_salt("new_provider_tile_type")
+          .selected_text(self.new_provider_tile_type.name())
+          .show_ui(ui, |ui| {
+            for tile_type in TileType::all() {
+              ui.selectable_value(
+                &mut self.new_provider_tile_type,
+                *tile_type,
+                tile_type.name(),
+              );
+            }
+          });
+      });
       ui.small("Use {x}, {y}, {zoom} as placeholders (e.g., https://tile.openstreetmap.org/{zoom}/{x}/{y}.png)");
       if ui.button("Add Provider").clicked() && !self.new_provider_name.is_empty() && !self.new_provider_url.is_empty() {
         self.tile_providers.push(TileProvider {
           name: self.new_provider_name.clone(),
           url: self.new_provider_url.clone(),
+          tile_type: self.new_provider_tile_type,
         });
         self.new_provider_name.clear();
         self.new_provider_url.clear();
+        self.new_provider_tile_type = TileType::default();
         self.settings_changed = true;
       }
     });
