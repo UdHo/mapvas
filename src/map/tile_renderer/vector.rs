@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use egui::ColorImage;
-use log::debug;
 use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use super::{TileRenderError, TileRenderer};
@@ -34,7 +33,6 @@ impl VectorTileRenderer {
     Self
   }
 
-  #[expect(clippy::too_many_lines)]
   fn render_layer(
     pixmap: &mut Pixmap,
     reader: &mvt_reader::Reader,
@@ -56,93 +54,65 @@ impl VectorTileRenderer {
 
     for feature in features {
       feature_count += 1;
+
+      // Get the feature class/type for better color selection
+      let feature_class = feature
+        .properties
+        .as_ref()
+        .and_then(|props| props.get("class"))
+        .or_else(|| {
+          feature
+            .properties
+            .as_ref()
+            .and_then(|props| props.get("type"))
+        })
+        .and_then(|v| {
+          if let mvt_reader::feature::Value::String(s) = v {
+            Some(s.as_str())
+          } else {
+            None
+          }
+        })
+        .unwrap_or("");
+
       match &feature.geometry {
         geo_types::Geometry::Polygon(polygon) => {
           polygon_count += 1;
           if polygon_count <= 2 {
-            let coords: Vec<_> = polygon.exterior().coords().take(3).collect();
             log::info!(
-              "Layer '{}' polygon {}: {} coords, first 3: {:?}",
+              "Layer '{}' polygon {} class='{}': {} coords",
               layer_name,
               polygon_count,
-              polygon.exterior().coords().count(),
-              coords
+              feature_class,
+              polygon.exterior().coords().count()
             );
           }
-          Self::render_polygon(pixmap, polygon, layer_name, scale);
+          Self::render_polygon_with_class(pixmap, polygon, layer_name, feature_class, scale);
         }
         geo_types::Geometry::MultiPolygon(multi) => {
           for polygon in multi.iter() {
             polygon_count += 1;
-            if polygon_count <= 2 {
-              let coords: Vec<_> = polygon.exterior().coords().take(3).collect();
-              log::info!(
-                "Layer '{}' multipolygon {}: {} coords, first 3: {:?}",
-                layer_name,
-                polygon_count,
-                polygon.exterior().coords().count(),
-                coords
-              );
-            }
-            Self::render_polygon(pixmap, polygon, layer_name, scale);
+            Self::render_polygon_with_class(pixmap, polygon, layer_name, feature_class, scale);
           }
         }
         geo_types::Geometry::LineString(line) => {
           line_count += 1;
-          if line_count <= 2 {
-            let coords: Vec<_> = line.coords().take(3).collect();
-            log::info!(
-              "Layer '{}' line {}: {} coords, first 3: {:?}",
-              layer_name,
-              line_count,
-              line.coords().count(),
-              coords
-            );
-          }
-          Self::render_linestring(pixmap, line, layer_name, scale);
+          Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
         }
         geo_types::Geometry::MultiLineString(multi) => {
           for line in multi.iter() {
             line_count += 1;
-            if line_count <= 2 {
-              let coords: Vec<_> = line.coords().take(3).collect();
-              log::info!(
-                "Layer '{}' multiline {}: {} coords, first 3: {:?}",
-                layer_name,
-                line_count,
-                line.coords().count(),
-                coords
-              );
-            }
-            Self::render_linestring(pixmap, line, layer_name, scale);
+            Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
           }
         }
         geo_types::Geometry::Point(point) => {
           point_count += 1;
-          if point_count <= 2 {
-            log::info!(
-              "Layer '{}' point {}: ({}, {})",
-              layer_name,
-              point_count,
-              point.x(),
-              point.y()
-            );
-          }
-          Self::render_point(pixmap, *point, layer_name, scale);
+          Self::render_point_with_class(pixmap, *point, layer_name, feature_class, scale);
         }
         geo_types::Geometry::MultiPoint(multi) => {
           for point in multi.iter() {
             point_count += 1;
-            if point_count <= 2 {
-              log::info!(
-                "Layer '{}' multipoint {}: ({}, {})",
-                layer_name,
-                point_count,
-                point.x(),
-                point.y()
-              );
-            }
-            Self::render_point(pixmap, *point, layer_name, scale);
+            Self::render_point_with_class(pixmap, *point, layer_name, feature_class, scale);
           }
         }
         other => {
@@ -159,13 +129,23 @@ impl VectorTileRenderer {
     );
   }
 
-  fn get_fill_color(layer_name: &str) -> Option<Color> {
-    match layer_name {
-      "water" | "waterway" => Some(*WATER_COLOR),
-      "landcover" | "landuse" => Some(*LAND_COLOR),
-      "park" | "green" => Some(*PARK_COLOR),
+  fn get_fill_color(layer_name: &str, feature_class: &str) -> Option<Color> {
+    // Check feature class first for specific types
+    match feature_class {
+      // Water features
+      "water" | "ocean" | "bay" | "lake" | "river" | "stream" => Some(*WATER_COLOR),
+      // Green/park features
+      "grass" | "forest" | "wood" | "park" | "garden" | "meadow" | "scrub" => Some(*PARK_COLOR),
+      // Buildings
       "building" => Some(*BUILDING_COLOR),
-      _ => None,
+      // Default to layer-based coloring
+      _ => match layer_name {
+        "water" | "waterway" => Some(*WATER_COLOR),
+        "landcover" | "landuse" => Some(*LAND_COLOR),
+        "park" | "green" => Some(*PARK_COLOR),
+        "building" => Some(*BUILDING_COLOR),
+        _ => None,
+      },
     }
   }
 
@@ -185,13 +165,14 @@ impl VectorTileRenderer {
     }
   }
 
-  fn render_polygon(
+  fn render_polygon_with_class(
     pixmap: &mut Pixmap,
     polygon: &geo_types::Polygon<f32>,
     layer_name: &str,
+    feature_class: &str,
     scale: f32,
   ) {
-    let Some(color) = Self::get_fill_color(layer_name) else {
+    let Some(color) = Self::get_fill_color(layer_name, feature_class) else {
       return;
     };
 
@@ -225,10 +206,11 @@ impl VectorTileRenderer {
     }
   }
 
-  fn render_linestring(
+  fn render_linestring_with_class(
     pixmap: &mut Pixmap,
     line: &geo_types::LineString<f32>,
     layer_name: &str,
+    _feature_class: &str,
     scale: f32,
   ) {
     if line.coords().count() < 2 {
@@ -259,10 +241,11 @@ impl VectorTileRenderer {
     }
   }
 
-  fn render_point(
+  fn render_point_with_class(
     pixmap: &mut Pixmap,
     point: geo_types::Point<f32>,
     _layer_name: &str,
+    _feature_class: &str,
     scale: f32,
   ) {
     let x = point.x() * scale;
@@ -289,9 +272,9 @@ impl VectorTileRenderer {
 
 impl TileRenderer for VectorTileRenderer {
   fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
+    let start = std::time::Instant::now();
     log::info!(
-      "VectorTileRenderer::render called for {:?}, data size: {} bytes",
-      tile,
+      "VectorTileRenderer::render called for {tile:?}, data size: {} bytes",
       data.len()
     );
 
@@ -300,7 +283,8 @@ impl TileRenderer for VectorTileRenderer {
       TileRenderError::ParseError(format!("Failed to parse MVT for {tile:?}: {e}"))
     })?;
 
-    log::info!("MVT parsed successfully for {tile:?}");
+    let parse_time = start.elapsed();
+    log::info!("MVT parsed successfully for {tile:?} in {parse_time:?}");
 
     let mut pixmap = Pixmap::new(TILE_SIZE, TILE_SIZE)
       .ok_or_else(|| TileRenderError::ParseError("Failed to create pixmap".to_string()))?;
@@ -320,13 +304,13 @@ impl TileRenderer for VectorTileRenderer {
       layer_names
     );
 
-    // Render layers in a sensible order: land, water, parks, buildings, roads
+    // Render layers in a sensible order: land, parks, water (on top), buildings, roads
     let layer_order = [
       "landcover",
       "landuse",
-      "water",
-      "waterway",
       "park",
+      "water",      // Water should render after parks to cover green areas in ocean
+      "waterway",
       "building",
       "transportation",
       "road",
@@ -335,7 +319,7 @@ impl TileRenderer for VectorTileRenderer {
 
     for layer_name in &layer_order {
       if let Some(index) = layer_names.iter().position(|n| n == *layer_name) {
-        debug!("Rendering layer '{layer_name}' at index {index}");
+        log::info!("Rendering ordered layer '{layer_name}' at index {index}");
         Self::render_layer(&mut pixmap, &reader, index, layer_name);
       }
     }
@@ -343,7 +327,7 @@ impl TileRenderer for VectorTileRenderer {
     // Render any remaining layers not in our order
     for (index, name) in layer_names.iter().enumerate() {
       if !layer_order.contains(&name.as_str()) {
-        debug!("Rendering extra layer '{name}' at index {index}");
+        log::info!("Rendering extra layer '{name}' at index {index}");
         Self::render_layer(&mut pixmap, &reader, index, name);
       }
     }
@@ -351,6 +335,12 @@ impl TileRenderer for VectorTileRenderer {
     // Convert pixmap to ColorImage
     let pixels = pixmap.data();
     let size = [TILE_SIZE as usize, TILE_SIZE as usize];
+
+    let total_time = start.elapsed();
+    log::info!(
+      "Tile {tile:?} rendered in {total_time:?} (parse: {parse_time:?}, render: {:?})",
+      total_time - parse_time
+    );
 
     Ok(ColorImage::from_rgba_unmultiplied(size, pixels))
   }

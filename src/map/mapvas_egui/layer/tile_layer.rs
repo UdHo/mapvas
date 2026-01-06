@@ -279,6 +279,12 @@ impl Layer for TileLayer {
     profile_scope!("TileLayer::draw");
     self.collect_new_tile_data(ui);
     if self.tile_loader_index != self.tile_loader_old_index {
+      log::info!(
+        "Provider switched from {} to {}, clearing {} tiles",
+        self.all_tile_loader[self.tile_loader_old_index].name(),
+        self.all_tile_loader[self.tile_loader_index].name(),
+        self.loaded_tiles.len()
+      );
       self.loaded_tiles.clear();
       self.tile_loader_old_index = self.tile_loader_index;
     }
