@@ -18,6 +18,8 @@ impl RasterTileRenderer {
 
 impl TileRenderer for RasterTileRenderer {
   fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
+    let start = std::time::Instant::now();
+
     let img_reader =
       image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().map_err(|e| {
         TileRenderError::ImageDecode(format!("Failed to create image reader for {tile:?}: {e}"))
@@ -30,6 +32,9 @@ impl TileRenderer for RasterTileRenderer {
     let size = [img.width() as usize, img.height() as usize];
     let image_buffer = img.to_rgba8();
     let pixels = image_buffer.as_flat_samples();
+
+    let total_time = start.elapsed();
+    log::info!("Tile {tile:?} (raster) decoded in {total_time:?}");
 
     Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
   }
