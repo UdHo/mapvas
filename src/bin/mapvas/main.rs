@@ -18,15 +18,37 @@ fn main() -> eframe::Result {
   // Initialize profiling
   profiling::init_profiling();
 
-  // Tokio runtime.
-  let rt = match tokio::runtime::Runtime::new() {
+  // Create dedicated runtime for HTTP server (high priority, isolated)
+  let server_rt = match tokio::runtime::Builder::new_multi_thread()
+    .worker_threads(2)
+    .thread_name("mapcat-server")
+    .enable_all()
+    .build()
+  {
     Ok(rt) => rt,
     Err(e) => {
-      eprintln!("Error: Failed to create tokio runtime: {e}");
+      eprintln!("Error: Failed to create server runtime: {e}");
       std::process::exit(1);
     }
   };
-  let _enter = rt.enter();
+
+  // Create separate runtime for tile operations (can be saturated without affecting server)
+  let tile_rt = match tokio::runtime::Builder::new_multi_thread()
+    .worker_threads(4)
+    .max_blocking_threads(32)  // Ensure blocking pool can handle concurrent renders
+    .thread_name("tile-loader")
+    .enable_all()
+    .build()
+  {
+    Ok(rt) => rt,
+    Err(e) => {
+      eprintln!("Error: Failed to create tile runtime: {e}");
+      std::process::exit(1);
+    }
+  };
+
+  // Enter tile runtime globally (used by ambient tokio::spawn calls)
+  let _tile_enter = tile_rt.enter();
 
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder {
@@ -47,7 +69,7 @@ fn main() -> eframe::Result {
 
       let config = Config::new();
       let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
-      spawn_remote_runner(rt, remote.clone());
+      spawn_remote_runner(server_rt, remote.clone());
       Ok(Box::new(MapApp::new(map, remote, data_holder, config)))
     }),
   )

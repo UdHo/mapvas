@@ -1017,6 +1017,7 @@ impl SettingsDialog {
           name: self.new_provider_name.clone(),
           url: self.new_provider_url.clone(),
           tile_type: self.new_provider_tile_type,
+          max_zoom: None,
         });
         self.new_provider_name.clear();
         self.new_provider_url.clear();

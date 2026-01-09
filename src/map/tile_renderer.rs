@@ -37,6 +37,24 @@ pub trait TileRenderer: Send + Sync {
   /// Returns `TileRenderError` if the tile data cannot be decoded or rendered.
   fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError>;
 
+  /// Render raw tile data at a specific scale factor.
+  ///
+  /// # Arguments
+  /// * `tile` - The tile coordinates and zoom level
+  /// * `data` - Raw tile data bytes
+  /// * `scale` - Scale factor (e.g., 2 for 2x resolution, resulting in 512x512 for standard 256x256 tiles)
+  ///
+  /// # Returns
+  /// A `ColorImage` at the scaled resolution, or an error.
+  ///
+  /// # Errors
+  /// Returns `TileRenderError` if the tile data cannot be decoded or rendered.
+  ///
+  /// Default implementation calls `render()` and ignores the scale (suitable for raster tiles).
+  fn render_scaled(&self, tile: &Tile, data: &[u8], _scale: u32) -> Result<ColorImage, TileRenderError> {
+    self.render(tile, data)
+  }
+
   /// Returns the name of this renderer for display purposes.
   fn name(&self) -> &'static str;
 }

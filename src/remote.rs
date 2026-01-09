@@ -21,6 +21,7 @@ pub async fn mapvas_remote_handler(
 
 pub fn spawn_remote_runner(runtime: tokio::runtime::Runtime, remote: Remote) {
   std::thread::spawn(move || {
+    log::info!("Mapcat server starting on dedicated runtime");
     runtime.block_on(async {
       remote_runner(remote).await;
     });
@@ -43,9 +44,11 @@ pub async fn remote_runner(remote: Remote) {
 
   tokio::spawn(async {
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
+    log::info!("Mapcat server binding to {addr}");
     let listener = tokio::net::TcpListener::bind(addr)
       .await
       .expect("Port is free.");
+    log::info!("Mapcat server listening on port {DEFAULT_PORT}");
     let _ = axum::serve(listener, app).await;
   });
 

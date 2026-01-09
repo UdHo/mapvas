@@ -467,6 +467,7 @@ pub struct CachedTileLoader {
   cache: TileCache,
   loader: TileDownloader,
   format: TileType,
+  max_zoom: u8,
 }
 
 impl CachedTileLoader {
@@ -476,6 +477,10 @@ impl CachedTileLoader {
 
   pub fn tile_type(&self) -> TileType {
     self.format
+  }
+
+  pub fn max_zoom(&self) -> u8 {
+    self.max_zoom
   }
 
   pub fn from_config(config: &crate::config::Config) -> impl Iterator<Item = Self> {
@@ -507,6 +512,7 @@ impl CachedTileLoader {
       cache: tile_cache,
       loader: tile_loader,
       format: tile_type,
+      max_zoom: provider.get_max_zoom(),
     }
   }
 
@@ -573,6 +579,7 @@ impl Default for CachedTileLoader {
       cache: tile_cache,
       loader: tile_loader,
       format: TileType::Raster,
+      max_zoom: 19, // Default for raster tiles
     }
   }
 }
