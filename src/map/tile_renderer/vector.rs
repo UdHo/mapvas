@@ -38,9 +38,11 @@ impl VectorTileRenderer {
     reader: &mvt_reader::Reader,
     layer_index: usize,
     layer_name: &str,
+    tile_size: u32,
   ) {
-    #[allow(clippy::cast_possible_truncation)] // TILE_SIZE (256) fits in u16
-    let scale = f32::from(TILE_SIZE as u16) / MVT_EXTENT;
+    let layer_start = std::time::Instant::now();
+    #[allow(clippy::cast_possible_truncation)]
+    let scale = tile_size as f32 / MVT_EXTENT;
 
     let Ok(features) = reader.get_features(layer_index) else {
       log::warn!("Failed to get features for layer '{layer_name}'");
@@ -124,8 +126,9 @@ impl VectorTileRenderer {
         }
       }
     }
+    let layer_time = layer_start.elapsed();
     log::info!(
-      "Layer '{layer_name}': {feature_count} features, {polygon_count} polygons, {line_count} lines, {point_count} points"
+      "Layer '{layer_name}': {feature_count} features ({polygon_count} polygons, {line_count} lines, {point_count} points) rendered in {layer_time:?}"
     );
   }
 
@@ -272,10 +275,17 @@ impl VectorTileRenderer {
 
 impl TileRenderer for VectorTileRenderer {
   fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
+    self.render_scaled(tile, data, 1)
+  }
+
+  fn render_scaled(&self, tile: &Tile, data: &[u8], scale: u32) -> Result<ColorImage, TileRenderError> {
     let start = std::time::Instant::now();
+    let scaled_size = TILE_SIZE * scale;
     log::info!(
-      "VectorTileRenderer::render called for {tile:?}, data size: {} bytes",
-      data.len()
+      "VectorTileRenderer::render_scaled called for {tile:?}, data size: {} bytes, scale: {scale}x ({}x{})",
+      data.len(),
+      scaled_size,
+      scaled_size
     );
 
     let reader = mvt_reader::Reader::new(data.to_vec()).map_err(|e| {
@@ -286,7 +296,7 @@ impl TileRenderer for VectorTileRenderer {
     let parse_time = start.elapsed();
     log::info!("MVT parsed successfully for {tile:?} in {parse_time:?}");
 
-    let mut pixmap = Pixmap::new(TILE_SIZE, TILE_SIZE)
+    let mut pixmap = Pixmap::new(scaled_size, scaled_size)
       .ok_or_else(|| TileRenderError::ParseError("Failed to create pixmap".to_string()))?;
 
     // Fill background
@@ -309,7 +319,7 @@ impl TileRenderer for VectorTileRenderer {
       "landcover",
       "landuse",
       "park",
-      "water",      // Water should render after parks to cover green areas in ocean
+      "water",
       "waterway",
       "building",
       "transportation",
@@ -320,7 +330,7 @@ impl TileRenderer for VectorTileRenderer {
     for layer_name in &layer_order {
       if let Some(index) = layer_names.iter().position(|n| n == *layer_name) {
         log::info!("Rendering ordered layer '{layer_name}' at index {index}");
-        Self::render_layer(&mut pixmap, &reader, index, layer_name);
+        Self::render_layer(&mut pixmap, &reader, index, layer_name, scaled_size);
       }
     }
 
@@ -328,18 +338,18 @@ impl TileRenderer for VectorTileRenderer {
     for (index, name) in layer_names.iter().enumerate() {
       if !layer_order.contains(&name.as_str()) {
         log::info!("Rendering extra layer '{name}' at index {index}");
-        Self::render_layer(&mut pixmap, &reader, index, name);
+        Self::render_layer(&mut pixmap, &reader, index, name, scaled_size);
       }
     }
 
     // Convert pixmap to ColorImage
     let pixels = pixmap.data();
-    let size = [TILE_SIZE as usize, TILE_SIZE as usize];
+    let size = [scaled_size as usize, scaled_size as usize];
 
     let total_time = start.elapsed();
     log::info!(
-      "Tile {tile:?} rendered in {total_time:?} (parse: {parse_time:?}, render: {:?})",
-      total_time - parse_time
+      "Tile {tile:?} rendered at {scale}x scale in {total_time:?} (parse: {parse_time:?}, render: {:?})",
+      total_time.checked_sub(parse_time).unwrap()
     );
 
     Ok(ColorImage::from_rgba_unmultiplied(size, pixels))

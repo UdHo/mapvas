@@ -73,6 +73,20 @@ pub struct TileProvider {
   pub url: String,
   #[serde(default)]
   pub tile_type: TileType,
+  #[serde(default)]
+  pub max_zoom: Option<u8>,
+}
+
+impl TileProvider {
+  /// Get the maximum zoom level for this provider, using defaults if not specified.
+  /// Returns 19 for raster tiles and 15 for vector tiles.
+  #[must_use]
+  pub fn get_max_zoom(&self) -> u8 {
+    self.max_zoom.unwrap_or(match self.tile_type {
+      TileType::Raster => 19,
+      TileType::Vector => 15,
+    })
+  }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -120,6 +134,7 @@ impl Config {
             name: "ENV".to_string(),
             url: v,
             tile_type: TileType::default(),
+            max_zoom: None,
           }]
         });
 
@@ -231,11 +246,13 @@ impl Default for Config {
           name: "OpenStreetMap".to_string(),
           url: DEFAULT_TILE_URL.to_string(),
           tile_type: TileType::Raster,
+          max_zoom: Some(19),
         },
         TileProvider {
           name: "OpenFreeMap Vector (experimental)".to_string(),
           url: DEFAULT_VECTOR_TILE_URL.to_string(),
           tile_type: TileType::Vector,
+          max_zoom: Some(15),
         },
       ],
       tile_cache_dir: home_dir().map(|p| p.join(".mapvas_tile_cache")),

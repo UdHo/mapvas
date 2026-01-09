@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+  collections::{HashMap, HashSet},
+  sync::{Arc, Mutex},
+};
 
 use egui::{Color32, ColorImage, Pos2, Rect, Ui, Widget};
 use log::error;
@@ -18,6 +21,44 @@ use crate::{
 
 use super::{Layer, LayerProperties};
 
+/// Splits a ColorImage into a grid of tiles for super-resolution rendering.
+///
+/// # Arguments
+/// * `image` - The source image to split (must be sized as TILE_SIZE * grid_size)
+/// * `grid_size` - Number of tiles per side (e.g., 2 for 4 tiles, 4 for 16 tiles)
+///
+/// # Returns
+/// Vector of ColorImages, ordered row by row (top-left to bottom-right)
+fn split_image_into_tiles(image: &ColorImage, grid_size: usize) -> Vec<ColorImage> {
+  let size = image.size[0];
+  let tile_size = size / grid_size;
+  let num_tiles = grid_size * grid_size;
+
+  let mut tiles = Vec::with_capacity(num_tiles);
+
+  // Create tiles row by row
+  for tile_y in 0..grid_size {
+    for tile_x in 0..grid_size {
+      let mut tile_rgba = Vec::with_capacity(tile_size * tile_size * 4);
+
+      // Extract pixels for this tile
+      for y in 0..tile_size {
+        for x in 0..tile_size {
+          let src_x = tile_x * tile_size + x;
+          let src_y = tile_y * tile_size + y;
+          let src_idx = src_y * size + src_x;
+          let color = image.pixels[src_idx];
+          tile_rgba.extend_from_slice(&[color.r(), color.g(), color.b(), color.a()]);
+        }
+      }
+
+      tiles.push(ColorImage::from_rgba_unmultiplied([tile_size, tile_size], &tile_rgba));
+    }
+  }
+
+  tiles
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoordinateDisplayMode {
   Off,
@@ -33,12 +74,14 @@ pub struct TileLayer {
   tile_loader_old_index: usize,
   all_tile_loader: Vec<Arc<CachedTileLoader>>,
   loaded_tiles: HashMap<Tile, egui::TextureHandle>,
+  in_flight_tiles: Arc<Mutex<HashSet<Tile>>>,
   ctx: egui::Context,
   layer_properties: LayerProperties,
   tile_source: TileSource,
   coordinate_display_mode: CoordinateDisplayMode,
   raster_renderer: Arc<dyn TileRenderer>,
   vector_renderer: Arc<dyn TileRenderer>,
+  render_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 const NAME: &str = "Tile Layer";
@@ -49,20 +92,44 @@ impl TileLayer {
     let all_tile_loader = CachedTileLoader::from_config(config)
       .map(Arc::new)
       .collect();
-    TileLayer {
+    let layer = TileLayer {
       receiver,
       sender,
       tile_loader_index: 0,
       tile_loader_old_index: 0,
       all_tile_loader,
       loaded_tiles: HashMap::new(),
+      in_flight_tiles: Arc::new(Mutex::new(HashSet::new())),
       ctx: clone,
       layer_properties: LayerProperties::default(),
       tile_source: TileSource::All,
       coordinate_display_mode: CoordinateDisplayMode::Off,
       raster_renderer: Arc::new(RasterTileRenderer::new()),
       vector_renderer: Arc::new(VectorTileRenderer::new()),
-    }
+      render_semaphore: Arc::new(tokio::sync::Semaphore::new(24)),
+    };
+
+    // Spawn diagnostic task to monitor in-flight tiles
+    let in_flight_diagnostic = layer.in_flight_tiles.clone();
+    let semaphore_diagnostic = layer.render_semaphore.clone();
+    tokio::spawn(async move {
+      loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let in_flight = in_flight_diagnostic.lock().unwrap();
+        let in_flight_count = in_flight.len();
+        let available_permits = semaphore_diagnostic.available_permits();
+        if in_flight_count > 0 {
+          log::warn!(
+            "DIAGNOSTIC: {} tiles in-flight, {} semaphore permits available. In-flight tiles: {:?}",
+            in_flight_count,
+            available_permits,
+            in_flight.iter().take(5).collect::<Vec<_>>()
+          );
+        }
+      }
+    });
+
+    layer
   }
 
   fn draw_tile(&self, ui: &mut Ui, rect: Rect, tile: &Tile, transform: &Transform) -> bool {
@@ -198,54 +265,322 @@ impl TileLayer {
     self.get_tile_with_priority(tile, TilePriority::Current);
   }
 
+  fn get_tile_super_resolution(&self, tile: Tile, priority: TilePriority) {
+    let max_zoom = self.tile_loader().max_zoom();
+    let zoom_diff = tile.zoom - max_zoom;
+
+    // Calculate the parent tile at max_zoom (go up zoom_diff levels)
+    let mut parent_tile = tile;
+    for _ in 0..zoom_diff {
+      parent_tile = parent_tile.parent().expect("tile should have parent");
+    }
+
+    // Calculate grid size and scale factor
+    let grid_size = 1 << zoom_diff; // 2^zoom_diff (2, 4, 8, or 16)
+    let scale = grid_size as u32;
+
+    // Calculate all child tiles we'll generate
+    let base_x = parent_tile.x << zoom_diff;
+    let base_y = parent_tile.y << zoom_diff;
+
+    let mut child_tiles = Vec::with_capacity(grid_size * grid_size);
+    for ty in 0..grid_size {
+      for tx in 0..grid_size {
+        child_tiles.push(Tile {
+          x: base_x + tx as u32,
+          y: base_y + ty as u32,
+          zoom: tile.zoom,
+        });
+      }
+    }
+
+    // Check if any of the child tiles are already loaded or in-flight
+    {
+      let in_flight = self.in_flight_tiles.lock().unwrap();
+      if child_tiles.iter().any(|t| self.loaded_tiles.contains_key(t) || in_flight.contains(t)) {
+        log::debug!("Super-resolution tiles for {parent_tile:?} already loading/loaded");
+        return;
+      }
+    }
+
+    // Mark all child tiles as in-flight
+    {
+      let mut in_flight = self.in_flight_tiles.lock().unwrap();
+      for child_tile in &child_tiles {
+        in_flight.insert(*child_tile);
+      }
+      log::info!(
+        "Super-resolution: marked {} child tiles ({}x{} grid) as in-flight for parent {parent_tile:?}",
+        child_tiles.len(),
+        grid_size,
+        grid_size
+      );
+    }
+
+    let sender = self.sender.clone();
+    let tile_loader = self.tile_loader().clone();
+    let ctx = self.ctx.clone();
+    let tile_source = self.tile_source;
+    let renderer = self.vector_renderer.clone();
+    let in_flight_tiles = self.in_flight_tiles.clone();
+    let render_semaphore = self.render_semaphore.clone();
+
+    log::info!(
+      "Super-resolution: loading parent tile {parent_tile:?} at zoom {}, will generate {grid_size}x{grid_size} tiles at zoom {}",
+      parent_tile.zoom,
+      tile.zoom
+    );
+
+    tokio::spawn(async move {
+      // Download parent tile
+      let tile_data = tile_loader
+        .tile_data_with_priority(&parent_tile, tile_source, priority)
+        .await;
+
+      match &tile_data {
+        Ok(data) => log::info!("Super-resolution: parent tile {parent_tile:?} data received: {} bytes", data.len()),
+        Err(e) => {
+          log::error!("Super-resolution: failed to fetch parent tile {parent_tile:?}: {e}");
+          let mut in_flight = in_flight_tiles.lock().unwrap();
+          for child_tile in &child_tiles {
+            in_flight.remove(child_tile);
+          }
+          return;
+        }
+      }
+
+      if let Ok(tile_data) = tile_data {
+        // Acquire render permit
+        let _permit = render_semaphore.acquire().await.unwrap();
+        log::info!("Super-resolution: acquired render permit for {parent_tile:?}");
+
+        // Render parent tile at scale (e.g., 2x, 4x, 8x, or 16x)
+        let render_start = std::time::Instant::now();
+        let blocking_task = tokio::task::spawn_blocking(move || {
+          log::info!("Super-resolution: rendering parent {parent_tile:?} at {scale}x scale");
+          let result = renderer.render_scaled(&parent_tile, &tile_data, scale);
+          log::info!("Super-resolution: finished rendering parent {parent_tile:?}");
+          result
+        });
+
+        let render_result = tokio::time::timeout(
+          std::time::Duration::from_secs(60),
+          blocking_task
+        ).await;
+
+        let render_duration = render_start.elapsed();
+
+        let render_result = match render_result {
+          Ok(result) => result,
+          Err(_timeout) => {
+            error!("Super-resolution: render timed out for {parent_tile:?}");
+            let mut in_flight = in_flight_tiles.lock().unwrap();
+            for child_tile in &child_tiles {
+              in_flight.remove(child_tile);
+            }
+            return;
+          }
+        };
+
+        log::info!("Super-resolution: render completed in {render_duration:?}");
+
+        let scaled_image = match render_result {
+          Ok(Ok(image)) => image,
+          Ok(Err(e)) => {
+            error!("Super-resolution: failed to render {parent_tile:?}: {e}");
+            let mut in_flight = in_flight_tiles.lock().unwrap();
+            for child_tile in &child_tiles {
+              in_flight.remove(child_tile);
+            }
+            return;
+          }
+          Err(e) => {
+            error!("Super-resolution: render task panicked for {parent_tile:?}: {e}");
+            let mut in_flight = in_flight_tiles.lock().unwrap();
+            for child_tile in &child_tiles {
+              in_flight.remove(child_tile);
+            }
+            return;
+          }
+        };
+
+        // Split into grid of tiles
+        log::info!("Super-resolution: splitting {parent_tile:?} into {} child tiles ({}x{} grid)", child_tiles.len(), grid_size, grid_size);
+        let split_tiles = split_image_into_tiles(&scaled_image, grid_size);
+
+        // Send all child tiles
+        for (i, child_tile) in child_tiles.iter().enumerate() {
+          if let Err(e) = sender.send((*child_tile, split_tiles[i].clone())) {
+            error!("Super-resolution: failed to send child tile {child_tile:?}: {e}");
+          } else {
+            log::debug!("Super-resolution: sent child tile {child_tile:?}");
+          }
+        }
+
+        // Remove all from in-flight
+        {
+          let mut in_flight = in_flight_tiles.lock().unwrap();
+          for child_tile in &child_tiles {
+            in_flight.remove(child_tile);
+          }
+          log::info!("Super-resolution: completed {} child tiles for {parent_tile:?}", child_tiles.len());
+        }
+
+        ctx.request_repaint();
+      }
+    });
+  }
+
   fn get_tile_with_priority(&self, tile: Tile, priority: TilePriority) {
+    // Check if tile exceeds max zoom level for this provider
+    let max_zoom = self.tile_loader().max_zoom();
+    let tile_type = self.tile_loader().tile_type();
+
+    // For vector tiles beyond max zoom, use super-resolution rendering
+    if tile.zoom > max_zoom {
+      if tile_type == TileType::Vector && tile.zoom <= 19 {
+        log::info!("Tile {tile:?} exceeds max zoom {max_zoom}, using super-resolution");
+        self.get_tile_super_resolution(tile, priority);
+        return;
+      } else {
+        log::debug!("Tile {tile:?} exceeds max zoom {max_zoom}, skipping request");
+        return;
+      }
+    }
+
+    // Check if tile is already loaded or in-flight
+    if self.loaded_tiles.contains_key(&tile) {
+      log::trace!("Tile {tile:?} already loaded, skipping");
+      return;
+    }
+
+    let mut in_flight = self.in_flight_tiles.lock().unwrap();
+    if in_flight.contains(&tile) {
+      log::warn!("Tile {tile:?} already in-flight (total in-flight: {}), skipping", in_flight.len());
+      return; // Already loading
+    }
+    in_flight.insert(tile);
+    let in_flight_count = in_flight.len();
+    drop(in_flight); // Release lock before spawning
+
+    log::info!("Tile {tile:?} inserted into in-flight set (now {} tiles in-flight)", in_flight_count);
+
     let sender = self.sender.clone();
     let tile_loader = self.tile_loader().clone();
     let ctx = self.ctx.clone();
     let tile_source = self.tile_source;
     let tile_type = tile_loader.tile_type();
     let renderer = self.renderer_for_tile_type(tile_type);
-    log::info!(
-      "Loading tile {:?} with {} renderer (tile_type: {:?})",
-      tile,
+    let in_flight_tiles = self.in_flight_tiles.clone();
+    let render_semaphore = self.render_semaphore.clone();
+
+    log::error!(
+      "Loading tile {tile:?} with {} renderer (tile_type: {tile_type:?}), available render permits: {}",
       renderer.name(),
-      tile_type
+      render_semaphore.available_permits()
     );
-    if !self.loaded_tiles.contains_key(&tile) {
-      tokio::spawn(async move {
-        let tile_data = tile_loader
-          .tile_data_with_priority(&tile, tile_source, priority)
-          .await;
-        match &tile_data {
-          Ok(data) => log::info!("Tile {:?} data received: {} bytes", tile, data.len()),
-          Err(e) => {
-            log::info!("Failed to fetch tile {tile:?}: {e}");
+
+    tokio::spawn(async move {
+      // Download phase (I/O - good for tokio)
+      let tile_data = tile_loader
+        .tile_data_with_priority(&tile, tile_source, priority)
+        .await;
+      match &tile_data {
+        Ok(data) => log::info!("Tile {tile:?} data received: {} bytes", data.len()),
+        Err(e) => {
+          log::error!("Failed to fetch tile {tile:?}: {e}, removing from in-flight");
+          let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+          log::info!("Tile {tile:?} removed from in-flight: {removed}");
+          return;
+        }
+      }
+      if let Ok(tile_data) = tile_data {
+        // Acquire permit before rendering (limits concurrent renders to 24)
+        let in_flight_count = in_flight_tiles.lock().unwrap().len();
+        log::debug!(
+          "Tile {tile:?} waiting for render permit, available: {}, in-flight: {}",
+          render_semaphore.available_permits(),
+          in_flight_count
+        );
+        let _permit = render_semaphore.acquire().await.unwrap();
+        log::info!(
+          "Tile {tile:?} acquired render permit, available: {}, in-flight: {}",
+          render_semaphore.available_permits(),
+          in_flight_count
+        );
+
+        // Render phase (CPU-bound - move to blocking thread)
+        log::debug!("Tile {tile:?} spawning blocking task");
+        let render_start = std::time::Instant::now();
+        let blocking_task = tokio::task::spawn_blocking(move || {
+          log::info!("INSIDE blocking task: Starting render for tile {tile:?}");
+          let result = renderer.render(&tile, &tile_data);
+          log::info!("INSIDE blocking task: Finished render for tile {tile:?}");
+          result
+        });
+
+        // Add timeout to detect hanging renders
+        let render_result = tokio::time::timeout(
+          std::time::Duration::from_secs(30),
+          blocking_task
+        ).await;
+
+        let render_duration = render_start.elapsed();
+
+        // Handle timeout
+        let render_result = match render_result {
+          Ok(result) => result,
+          Err(_timeout) => {
+            error!("Tile {tile:?} render TIMED OUT after 30s, releasing permit and removing from in-flight");
+            let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+            log::info!("Tile {tile:?} removed from in-flight after timeout: {removed}");
             return;
           }
-        }
-        if let Ok(tile_data) = tile_data {
-          let egui_image = match renderer.render(&tile, &tile_data) {
-            Ok(image) => image,
-            Err(e) => {
-              error!("Failed to render tile {tile:?}: {e}");
-              return;
-            }
-          };
-          let _ = sender
-            .send((tile, egui_image))
-            .inspect_err(|e| error!("Failed to send tile: {e}"));
-          // Shorter delay for higher priority tiles
-          let delay = match priority {
-            TilePriority::Current => 100,
-            TilePriority::Adjacent => 200,
-            TilePriority::ZoomLevel => 300,
-          };
-          tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        };
 
-          ctx.request_repaint();
+        // Permit automatically released when _permit drops
+        log::info!("Tile {tile:?} render completed in {render_duration:?}, releasing permit");
+
+        let egui_image = match render_result {
+          Ok(Ok(image)) => image,
+          Ok(Err(e)) => {
+            error!("Failed to render tile {tile:?}: {e}, releasing permit and removing from in-flight");
+            let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+            log::info!("Tile {tile:?} removed from in-flight after render error: {removed}");
+            return;
+          }
+          Err(e) => {
+            error!("Render task panicked for tile {tile:?}: {e}, releasing permit and removing from in-flight");
+            let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+            log::info!("Tile {tile:?} removed from in-flight after panic: {removed}");
+            return;
+          }
+        };
+
+        if let Err(e) = sender.send((tile, egui_image)) {
+          error!("Failed to send tile {tile:?}: {e}, removing from in-flight");
+          let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+          log::info!("Tile {tile:?} removed from in-flight after send error: {removed}");
+          return;
         }
-      });
-    }
+
+        // Successfully completed - remove from in-flight
+        log::info!("Tile {tile:?} successfully sent, removing from in-flight");
+        let removed = in_flight_tiles.lock().unwrap().remove(&tile);
+        log::info!("Tile {tile:?} removed from in-flight after success: {removed}, remaining in-flight: {}",
+          in_flight_tiles.lock().unwrap().len());
+
+        // Shorter delay for higher priority tiles
+        let delay = match priority {
+          TilePriority::Current => 100,
+          TilePriority::Adjacent => 200,
+          TilePriority::ZoomLevel => 300,
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+
+        ctx.request_repaint();
+      }
+    });
   }
 
   fn preload_tiles(&self, visible_tiles: &[Tile]) {
@@ -269,6 +604,7 @@ impl TileLayer {
         egui::TextureOptions::default(),
       );
       self.loaded_tiles.insert(tile, handle);
+      self.in_flight_tiles.lock().unwrap().remove(&tile);
     }
   }
 }
@@ -286,6 +622,7 @@ impl Layer for TileLayer {
         self.loaded_tiles.len()
       );
       self.loaded_tiles.clear();
+      self.in_flight_tiles.lock().unwrap().clear();
       self.tile_loader_old_index = self.tile_loader_index;
     }
 
@@ -294,10 +631,33 @@ impl Layer for TileLayer {
     }
 
     let (width, height) = (rect.width(), rect.height());
-    let zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 2;
+    let calculated_zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 2;
+    let max_zoom = self.tile_loader().max_zoom();
+    let tile_type = self.tile_loader().tile_type();
+
+    // For vector tiles, allow requesting up to zoom 19 (super-resolution will handle it)
+    // For raster tiles, cap at max_zoom
+    let request_zoom = if tile_type == TileType::Vector && calculated_zoom > max_zoom {
+      calculated_zoom.min(19)
+    } else {
+      calculated_zoom.min(max_zoom)
+    };
+
+    if calculated_zoom > max_zoom {
+      log::info!(
+        "Zoom capped: ideal={}, max={}, request_zoom={} (super-resolution: {})",
+        calculated_zoom,
+        max_zoom,
+        request_zoom,
+        tile_type == TileType::Vector
+      );
+    } else {
+      log::debug!("Zoom: ideal={}, max={}, request_zoom={}", calculated_zoom, max_zoom, request_zoom);
+    }
+
     let inv = transform.invert();
-    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
-    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
+    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), request_zoom);
+    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), request_zoom);
 
     let visible_tiles: Vec<Tile> = tiles_in_box(min_pos, max_pos).collect();
 
