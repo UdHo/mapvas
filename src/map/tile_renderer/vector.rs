@@ -115,14 +115,17 @@ impl VectorTileRenderer {
     layer_name: &str,
     _tile_zoom: u8,
     tile_size: u32,
-  ) -> Vec<(geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool)> {
+  ) -> (
+    Vec<(geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool)>,
+    Vec<(geo_types::LineString<f32>, String, String)>,
+  ) {
     let layer_start = std::time::Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let scale = tile_size as f32 / MVT_EXTENT;
 
     let Ok(features) = reader.get_features(layer_index) else {
       log::warn!("Failed to get features for layer '{layer_name}'");
-      return Vec::new();
+      return (Vec::new(), Vec::new());
     };
 
     let mut feature_count = 0;
@@ -134,6 +137,11 @@ impl VectorTileRenderer {
     // Tuple: (point, layer_name, feature_kind, feature_kind_detail, feature_name, population_rank, is_capital)
     type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
     let mut point_features: Vec<PointFeature> = Vec::new();
+
+    // Collect all line features with names to render text labels
+    // Tuple: (linestring, layer_name, feature_name)
+    type LineFeature = (geo_types::LineString<f32>, String, String);
+    let mut line_features: Vec<LineFeature> = Vec::new();
 
     for feature in features {
       feature_count += 1;
@@ -242,11 +250,25 @@ impl VectorTileRenderer {
         geo_types::Geometry::LineString(line) => {
           line_count += 1;
           Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
+
+          // Collect line features with names for text rendering
+          if let Some(name) = feature_name {
+            if (layer_name == "transportation" || layer_name == "road" || layer_name == "highway") && line.coords().count() >= 2 {
+              line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
+            }
+          }
         }
         geo_types::Geometry::MultiLineString(multi) => {
           for line in multi.iter() {
             line_count += 1;
             Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
+
+            // Collect line features with names for text rendering
+            if let Some(name) = feature_name {
+              if (layer_name == "transportation" || layer_name == "road" || layer_name == "highway") && line.coords().count() >= 2 {
+                line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
+              }
+            }
           }
         }
         geo_types::Geometry::Point(point) => {
@@ -292,8 +314,8 @@ impl VectorTileRenderer {
       "Layer '{layer_name}': {feature_count} features ({polygon_count} polygons, {line_count} lines, {point_count} points) rendered in {layer_time:?}"
     );
 
-    // Return collected point features to be rendered later (on top of all layers)
-    point_features
+    // Return collected features to be rendered later (on top of all layers)
+    (point_features, line_features)
   }
 
   fn get_fill_color(layer_name: &str, feature_class: &str) -> Option<Color> {
@@ -406,6 +428,45 @@ impl VectorTileRenderer {
 
       pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
+  }
+
+  fn render_street_name(
+    pixmap: &mut Pixmap,
+    linestring: &geo_types::LineString<f32>,
+    name: &str,
+    scale: f32,
+    tile_zoom: u8,
+  ) {
+    // Only render street names at higher zoom levels
+    if tile_zoom < 14 {
+      return;
+    }
+
+    let coords: Vec<_> = linestring.coords().collect();
+    if coords.len() < 2 {
+      return;
+    }
+
+    // Find the midpoint of the line
+    let mid_idx = coords.len() / 2;
+    let mid_point = coords[mid_idx];
+
+    let x = mid_point.x * scale;
+    let y = mid_point.y * scale;
+
+    // Font size for street names (smaller than city names)
+    let font_size = 8.0;
+
+    // Render the street name at the midpoint
+    // TODO: In the future, we could rotate the text to follow the line angle
+    render_text(
+      pixmap,
+      name,
+      x,
+      y,
+      font_size,
+      Color::from_rgba8(80, 80, 80, 255), // Dark gray for street names
+    );
   }
 
   fn render_point_with_class(
@@ -584,6 +645,10 @@ impl TileRenderer for VectorTileRenderer {
     type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
     let mut all_point_features: Vec<PointFeature> = Vec::new();
 
+    // Collect all line features with names from all layers
+    type LineFeature = (geo_types::LineString<f32>, String, String);
+    let mut line_features: Vec<LineFeature> = Vec::new();
+
     // Render layers in a sensible order: land, parks, water (on top), buildings, roads
     let layer_order = [
       "landcover",
@@ -600,8 +665,9 @@ impl TileRenderer for VectorTileRenderer {
     for layer_name in &layer_order {
       if let Some(index) = layer_names.iter().position(|n| n == *layer_name) {
         log::info!("Rendering ordered layer '{layer_name}' at index {index}");
-        let point_features = Self::render_layer(&mut pixmap, &reader, index, layer_name, tile.zoom, scaled_size);
+        let (point_features, layer_line_features) = Self::render_layer(&mut pixmap, &reader, index, layer_name, tile.zoom, scaled_size);
         all_point_features.extend(point_features);
+        line_features.extend(layer_line_features);
       }
     }
 
@@ -609,8 +675,9 @@ impl TileRenderer for VectorTileRenderer {
     for (index, name) in layer_names.iter().enumerate() {
       if !layer_order.contains(&name.as_str()) {
         log::info!("Rendering extra layer '{name}' at index {index}");
-        let point_features = Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
+        let (point_features, layer_line_features) = Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
         all_point_features.extend(point_features);
+        line_features.extend(layer_line_features);
       }
     }
 
@@ -632,6 +699,14 @@ impl TileRenderer for VectorTileRenderer {
         scale,
         scaled_size,
       );
+    }
+
+    // Render street names along the lines
+    log::info!("Rendering {} street labels", line_features.len());
+    #[allow(clippy::cast_possible_truncation)]
+    let scale = scaled_size as f32 / MVT_EXTENT;
+    for (linestring, _layer_name, street_name) in line_features {
+      Self::render_street_name(&mut pixmap, &linestring, &street_name, scale, tile.zoom);
     }
 
     // Convert pixmap to ColorImage
