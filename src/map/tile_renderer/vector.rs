@@ -35,6 +35,7 @@ static ROAD_CASING_COLOR: LazyLock<Color> = LazyLock::new(|| color(180, 180, 180
 
 /// Renders text onto a pixmap at the given position.
 /// Returns the width of the rendered text for positioning purposes.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn render_text(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font_size: f32, color: Color) -> f32 {
   let font = &*FONT;
 
@@ -96,6 +97,169 @@ fn render_text(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font_size: f32, 
   }
 
   total_width
+}
+
+/// Calculate the total length of a path
+fn calculate_path_length(coords: &[(f32, f32)]) -> f32 {
+  coords
+    .windows(2)
+    .map(|w| {
+      let dx = w[1].0 - w[0].0;
+      let dy = w[1].1 - w[0].1;
+      (dx * dx + dy * dy).sqrt()
+    })
+    .sum()
+}
+
+/// Find a point along the path at a given distance from the start
+/// Returns (x, y, angle) where angle is the direction of the path at that point
+fn point_along_path(coords: &[(f32, f32)], distance: f32) -> Option<(f32, f32, f32)> {
+  if coords.len() < 2 {
+    return None;
+  }
+
+  let mut remaining = distance;
+
+  for window in coords.windows(2) {
+    let (x1, y1) = window[0];
+    let (x2, y2) = window[1];
+
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let segment_length = (dx * dx + dy * dy).sqrt();
+
+    if remaining <= segment_length {
+      // Point is on this segment
+      let t = if segment_length > 0.0 {
+        remaining / segment_length
+      } else {
+        0.0
+      };
+      let x = x1 + t * dx;
+      let y = y1 + t * dy;
+      let angle = dy.atan2(dx);
+      return Some((x, y, angle));
+    }
+
+    remaining -= segment_length;
+  }
+
+  // Past the end - return the last point with the angle of the last segment
+  if coords.len() >= 2 {
+    let (x1, y1) = coords[coords.len() - 2];
+    let (x2, y2) = coords[coords.len() - 1];
+    let angle = (y2 - y1).atan2(x2 - x1);
+    Some((x2, y2, angle))
+  } else {
+    None
+  }
+}
+
+/// Render text along a path, with each character rotated to follow the path direction
+fn render_text_along_path(
+  pixmap: &mut Pixmap,
+  text: &str,
+  path: &[(f32, f32)],
+  start_offset: f32,
+  font_size: f32,
+  text_color: Color,
+) {
+  let font = &*FONT;
+
+  let mut current_offset = start_offset.max(0.0);
+
+  for ch in text.chars() {
+    let (metrics, bitmap) = font.rasterize(ch, font_size);
+
+    if bitmap.is_empty() {
+      // Space or non-printable - just advance
+      current_offset += metrics.advance_width;
+      continue;
+    }
+
+    // Find position and angle at current offset
+    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0) else {
+      break;
+    };
+
+    // Render the glyph rotated around its center
+    render_rotated_glyph(
+      pixmap,
+      &bitmap,
+      metrics.width,
+      metrics.height,
+      x,
+      y,
+      angle,
+      text_color,
+    );
+
+    current_offset += metrics.advance_width;
+  }
+}
+
+/// Render a single glyph bitmap rotated by the given angle around (cx, cy)
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+fn render_rotated_glyph(
+  pixmap: &mut Pixmap,
+  bitmap: &[u8],
+  glyph_width: usize,
+  glyph_height: usize,
+  cx: f32,
+  cy: f32,
+  angle: f32,
+  color: Color,
+) {
+  let cos_a = angle.cos();
+  let sin_a = angle.sin();
+
+  // Glyph center offset
+  let half_w = glyph_width as f32 / 2.0;
+  let half_h = glyph_height as f32 / 2.0;
+
+  for gy in 0..glyph_height {
+    for gx in 0..glyph_width {
+      let alpha = bitmap[gy * glyph_width + gx];
+      if alpha == 0 {
+        continue;
+      }
+
+      // Position relative to glyph center
+      let rel_x = gx as f32 - half_w;
+      let rel_y = gy as f32 - half_h;
+
+      // Rotate around center
+      let rot_x = rel_x * cos_a - rel_y * sin_a;
+      let rot_y = rel_x * sin_a + rel_y * cos_a;
+
+      // Final position
+      let px = (cx + rot_x).round() as i32;
+      let py = (cy + rot_y).round() as i32;
+
+      // Bounds check
+      if px < 0 || py < 0 || px >= pixmap.width() as i32 || py >= pixmap.height() as i32 {
+        continue;
+      }
+
+      // Blend the pixel
+      let pixel_idx = (py as u32 * pixmap.width() + px as u32) as usize * 4;
+      if let Some(pixel_slice) = pixmap.data_mut().get_mut(pixel_idx..pixel_idx + 4) {
+        let alpha_f = f32::from(alpha) / 255.0;
+        let src_r = (color.red() * 255.0) as u8;
+        let src_g = (color.green() * 255.0) as u8;
+        let src_b = (color.blue() * 255.0) as u8;
+
+        // Alpha blend
+        pixel_slice[0] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[0]) + alpha_f * f32::from(src_r)) as u8;
+        pixel_slice[1] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[1]) + alpha_f * f32::from(src_g)) as u8;
+        pixel_slice[2] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[2]) + alpha_f * f32::from(src_b)) as u8;
+        pixel_slice[3] = 255;
+      }
+    }
+  }
 }
 
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
@@ -253,7 +417,7 @@ impl VectorTileRenderer {
 
           // Collect line features with names for text rendering
           if let Some(name) = feature_name {
-            if (layer_name == "transportation" || layer_name == "road" || layer_name == "highway") && line.coords().count() >= 2 {
+            if (layer_name == "transportation" || layer_name == "transportation_name" || layer_name == "road" || layer_name == "highway" || layer_name == "roads") && line.coords().count() >= 2 {
               line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
             }
           }
@@ -265,7 +429,7 @@ impl VectorTileRenderer {
 
             // Collect line features with names for text rendering
             if let Some(name) = feature_name {
-              if (layer_name == "transportation" || layer_name == "road" || layer_name == "highway") && line.coords().count() >= 2 {
+              if (layer_name == "transportation" || layer_name == "transportation_name" || layer_name == "road" || layer_name == "highway" || layer_name == "roads") && line.coords().count() >= 2 {
                 line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
               }
             }
@@ -439,33 +603,57 @@ impl VectorTileRenderer {
   ) {
     // Only render street names at higher zoom levels
     if tile_zoom < 14 {
+      log::debug!("Skipping street name '{}' - zoom {} < 14", name, tile_zoom);
       return;
     }
 
     let coords: Vec<_> = linestring.coords().collect();
     if coords.len() < 2 {
+      log::debug!("Skipping street name '{}' - not enough coords", name);
       return;
     }
 
-    // Find the midpoint of the line
-    let mid_idx = coords.len() / 2;
-    let mid_point = coords[mid_idx];
+    // Font size for street names (scale with tile size for high-res rendering)
+    let font_size = 12.0;
 
-    let x = mid_point.x * scale;
-    let y = mid_point.y * scale;
+    // Calculate path length and build scaled path
+    let scaled_coords: Vec<(f32, f32)> = coords
+      .iter()
+      .map(|c| (c.x * scale, c.y * scale))
+      .collect();
 
-    // Font size for street names (smaller than city names)
-    let font_size = 8.0;
+    let path_length = calculate_path_length(&scaled_coords);
 
-    // Render the street name at the midpoint
-    // TODO: In the future, we could rotate the text to follow the line angle
-    render_text(
+    // Estimate text width (rough approximation)
+    let estimated_text_width = name.len() as f32 * font_size * 0.6;
+
+    // Skip if text is too long for the path
+    if estimated_text_width > path_length * 0.8 {
+      log::debug!("Skipping street name '{}' - text too long ({} > {})", name, estimated_text_width, path_length * 0.8);
+      return;
+    }
+
+    log::info!("Rendering street name '{}' at zoom {}, path_length={}", name, tile_zoom, path_length);
+
+    // Determine if we need to reverse the path (text should read left-to-right)
+    let should_reverse = scaled_coords.first().map(|f| f.0) > scaled_coords.last().map(|l| l.0);
+
+    let path_coords: Vec<(f32, f32)> = if should_reverse {
+      scaled_coords.into_iter().rev().collect()
+    } else {
+      scaled_coords
+    };
+
+    // Find starting position (center the text on the path)
+    let start_offset = (path_length - estimated_text_width) / 2.0;
+
+    render_text_along_path(
       pixmap,
       name,
-      x,
-      y,
+      &path_coords,
+      start_offset,
       font_size,
-      Color::from_rgba8(80, 80, 80, 255), // Dark gray for street names
+      Color::from_rgba8(80, 80, 80, 255),
     );
   }
 
@@ -658,7 +846,9 @@ impl TileRenderer for VectorTileRenderer {
       "waterway",
       "building",
       "transportation",
+      "transportation_name",
       "road",
+      "roads",
       "highway",
     ];
 
@@ -701,11 +891,41 @@ impl TileRenderer for VectorTileRenderer {
       );
     }
 
-    // Render street names along the lines
-    log::info!("Rendering {} street labels", line_features.len());
+    // Deduplicate street names - only render each unique name once (using longest segment)
+    log::info!("Collecting {} street label candidates", line_features.len());
     #[allow(clippy::cast_possible_truncation)]
     let scale = scaled_size as f32 / MVT_EXTENT;
+
+    // Group line features by street name and keep the longest segment for each
+    let mut best_segments: std::collections::HashMap<String, (geo_types::LineString<f32>, f32)> =
+      std::collections::HashMap::new();
+
     for (linestring, _layer_name, street_name) in line_features {
+      // Calculate segment length
+      let length: f32 = linestring.coords()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|w| {
+          let dx = w[1].x - w[0].x;
+          let dy = w[1].y - w[0].y;
+          (dx * dx + dy * dy).sqrt()
+        })
+        .sum();
+
+      // Keep the longest segment for each street name
+      best_segments
+        .entry(street_name)
+        .and_modify(|(existing_line, existing_len)| {
+          if length > *existing_len {
+            *existing_line = linestring.clone();
+            *existing_len = length;
+          }
+        })
+        .or_insert((linestring, length));
+    }
+
+    log::info!("Rendering {} unique street labels", best_segments.len());
+    for (street_name, (linestring, _length)) in best_segments {
       Self::render_street_name(&mut pixmap, &linestring, &street_name, scale, tile.zoom);
     }
 
