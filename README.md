@@ -6,7 +6,7 @@
 [![Downloads](https://img.shields.io/crates/d/mapvas.svg)](https://crates.io/crates/mapvas)
 [![License](https://img.shields.io/crates/l/mapvas.svg)](https://github.com/UdHo/mapvas#license)
 
-A **map** can**vas** for displaying geographic data on [OpenStreetMap](https://openstreetmap.org) tiles.
+A **map** can**vas** that shows all kind of geospatial data on an interactive map.
 
 ![mapvas](https://raw.githubusercontent.com/UdHo/mapvas/main/mapvas.png)
 
