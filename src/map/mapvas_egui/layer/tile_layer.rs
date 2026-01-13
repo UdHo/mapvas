@@ -3,7 +3,7 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-use egui::{Color32, ColorImage, Pos2, Rect, Ui, Widget};
+use egui::{Color32, ColorImage, Pos2, Rect, Ui};
 use log::error;
 
 use crate::{
@@ -82,6 +82,10 @@ pub struct TileLayer {
   raster_renderer: Arc<dyn TileRenderer>,
   vector_renderer: Arc<dyn TileRenderer>,
   render_semaphore: Arc<tokio::sync::Semaphore>,
+  // Statistics
+  current_ideal_zoom: u8,
+  current_request_zoom: u8,
+  current_max_zoom: u8,
 }
 
 const NAME: &str = "Tile Layer";
@@ -107,6 +111,9 @@ impl TileLayer {
       raster_renderer: Arc::new(RasterTileRenderer::new()),
       vector_renderer: Arc::new(VectorTileRenderer::new()),
       render_semaphore: Arc::new(tokio::sync::Semaphore::new(24)),
+      current_ideal_zoom: 0,
+      current_request_zoom: 0,
+      current_max_zoom: 0,
     };
 
     // Spawn diagnostic task to monitor in-flight tiles
@@ -643,6 +650,11 @@ impl Layer for TileLayer {
       calculated_zoom.min(max_zoom)
     };
 
+    // Update statistics
+    self.current_ideal_zoom = calculated_zoom;
+    self.current_request_zoom = request_zoom;
+    self.current_max_zoom = max_zoom;
+
     if calculated_zoom > max_zoom {
       log::info!(
         "Zoom capped: ideal={}, max={}, request_zoom={} (super-resolution: {})",
@@ -734,7 +746,54 @@ impl Layer for TileLayer {
         }
       });
 
-    egui::Label::new(format!("{} tiles loaded", self.loaded_tiles.len())).ui(ui);
+    ui.separator();
+    ui.label("Statistics:");
+
+    // Zoom levels
+    ui.horizontal(|ui| {
+      ui.label("Ideal zoom:");
+      ui.label(format!("{}", self.current_ideal_zoom));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Request zoom:");
+      ui.label(format!("{}", self.current_request_zoom));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Max zoom:");
+      ui.label(format!("{}", self.current_max_zoom));
+    });
+
+    ui.separator();
+
+    // Tile counts
+    let tiles_downloading = self.tile_loader().tiles_downloading();
+    let tiles_queued = self.tile_loader().tiles_queued();
+    let tiles_in_flight = self.in_flight_tiles.lock().unwrap().len();
+    let tiles_loaded = self.loaded_tiles.len();
+
+    // Estimate rendering: in_flight minus downloading = rendering/queued for rendering
+    let tiles_rendering = tiles_in_flight.saturating_sub(tiles_downloading);
+
+    ui.horizontal(|ui| {
+      ui.label("Tiles loaded:");
+      ui.label(format!("{}", tiles_loaded));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Tiles downloading:");
+      ui.label(format!("{}", tiles_downloading));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Tiles queued:");
+      ui.label(format!("{}", tiles_queued));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Tiles in flight:");
+      ui.label(format!("{}", tiles_in_flight));
+    });
+    ui.horizontal(|ui| {
+      ui.label("Tiles rendering:");
+      ui.label(format!("{}", tiles_rendering));
+    });
 
     ui.separator();
     ui.label("Tile Coordinate Display:");
