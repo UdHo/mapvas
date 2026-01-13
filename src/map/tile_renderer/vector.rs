@@ -35,8 +35,19 @@ static ROAD_CASING_COLOR: LazyLock<Color> = LazyLock::new(|| color(180, 180, 180
 
 /// Renders text onto a pixmap at the given position.
 /// Returns the width of the rendered text for positioning purposes.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-fn render_text(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font_size: f32, color: Color) -> f32 {
+#[allow(
+  clippy::cast_precision_loss,
+  clippy::cast_possible_truncation,
+  clippy::cast_possible_wrap
+)]
+fn render_text(
+  pixmap: &mut Pixmap,
+  text: &str,
+  x: f32,
+  y: f32,
+  font_size: f32,
+  color: Color,
+) -> f32 {
   let font = &*FONT;
 
   // Get metrics for a typical capital letter to establish baseline
@@ -60,7 +71,8 @@ fn render_text(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font_size: f32, 
     // Calculate position with consistent baseline
     // All characters align to the same baseline derived from 'A'
     let glyph_x = (cursor_x + metrics.xmin as f32).round() as i32;
-    let glyph_y = (y + baseline_offset - metrics.height as f32 - metrics.ymin as f32).round() as i32;
+    let glyph_y =
+      (y + baseline_offset - metrics.height as f32 - metrics.ymin as f32).round() as i32;
 
     // Draw glyph pixels
     for (i, &alpha) in bitmap.iter().enumerate() {
@@ -85,9 +97,12 @@ fn render_text(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font_size: f32, 
         let src_b = (color.blue() * 255.0) as u8;
 
         // Alpha blend
-        pixel_slice[0] = ((1.0 - alpha_f) * f32::from(pixel_slice[0]) + alpha_f * f32::from(src_r)) as u8;
-        pixel_slice[1] = ((1.0 - alpha_f) * f32::from(pixel_slice[1]) + alpha_f * f32::from(src_g)) as u8;
-        pixel_slice[2] = ((1.0 - alpha_f) * f32::from(pixel_slice[2]) + alpha_f * f32::from(src_b)) as u8;
+        pixel_slice[0] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[0]) + alpha_f * f32::from(src_r)) as u8;
+        pixel_slice[1] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[1]) + alpha_f * f32::from(src_g)) as u8;
+        pixel_slice[2] =
+          ((1.0 - alpha_f) * f32::from(pixel_slice[2]) + alpha_f * f32::from(src_b)) as u8;
         pixel_slice[3] = 255; // Fully opaque
       }
     }
@@ -156,7 +171,11 @@ fn point_along_path(coords: &[(f32, f32)], distance: f32) -> Option<(f32, f32, f
 }
 
 /// Render a single glyph bitmap rotated by the given angle around (cx, cy)
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+#[allow(
+  clippy::cast_precision_loss,
+  clippy::cast_possible_truncation,
+  clippy::cast_possible_wrap
+)]
 fn render_rotated_glyph(
   pixmap: &mut Pixmap,
   bitmap: &[u8],
@@ -242,7 +261,8 @@ fn render_text_along_path(
     }
 
     // Find position and angle at current offset
-    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0) else {
+    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0)
+    else {
       break;
     };
 
@@ -280,7 +300,15 @@ impl VectorTileRenderer {
     tile_zoom: u8,
     tile_size: u32,
   ) -> (
-    Vec<(geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool)>,
+    Vec<(
+      geo_types::Point<f32>,
+      String,
+      Option<String>,
+      Option<String>,
+      Option<String>,
+      Option<i64>,
+      bool,
+    )>,
     Vec<(geo_types::LineString<f32>, String, String)>,
   ) {
     let layer_start = std::time::Instant::now();
@@ -299,7 +327,15 @@ impl VectorTileRenderer {
 
     // Collect all point features to render last (on top)
     // Tuple: (point, layer_name, feature_kind, feature_kind_detail, feature_name, population_rank, is_capital)
-    type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
+    type PointFeature = (
+      geo_types::Point<f32>,
+      String,
+      Option<String>,
+      Option<String>,
+      Option<String>,
+      Option<i64>,
+      bool,
+    );
     let mut point_features: Vec<PointFeature> = Vec::new();
 
     // Collect linestring features with names for labeling (water and roads)
@@ -334,7 +370,8 @@ impl VectorTileRenderer {
         .properties
         .as_ref()
         .and_then(|props| {
-          props.get("name")
+          props
+            .get("name")
             .or_else(|| props.get("name:en"))
             .or_else(|| props.get("name_en"))
         })
@@ -375,13 +412,11 @@ impl VectorTileRenderer {
         .properties
         .as_ref()
         .and_then(|props| props.get("population_rank"))
-        .and_then(|v| {
-          match v {
-            mvt_reader::feature::Value::UInt(n) => Some(*n as i64),
-            mvt_reader::feature::Value::Int(n) => Some(*n),
-            mvt_reader::feature::Value::SInt(n) => Some(*n),
-            _ => None,
-          }
+        .and_then(|v| match v {
+          mvt_reader::feature::Value::UInt(n) => Some(*n as i64),
+          mvt_reader::feature::Value::Int(n) => Some(*n),
+          mvt_reader::feature::Value::SInt(n) => Some(*n),
+          _ => None,
         });
 
       let is_capital = feature
@@ -420,10 +455,14 @@ impl VectorTileRenderer {
             feature_class
           };
 
-          Self::render_linestring_with_class(pixmap, line, layer_name, road_class, scale, tile_zoom);
+          Self::render_linestring_with_class(
+            pixmap, line, layer_name, road_class, scale, tile_zoom,
+          );
 
           // Collect water AND road features with names for labeling
-          if feature_name.is_some() && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads") {
+          if feature_name.is_some()
+            && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads")
+          {
             line_labels.push((
               line.clone(),
               feature_name.unwrap().to_string(),
@@ -442,10 +481,15 @@ impl VectorTileRenderer {
               feature_class
             };
 
-            Self::render_linestring_with_class(pixmap, line, layer_name, road_class, scale, tile_zoom);
+            Self::render_linestring_with_class(
+              pixmap, line, layer_name, road_class, scale, tile_zoom,
+            );
 
             // Collect water and road features with names for labeling (only first line of multi)
-            if feature_name.is_some() && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads") && line_count == 1 {
+            if feature_name.is_some()
+              && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads")
+              && line_count == 1
+            {
               line_labels.push((
                 line.clone(),
                 feature_name.unwrap().to_string(),
@@ -522,7 +566,11 @@ impl VectorTileRenderer {
   }
 
   /// Returns (casing_color, casing_width, inner_color, inner_width) for roads
-  fn get_road_styling(layer_name: &str, feature_class: &str, tile_zoom: u8) -> (Color, f32, Color, f32) {
+  fn get_road_styling(
+    layer_name: &str,
+    feature_class: &str,
+    tile_zoom: u8,
+  ) -> (Color, f32, Color, f32) {
     // Handle water features
     if layer_name == "water" || layer_name == "waterway" {
       return (*WATER_COLOR, 0.0, *WATER_COLOR, 1.5);
@@ -533,7 +581,7 @@ impl VectorTileRenderer {
     // At medium zoom (9-12), roads gradually increase
     // At high zoom (14+), roads are normal width
     let zoom_scale = match tile_zoom {
-      0..=5 => 0.08,   // Very zoomed out (continents) - extremely thin
+      0..=5 => 0.08, // Very zoomed out (continents) - extremely thin
       6 => 0.12,
       7 => 0.16,
       8 => 0.22,
@@ -542,25 +590,25 @@ impl VectorTileRenderer {
       11 => 0.55,
       12 => 0.7,
       13 => 0.85,
-      14 => 1.0,       // Normal width (street level)
-      15.. => 1.0,     // Keep at normal width
+      14 => 1.0,   // Normal width (street level)
+      15.. => 1.0, // Keep at normal width
     };
 
     // Handle transportation/roads with more pronounced width and color differences
     let (casing_color, base_casing_width, inner_color, base_inner_width) = match feature_class {
       // Motorways/highways - widest, bright red (OSM style)
       "motorway" | "motorway_link" => (
-        color(160, 20, 20),   // Dark red casing
-        10.0,                 // Very wide casing for highways
-        color(235, 75, 65),   // Bright red inner
-        7.0,                  // Wide inner
+        color(160, 20, 20), // Dark red casing
+        10.0,               // Very wide casing for highways
+        color(235, 75, 65), // Bright red inner
+        7.0,                // Wide inner
       ),
 
       // Trunk roads - very wide, orange
       "trunk" | "trunk_link" => (
-        color(170, 85, 20),   // Dark orange casing
-        8.0,                  // Very wide
-        color(255, 150, 90),  // Bright orange inner
+        color(170, 85, 20),  // Dark orange casing
+        8.0,                 // Very wide
+        color(255, 150, 90), // Bright orange inner
         5.5,
       ),
 
@@ -752,11 +800,11 @@ impl VectorTileRenderer {
         (_, _, true, z) if z >= 3 => true,
 
         // Cities by population rank - more lenient thresholds
-        (Some("city"), Some(pr), _, z) if z < 5 => pr <= 14,   // Large cities (5M+)
-        (Some("city"), Some(pr), _, z) if z < 7 => pr <= 15,   // Cities (1M+)
-        (Some("city"), Some(pr), _, z) if z < 9 => pr <= 16,   // Medium cities (500K+)
-        (Some("city"), Some(pr), _, z) if z >= 9 => pr <= 17,  // All cities
-        (Some("city"), None, _, z) => z >= 8,                  // Cities without rank: zoom 8+
+        (Some("city"), Some(pr), _, z) if z < 5 => pr <= 14, // Large cities (5M+)
+        (Some("city"), Some(pr), _, z) if z < 7 => pr <= 15, // Cities (1M+)
+        (Some("city"), Some(pr), _, z) if z < 9 => pr <= 16, // Medium cities (500K+)
+        (Some("city"), Some(pr), _, z) if z >= 9 => pr <= 17, // All cities
+        (Some("city"), None, _, z) => z >= 8,                // Cities without rank: zoom 8+
 
         // Localities (may include cities) - treat like cities
         (Some("locality"), Some(pr), _, z) if z < 5 => pr <= 14,
@@ -789,11 +837,11 @@ impl VectorTileRenderer {
         (_, true, _) => 12.0,
 
         // Cities by population rank (13-17, lower = more populous)
-        (Some("city"), _, Some(pr)) if pr <= 13 => 12.0,  // Megacities (10M+)
-        (Some("city"), _, Some(pr)) if pr <= 14 => 11.0,  // Large cities (5M+)
-        (Some("city"), _, Some(pr)) if pr <= 15 => 10.0,  // Cities (1M+)
-        (Some("city"), _, Some(pr)) if pr <= 16 => 9.0,   // Medium cities (500K+)
-        (Some("city"), _, Some(pr)) if pr <= 17 => 8.5,   // Smaller cities
+        (Some("city"), _, Some(pr)) if pr <= 13 => 12.0, // Megacities (10M+)
+        (Some("city"), _, Some(pr)) if pr <= 14 => 11.0, // Large cities (5M+)
+        (Some("city"), _, Some(pr)) if pr <= 15 => 10.0, // Cities (1M+)
+        (Some("city"), _, Some(pr)) if pr <= 16 => 9.0,  // Medium cities (500K+)
+        (Some("city"), _, Some(pr)) if pr <= 17 => 8.5,  // Smaller cities
 
         // Localities by population rank
         (Some("locality"), _, Some(pr)) if pr <= 14 => 11.0,
@@ -857,7 +905,12 @@ impl TileRenderer for VectorTileRenderer {
     self.render_scaled(tile, data, 1)
   }
 
-  fn render_scaled(&self, tile: &Tile, data: &[u8], scale: u32) -> Result<ColorImage, TileRenderError> {
+  fn render_scaled(
+    &self,
+    tile: &Tile,
+    data: &[u8],
+    scale: u32,
+  ) -> Result<ColorImage, TileRenderError> {
     let start = std::time::Instant::now();
     let scaled_size = TILE_SIZE * scale;
     log::info!(
@@ -894,7 +947,15 @@ impl TileRenderer for VectorTileRenderer {
     );
 
     // Collect all point features and water labels from all layers to render at the end
-    type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
+    type PointFeature = (
+      geo_types::Point<f32>,
+      String,
+      Option<String>,
+      Option<String>,
+      Option<String>,
+      Option<i64>,
+      bool,
+    );
     let mut all_point_features: Vec<PointFeature> = Vec::new();
     let mut all_line_labels: Vec<(geo_types::LineString<f32>, String, String)> = Vec::new();
 
@@ -914,7 +975,14 @@ impl TileRenderer for VectorTileRenderer {
     for layer_name in &layer_order {
       if let Some(index) = layer_names.iter().position(|n| n == *layer_name) {
         log::info!("Rendering ordered layer '{layer_name}' at index {index}");
-        let (point_features, line_labels) = Self::render_layer(&mut pixmap, &reader, index, layer_name, tile.zoom, scaled_size);
+        let (point_features, line_labels) = Self::render_layer(
+          &mut pixmap,
+          &reader,
+          index,
+          layer_name,
+          tile.zoom,
+          scaled_size,
+        );
         all_point_features.extend(point_features);
         all_line_labels.extend(line_labels);
       }
@@ -924,7 +992,8 @@ impl TileRenderer for VectorTileRenderer {
     for (index, name) in layer_names.iter().enumerate() {
       if !layer_order.contains(&name.as_str()) {
         log::info!("Rendering extra layer '{name}' at index {index}");
-        let (point_features, line_labels) = Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
+        let (point_features, line_labels) =
+          Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
         all_point_features.extend(point_features);
         all_line_labels.extend(line_labels);
       }
@@ -932,7 +1001,16 @@ impl TileRenderer for VectorTileRenderer {
 
     // Now render all points and their labels on top of ALL geometry from ALL layers
     log::info!("Rendering {} point labels on top", all_point_features.len());
-    for (point, point_layer_name, feature_kind, feature_kind_detail, feature_name, population_rank, is_capital) in all_point_features {
+    for (
+      point,
+      point_layer_name,
+      feature_kind,
+      feature_kind_detail,
+      feature_name,
+      population_rank,
+      is_capital,
+    ) in all_point_features
+    {
       #[allow(clippy::cast_possible_truncation)]
       let scale = scaled_size as f32 / MVT_EXTENT;
       Self::render_point_with_class(
@@ -951,7 +1029,10 @@ impl TileRenderer for VectorTileRenderer {
     }
 
     // Render water and road feature labels along paths
-    log::info!("Rendering {} water/road feature labels", all_line_labels.len());
+    log::info!(
+      "Rendering {} water/road feature labels",
+      all_line_labels.len()
+    );
     for (linestring, name, layer_name) in all_line_labels {
       #[allow(clippy::cast_possible_truncation)]
       let scale = scaled_size as f32 / MVT_EXTENT;
@@ -1047,5 +1128,188 @@ mod tests {
     };
     let result = renderer.render(&tile, &[0, 1, 2, 3]);
     assert!(result.is_err());
+  }
+
+  /// Helper function to get test artifacts directory
+  fn test_artifacts_dir() -> std::path::PathBuf {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("test_artifacts");
+    std::fs::create_dir_all(&path).unwrap();
+    path
+  }
+
+  /// Helper to get tile data - tries cache first, then downloads
+  async fn get_berlin_tile_data() -> Option<Vec<u8>> {
+    let mut tile_path = test_artifacts_dir();
+    tile_path.push("berlin_tile_15_17603_10747.mvt");
+
+    // Try to load from cache first
+    if tile_path.exists() {
+      match std::fs::read(&tile_path) {
+        Ok(data) => return Some(data),
+        Err(_) => {} // Fall through to download
+      }
+    }
+
+    // Try to download from Martin server (Berlin Protomaps)
+    // Berlin center at zoom 15: x=17603, y=10747
+    let url = "http://192.168.178.31:3000/tiles/{z}/{x}/{y}.mvt";
+    let tile_url = url
+      .replace("{z}", "15")
+      .replace("{x}", "17603")
+      .replace("{y}", "10747");
+
+    match surf::get(&tile_url).await {
+      Ok(mut response) => match response.body_bytes().await {
+        Ok(data) => {
+          // Save to cache for future runs
+          let _ = std::fs::write(&tile_path, &data);
+          Some(data)
+        }
+        Err(_) => None,
+      },
+      Err(_) => None,
+    }
+  }
+
+  /// Test that renders a Berlin tile and saves it as reference
+  /// Run this test first to generate the reference image:
+  /// cargo test test_render_berlin_tile_reference --lib -- --nocapture
+  #[tokio::test]
+  #[ignore]
+  async fn generate_berlin_tile_reference() {
+    let tile_data = match get_berlin_tile_data().await {
+      Some(data) => data,
+      None => {
+        eprintln!("⚠️  Skipping test: Berlin tile data not available.");
+        eprintln!("   Place tile data at: test_artifacts/berlin_tile_15_17603_10747.mvt");
+        eprintln!("   Or ensure Martin server is running at http://192.168.178.31:3000");
+        return;
+      }
+    };
+
+    let renderer = VectorTileRenderer::new();
+    let tile = Tile {
+      x: 17603,
+      y: 10747,
+      zoom: 15,
+    };
+
+    // Render the tile
+    let result = renderer.render(&tile, &tile_data);
+    assert!(result.is_ok(), "Rendering should succeed");
+
+    let color_image = result.unwrap();
+
+    // Save as reference PNG
+    let mut reference_path = test_artifacts_dir();
+    reference_path.push("berlin_tile_15_17603_10747_reference.png");
+
+    // Convert ColorImage to image::RgbaImage
+    let width = color_image.width();
+    let height = color_image.height();
+    let pixels = color_image.as_raw();
+
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, pixels.to_vec())
+      .expect("Failed to create image");
+
+    img
+      .save(&reference_path)
+      .expect("Failed to save reference image");
+
+    println!("✓ Reference image saved to: {}", reference_path.display());
+    println!("  Size: {}x{}", width, height);
+  }
+
+  /// Test that renders the same Berlin tile and compares against reference
+  /// This is a regression test to ensure rendering stays consistent
+  ///
+  /// Note: Run with --test-threads=1 to avoid race conditions with the reference test,
+  /// or run test_render_berlin_tile_reference first to generate the reference image.
+  #[tokio::test]
+  async fn test_render_berlin_tile_regression() {
+    let tile_data = match get_berlin_tile_data().await {
+      Some(data) => data,
+      None => {
+        eprintln!("⚠️  Skipping regression test: Berlin tile data not available.");
+        return;
+      }
+    };
+
+    let renderer = VectorTileRenderer::new();
+    let tile = Tile {
+      x: 17603,
+      y: 10747,
+      zoom: 15,
+    };
+
+    // Render the tile
+    let result = renderer.render(&tile, &tile_data);
+    assert!(result.is_ok(), "Rendering should succeed");
+
+    let color_image = result.unwrap();
+
+    // Load reference image
+    let mut reference_path = test_artifacts_dir();
+    reference_path.push("berlin_tile_15_17603_10747_reference.png");
+
+    if !reference_path.exists() {
+      panic!(
+        "Reference image not found at {}. Run test_render_berlin_tile_reference first to generate it.",
+        reference_path.display()
+      );
+    }
+
+    let reference_img = image::open(&reference_path)
+      .expect("Failed to load reference image")
+      .to_rgba8();
+
+    // Compare dimensions
+    assert_eq!(
+      color_image.width(),
+      reference_img.width() as usize,
+      "Image width mismatch"
+    );
+    assert_eq!(
+      color_image.height(),
+      reference_img.height() as usize,
+      "Image height mismatch"
+    );
+
+    // Compare pixels
+    let rendered_pixels = color_image.as_raw();
+    let reference_pixels = reference_img.as_raw();
+
+    let mut diff_count = 0;
+    let total_pixels = rendered_pixels.len() / 4;
+
+    for i in 0..total_pixels {
+      let idx = i * 4;
+      let r_diff = (rendered_pixels[idx] as i32 - reference_pixels[idx] as i32).abs();
+      let g_diff = (rendered_pixels[idx + 1] as i32 - reference_pixels[idx + 1] as i32).abs();
+      let b_diff = (rendered_pixels[idx + 2] as i32 - reference_pixels[idx + 2] as i32).abs();
+      let a_diff = (rendered_pixels[idx + 3] as i32 - reference_pixels[idx + 3] as i32).abs();
+
+      // Allow small differences (up to 2 per channel) due to floating point precision
+      if r_diff > 2 || g_diff > 2 || b_diff > 2 || a_diff > 2 {
+        diff_count += 1;
+      }
+    }
+
+    let diff_percentage = (diff_count as f64 / total_pixels as f64) * 100.0;
+
+    // Allow up to 0.1% pixel differences for floating point tolerance
+    assert!(
+      diff_percentage < 0.1,
+      "Too many pixel differences: {:.2}% ({} pixels out of {})",
+      diff_percentage,
+      diff_count,
+      total_pixels
+    );
+
+    println!(
+      "Regression test passed! Pixel differences: {:.4}% ({} pixels)",
+      diff_percentage, diff_count
+    );
   }
 }

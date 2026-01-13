@@ -1,0 +1,6 @@
+# Ignore tile data files
+*.mvt
+*.pbf
+
+# Keep reference images
+!*_reference.png
