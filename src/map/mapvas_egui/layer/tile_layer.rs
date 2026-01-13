@@ -21,14 +21,14 @@ use crate::{
 
 use super::{Layer, LayerProperties};
 
-/// Splits a ColorImage into a grid of tiles for super-resolution rendering.
+/// Splits a `ColorImage` into a grid of tiles for super-resolution rendering.
 ///
 /// # Arguments
-/// * `image` - The source image to split (must be sized as TILE_SIZE * grid_size)
+/// * `image` - The source image to split (must be sized as `TILE_SIZE` * `grid_size`)
 /// * `grid_size` - Number of tiles per side (e.g., 2 for 4 tiles, 4 for 16 tiles)
 ///
 /// # Returns
-/// Vector of ColorImages, ordered row by row (top-left to bottom-right)
+/// Vector of `ColorImages`, ordered row by row (top-left to bottom-right)
 fn split_image_into_tiles(image: &ColorImage, grid_size: usize) -> Vec<ColorImage> {
   let size = image.size[0];
   let tile_size = size / grid_size;
@@ -272,6 +272,7 @@ impl TileLayer {
     self.get_tile_with_priority(tile, TilePriority::Current);
   }
 
+  #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
   fn get_tile_super_resolution(&self, tile: Tile, priority: TilePriority) {
     let max_zoom = self.tile_loader().max_zoom();
     let zoom_diff = tile.zoom - max_zoom;
@@ -438,6 +439,7 @@ impl TileLayer {
     });
   }
 
+  #[allow(clippy::too_many_lines)]
   fn get_tile_with_priority(&self, tile: Tile, priority: TilePriority) {
     // Check if tile exceeds max zoom level for this provider
     let max_zoom = self.tile_loader().max_zoom();
@@ -449,10 +451,9 @@ impl TileLayer {
         log::info!("Tile {tile:?} exceeds max zoom {max_zoom}, using super-resolution");
         self.get_tile_super_resolution(tile, priority);
         return;
-      } else {
-        log::debug!("Tile {tile:?} exceeds max zoom {max_zoom}, skipping request");
-        return;
       }
+      log::debug!("Tile {tile:?} exceeds max zoom {max_zoom}, skipping request");
+      return;
     }
 
     // Check if tile is already loaded or in-flight
@@ -470,7 +471,7 @@ impl TileLayer {
     let in_flight_count = in_flight.len();
     drop(in_flight); // Release lock before spawning
 
-    log::info!("Tile {tile:?} inserted into in-flight set (now {} tiles in-flight)", in_flight_count);
+    log::info!("Tile {tile:?} inserted into in-flight set (now {in_flight_count} tiles in-flight)");
 
     let sender = self.sender.clone();
     let tile_loader = self.tile_loader().clone();
@@ -664,7 +665,7 @@ impl Layer for TileLayer {
         tile_type == TileType::Vector
       );
     } else {
-      log::debug!("Zoom: ideal={}, max={}, request_zoom={}", calculated_zoom, max_zoom, request_zoom);
+      log::debug!("Zoom: ideal={calculated_zoom}, max={max_zoom}, request_zoom={request_zoom}");
     }
 
     let inv = transform.invert();
@@ -776,23 +777,23 @@ impl Layer for TileLayer {
 
     ui.horizontal(|ui| {
       ui.label("Tiles loaded:");
-      ui.label(format!("{}", tiles_loaded));
+      ui.label(format!("{tiles_loaded}"));
     });
     ui.horizontal(|ui| {
       ui.label("Tiles downloading:");
-      ui.label(format!("{}", tiles_downloading));
+      ui.label(format!("{tiles_downloading}"));
     });
     ui.horizontal(|ui| {
       ui.label("Tiles queued:");
-      ui.label(format!("{}", tiles_queued));
+      ui.label(format!("{tiles_queued}"));
     });
     ui.horizontal(|ui| {
       ui.label("Tiles in flight:");
-      ui.label(format!("{}", tiles_in_flight));
+      ui.label(format!("{tiles_in_flight}"));
     });
     ui.horizontal(|ui| {
       ui.label("Tiles rendering:");
-      ui.label(format!("{}", tiles_rendering));
+      ui.label(format!("{tiles_rendering}"));
     });
 
     ui.separator();
