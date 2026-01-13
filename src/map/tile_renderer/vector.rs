@@ -38,7 +38,8 @@ static ROAD_CASING_COLOR: LazyLock<Color> = LazyLock::new(|| color(180, 180, 180
 #[allow(
   clippy::cast_precision_loss,
   clippy::cast_possible_truncation,
-  clippy::cast_possible_wrap
+  clippy::cast_possible_wrap,
+  clippy::cast_sign_loss
 )]
 fn render_text(
   pixmap: &mut Pixmap,
@@ -174,7 +175,9 @@ fn point_along_path(coords: &[(f32, f32)], distance: f32) -> Option<(f32, f32, f
 #[allow(
   clippy::cast_precision_loss,
   clippy::cast_possible_truncation,
-  clippy::cast_possible_wrap
+  clippy::cast_possible_wrap,
+  clippy::cast_sign_loss,
+  clippy::too_many_arguments
 )]
 fn render_rotated_glyph(
   pixmap: &mut Pixmap,
@@ -292,6 +295,15 @@ impl VectorTileRenderer {
     Self
   }
 
+  #[allow(
+    clippy::too_many_lines,
+    clippy::type_complexity,
+    clippy::cast_precision_loss,
+    clippy::unnecessary_unwrap,
+    clippy::items_after_statements,
+    clippy::match_same_arms,
+    clippy::cast_possible_wrap
+  )]
   fn render_layer(
     pixmap: &mut Pixmap,
     reader: &mvt_reader::Reader,
@@ -565,7 +577,8 @@ impl VectorTileRenderer {
     }
   }
 
-  /// Returns (casing_color, casing_width, inner_color, inner_width) for roads
+  /// Returns (`casing_color`, `casing_width`, `inner_color`, `inner_width`) for roads
+  #[allow(clippy::match_same_arms)]
   fn get_road_styling(
     layer_name: &str,
     feature_class: &str,
@@ -769,6 +782,7 @@ impl VectorTileRenderer {
     }
   }
 
+  #[allow(clippy::too_many_arguments, clippy::match_same_arms, clippy::cast_precision_loss)]
   fn render_point_with_class(
     pixmap: &mut Pixmap,
     point: geo_types::Point<f32>,
@@ -905,6 +919,7 @@ impl TileRenderer for VectorTileRenderer {
     self.render_scaled(tile, data, 1)
   }
 
+  #[allow(clippy::too_many_lines, clippy::items_after_statements, clippy::cast_precision_loss)]
   fn render_scaled(
     &self,
     tile: &Tile,
@@ -1139,6 +1154,7 @@ mod tests {
   }
 
   /// Helper to get tile data - tries cache first, then downloads
+  #[allow(clippy::single_match)]
   async fn get_berlin_tile_data() -> Option<Vec<u8>> {
     let mut tile_path = test_artifacts_dir();
     tile_path.push("berlin_tile_15_17603_10747.mvt");
@@ -1174,18 +1190,16 @@ mod tests {
 
   /// Test that renders a Berlin tile and saves it as reference
   /// Run this test first to generate the reference image:
-  /// cargo test test_render_berlin_tile_reference --lib -- --nocapture
+  /// cargo test `test_render_berlin_tile_reference` --lib -- --nocapture
   #[tokio::test]
-  #[ignore]
+  #[ignore = "Manual test to generate reference image"]
+  #[allow(clippy::single_match, clippy::manual_let_else, clippy::cast_possible_truncation)]
   async fn generate_berlin_tile_reference() {
-    let tile_data = match get_berlin_tile_data().await {
-      Some(data) => data,
-      None => {
-        eprintln!("⚠️  Skipping test: Berlin tile data not available.");
-        eprintln!("   Place tile data at: test_artifacts/berlin_tile_15_17603_10747.mvt");
-        eprintln!("   Or ensure Martin server is running at http://192.168.178.31:3000");
-        return;
-      }
+    let tile_data = if let Some(data) = get_berlin_tile_data().await { data } else {
+      eprintln!("⚠️  Skipping test: Berlin tile data not available.");
+      eprintln!("   Place tile data at: test_artifacts/berlin_tile_15_17603_10747.mvt");
+      eprintln!("   Or ensure Martin server is running at http://192.168.178.31:3000");
+      return;
     };
 
     let renderer = VectorTileRenderer::new();
@@ -1218,22 +1232,20 @@ mod tests {
       .expect("Failed to save reference image");
 
     println!("✓ Reference image saved to: {}", reference_path.display());
-    println!("  Size: {}x{}", width, height);
+    println!("  Size: {width}x{height}");
   }
 
   /// Test that renders the same Berlin tile and compares against reference
   /// This is a regression test to ensure rendering stays consistent
   ///
   /// Note: Run with --test-threads=1 to avoid race conditions with the reference test,
-  /// or run test_render_berlin_tile_reference first to generate the reference image.
+  /// or run `test_render_berlin_tile_reference` first to generate the reference image.
   #[tokio::test]
+  #[allow(clippy::manual_let_else, clippy::manual_assert, clippy::cast_lossless, clippy::cast_precision_loss)]
   async fn test_render_berlin_tile_regression() {
-    let tile_data = match get_berlin_tile_data().await {
-      Some(data) => data,
-      None => {
-        eprintln!("⚠️  Skipping regression test: Berlin tile data not available.");
-        return;
-      }
+    let tile_data = if let Some(data) = get_berlin_tile_data().await { data } else {
+      eprintln!("⚠️  Skipping regression test: Berlin tile data not available.");
+      return;
     };
 
     let renderer = VectorTileRenderer::new();
@@ -1253,12 +1265,10 @@ mod tests {
     let mut reference_path = test_artifacts_dir();
     reference_path.push("berlin_tile_15_17603_10747_reference.png");
 
-    if !reference_path.exists() {
-      panic!(
-        "Reference image not found at {}. Run test_render_berlin_tile_reference first to generate it.",
-        reference_path.display()
-      );
-    }
+    assert!(reference_path.exists(), 
+      "Reference image not found at {}. Run test_render_berlin_tile_reference first to generate it.",
+      reference_path.display()
+    );
 
     let reference_img = image::open(&reference_path)
       .expect("Failed to load reference image")
@@ -1285,10 +1295,10 @@ mod tests {
 
     for i in 0..total_pixels {
       let idx = i * 4;
-      let r_diff = (rendered_pixels[idx] as i32 - reference_pixels[idx] as i32).abs();
-      let g_diff = (rendered_pixels[idx + 1] as i32 - reference_pixels[idx + 1] as i32).abs();
-      let b_diff = (rendered_pixels[idx + 2] as i32 - reference_pixels[idx + 2] as i32).abs();
-      let a_diff = (rendered_pixels[idx + 3] as i32 - reference_pixels[idx + 3] as i32).abs();
+      let r_diff = (i32::from(rendered_pixels[idx]) - i32::from(reference_pixels[idx])).abs();
+      let g_diff = (i32::from(rendered_pixels[idx + 1]) - i32::from(reference_pixels[idx + 1])).abs();
+      let b_diff = (i32::from(rendered_pixels[idx + 2]) - i32::from(reference_pixels[idx + 2])).abs();
+      let a_diff = (i32::from(rendered_pixels[idx + 3]) - i32::from(reference_pixels[idx + 3])).abs();
 
       // Allow small differences (up to 2 per channel) due to floating point precision
       if r_diff > 2 || g_diff > 2 || b_diff > 2 || a_diff > 2 {
@@ -1296,20 +1306,16 @@ mod tests {
       }
     }
 
-    let diff_percentage = (diff_count as f64 / total_pixels as f64) * 100.0;
+    let diff_percentage = (f64::from(diff_count) / total_pixels as f64) * 100.0;
 
     // Allow up to 0.1% pixel differences for floating point tolerance
     assert!(
       diff_percentage < 0.1,
-      "Too many pixel differences: {:.2}% ({} pixels out of {})",
-      diff_percentage,
-      diff_count,
-      total_pixels
+      "Too many pixel differences: {diff_percentage:.2}% ({diff_count} pixels out of {total_pixels})"
     );
 
     println!(
-      "Regression test passed! Pixel differences: {:.4}% ({} pixels)",
-      diff_percentage, diff_count
+      "Regression test passed! Pixel differences: {diff_percentage:.4}% ({diff_count} pixels)"
     );
   }
 }
