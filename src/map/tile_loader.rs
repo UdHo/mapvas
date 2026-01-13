@@ -483,6 +483,14 @@ impl CachedTileLoader {
     self.max_zoom
   }
 
+  pub fn tiles_downloading(&self) -> usize {
+    self.loader.download_manager.tiles_in_download.lock().unwrap().len()
+  }
+
+  pub fn tiles_queued(&self) -> usize {
+    self.loader.download_manager.priority_queue.lock().unwrap().len()
+  }
+
   pub fn from_config(config: &crate::config::Config) -> impl Iterator<Item = Self> {
     config
       .tile_provider
