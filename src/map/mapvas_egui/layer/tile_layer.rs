@@ -474,7 +474,7 @@ impl TileLayer {
     let in_flight_tiles = self.in_flight_tiles.clone();
     let render_semaphore = self.render_semaphore.clone();
 
-    log::error!(
+    log::debug!(
       "Loading tile {tile:?} with {} renderer (tile_type: {tile_type:?}), available render permits: {}",
       renderer.name(),
       render_semaphore.available_permits()

@@ -155,49 +155,6 @@ fn point_along_path(coords: &[(f32, f32)], distance: f32) -> Option<(f32, f32, f
   }
 }
 
-/// Render text along a path, with each character rotated to follow the path direction
-fn render_text_along_path(
-  pixmap: &mut Pixmap,
-  text: &str,
-  path: &[(f32, f32)],
-  start_offset: f32,
-  font_size: f32,
-  text_color: Color,
-) {
-  let font = &*FONT;
-
-  let mut current_offset = start_offset.max(0.0);
-
-  for ch in text.chars() {
-    let (metrics, bitmap) = font.rasterize(ch, font_size);
-
-    if bitmap.is_empty() {
-      // Space or non-printable - just advance
-      current_offset += metrics.advance_width;
-      continue;
-    }
-
-    // Find position and angle at current offset
-    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0) else {
-      break;
-    };
-
-    // Render the glyph rotated around its center
-    render_rotated_glyph(
-      pixmap,
-      &bitmap,
-      metrics.width,
-      metrics.height,
-      x,
-      y,
-      angle,
-      text_color,
-    );
-
-    current_offset += metrics.advance_width;
-  }
-}
-
 /// Render a single glyph bitmap rotated by the given angle around (cx, cy)
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn render_rotated_glyph(
@@ -262,6 +219,49 @@ fn render_rotated_glyph(
   }
 }
 
+/// Render text along a path, with each character rotated to follow the path direction
+fn render_text_along_path(
+  pixmap: &mut Pixmap,
+  text: &str,
+  path: &[(f32, f32)],
+  start_offset: f32,
+  font_size: f32,
+  text_color: Color,
+) {
+  let font = &*FONT;
+
+  let mut current_offset = start_offset.max(0.0);
+
+  for ch in text.chars() {
+    let (metrics, bitmap) = font.rasterize(ch, font_size);
+
+    if bitmap.is_empty() {
+      // Space or non-printable - just advance
+      current_offset += metrics.advance_width;
+      continue;
+    }
+
+    // Find position and angle at current offset
+    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0) else {
+      break;
+    };
+
+    // Render the glyph rotated around its center
+    render_rotated_glyph(
+      pixmap,
+      &bitmap,
+      metrics.width,
+      metrics.height,
+      x,
+      y,
+      angle,
+      text_color,
+    );
+
+    current_offset += metrics.advance_width;
+  }
+}
+
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
 #[derive(Debug, Clone, Default)]
 pub struct VectorTileRenderer;
@@ -277,7 +277,7 @@ impl VectorTileRenderer {
     reader: &mvt_reader::Reader,
     layer_index: usize,
     layer_name: &str,
-    _tile_zoom: u8,
+    tile_zoom: u8,
     tile_size: u32,
   ) -> (
     Vec<(geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool)>,
@@ -302,10 +302,9 @@ impl VectorTileRenderer {
     type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
     let mut point_features: Vec<PointFeature> = Vec::new();
 
-    // Collect all line features with names to render text labels
-    // Tuple: (linestring, layer_name, feature_name)
-    type LineFeature = (geo_types::LineString<f32>, String, String);
-    let mut line_features: Vec<LineFeature> = Vec::new();
+    // Collect linestring features with names for labeling (water and roads)
+    // Tuple: (linestring, name, layer_name)
+    let mut line_labels: Vec<(geo_types::LineString<f32>, String, String)> = Vec::new();
 
     for feature in features {
       feature_count += 1;
@@ -413,25 +412,45 @@ impl VectorTileRenderer {
         }
         geo_types::Geometry::LineString(line) => {
           line_count += 1;
-          Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
 
-          // Collect line features with names for text rendering
-          if let Some(name) = feature_name {
-            if (layer_name == "transportation" || layer_name == "transportation_name" || layer_name == "road" || layer_name == "highway" || layer_name == "roads") && line.coords().count() >= 2 {
-              line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
-            }
+          // For Protomaps roads layer: use 'kind_detail' which has the actual road type
+          let road_class = if layer_name == "roads" {
+            feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
+          } else {
+            feature_class
+          };
+
+          Self::render_linestring_with_class(pixmap, line, layer_name, road_class, scale, tile_zoom);
+
+          // Collect water AND road features with names for labeling
+          if feature_name.is_some() && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads") {
+            line_labels.push((
+              line.clone(),
+              feature_name.unwrap().to_string(),
+              layer_name.to_string(),
+            ));
           }
         }
         geo_types::Geometry::MultiLineString(multi) => {
           for line in multi.iter() {
             line_count += 1;
-            Self::render_linestring_with_class(pixmap, line, layer_name, feature_class, scale);
 
-            // Collect line features with names for text rendering
-            if let Some(name) = feature_name {
-              if (layer_name == "transportation" || layer_name == "transportation_name" || layer_name == "road" || layer_name == "highway" || layer_name == "roads") && line.coords().count() >= 2 {
-                line_features.push((line.clone(), layer_name.to_string(), name.to_string()));
-              }
+            // For Protomaps roads layer: use 'kind_detail' which has the actual road type
+            let road_class = if layer_name == "roads" {
+              feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
+            } else {
+              feature_class
+            };
+
+            Self::render_linestring_with_class(pixmap, line, layer_name, road_class, scale, tile_zoom);
+
+            // Collect water and road features with names for labeling (only first line of multi)
+            if feature_name.is_some() && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads") && line_count == 1 {
+              line_labels.push((
+                line.clone(),
+                feature_name.unwrap().to_string(),
+                layer_name.to_string(),
+              ));
             }
           }
         }
@@ -479,7 +498,7 @@ impl VectorTileRenderer {
     );
 
     // Return collected features to be rendered later (on top of all layers)
-    (point_features, line_features)
+    (point_features, line_labels)
   }
 
   fn get_fill_color(layer_name: &str, feature_class: &str) -> Option<Color> {
@@ -502,20 +521,108 @@ impl VectorTileRenderer {
     }
   }
 
-  fn get_stroke_color(layer_name: &str) -> Color {
-    match layer_name {
-      "transportation" | "road" | "highway" => *ROAD_COLOR,
-      "water" | "waterway" => *WATER_COLOR,
-      _ => *ROAD_CASING_COLOR,
+  /// Returns (casing_color, casing_width, inner_color, inner_width) for roads
+  fn get_road_styling(layer_name: &str, feature_class: &str, tile_zoom: u8) -> (Color, f32, Color, f32) {
+    // Handle water features
+    if layer_name == "water" || layer_name == "waterway" {
+      return (*WATER_COLOR, 0.0, *WATER_COLOR, 1.5);
     }
-  }
 
-  fn get_stroke_width(layer_name: &str) -> f32 {
-    match layer_name {
-      "transportation" | "road" | "highway" => 2.0,
-      "waterway" => 1.5,
-      _ => 1.0,
-    }
+    // Calculate zoom-based width multiplier
+    // At low zoom (3-8), roads should be MUCH thinner
+    // At medium zoom (9-12), roads gradually increase
+    // At high zoom (14+), roads are normal width
+    let zoom_scale = match tile_zoom {
+      0..=5 => 0.08,   // Very zoomed out (continents) - extremely thin
+      6 => 0.12,
+      7 => 0.16,
+      8 => 0.22,
+      9 => 0.3,
+      10 => 0.4,
+      11 => 0.55,
+      12 => 0.7,
+      13 => 0.85,
+      14 => 1.0,       // Normal width (street level)
+      15.. => 1.0,     // Keep at normal width
+    };
+
+    // Handle transportation/roads with more pronounced width and color differences
+    let (casing_color, base_casing_width, inner_color, base_inner_width) = match feature_class {
+      // Motorways/highways - widest, bright red (OSM style)
+      "motorway" | "motorway_link" => (
+        color(160, 20, 20),   // Dark red casing
+        10.0,                 // Very wide casing for highways
+        color(235, 75, 65),   // Bright red inner
+        7.0,                  // Wide inner
+      ),
+
+      // Trunk roads - very wide, orange
+      "trunk" | "trunk_link" => (
+        color(170, 85, 20),   // Dark orange casing
+        8.0,                  // Very wide
+        color(255, 150, 90),  // Bright orange inner
+        5.5,
+      ),
+
+      // Primary roads - wide, yellow-orange
+      "primary" | "primary_link" => (
+        color(150, 110, 60),  // Brown-orange casing
+        6.5,                  // Wide
+        color(255, 200, 100), // Golden/tan inner
+        4.5,
+      ),
+
+      // Secondary roads - medium width, yellow
+      "secondary" | "secondary_link" => (
+        color(140, 140, 80),  // Olive casing
+        5.0,                  // Medium width
+        color(255, 240, 150), // Light yellow inner
+        3.5,
+      ),
+
+      // Tertiary roads - medium-small, light with gray border
+      "tertiary" | "tertiary_link" => (
+        color(120, 120, 120), // Medium gray casing
+        3.5,
+        color(255, 255, 255), // White inner
+        2.5,
+      ),
+
+      // Residential/unclassified - small, white with gray border
+      "residential" | "unclassified" => (
+        color(150, 150, 150), // Light gray casing
+        2.5,
+        color(255, 255, 255), // White inner
+        1.5,
+      ),
+
+      // Service roads - smallest, light gray
+      "service" | "minor" => (
+        color(180, 180, 180), // Very light gray casing
+        1.5,
+        color(230, 230, 230), // Almost white inner
+        1.0,
+      ),
+
+      // Paths/footways - very thin
+      "path" | "footway" | "pedestrian" | "cycleway" => (
+        color(200, 150, 100), // Brown casing
+        1.2,
+        color(250, 220, 200), // Light brown inner
+        0.8,
+      ),
+
+      // Default for unknown road types
+      _ => (*ROAD_CASING_COLOR, 2.5, *ROAD_COLOR, 1.5),
+    };
+
+    // Apply zoom-based scaling to widths
+    (
+      casing_color,
+      base_casing_width * zoom_scale,
+      inner_color,
+      base_inner_width * zoom_scale,
+    )
   }
 
   fn render_polygon_with_class(
@@ -563,8 +670,9 @@ impl VectorTileRenderer {
     pixmap: &mut Pixmap,
     line: &geo_types::LineString<f32>,
     layer_name: &str,
-    _feature_class: &str,
+    feature_class: &str,
     scale: f32,
+    tile_zoom: u8,
   ) {
     if line.coords().count() < 2 {
       return;
@@ -581,80 +689,36 @@ impl VectorTileRenderer {
     }
 
     if let Some(path) = pb.finish() {
+      // Determine road styling based on class, layer, and zoom level
+      let (casing_color, casing_width, inner_color, inner_width) =
+        Self::get_road_styling(layer_name, feature_class, tile_zoom);
+
+      // First pass: draw casing (border) if applicable
+      if casing_width > 0.0 {
+        let mut paint = Paint::default();
+        paint.set_color(casing_color);
+        paint.anti_alias = true;
+
+        let stroke = Stroke {
+          width: casing_width,
+          ..Stroke::default()
+        };
+
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+      }
+
+      // Second pass: draw inner road
       let mut paint = Paint::default();
-      paint.set_color(Self::get_stroke_color(layer_name));
+      paint.set_color(inner_color);
       paint.anti_alias = true;
 
       let stroke = Stroke {
-        width: Self::get_stroke_width(layer_name),
+        width: inner_width,
         ..Stroke::default()
       };
 
       pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
-  }
-
-  fn render_street_name(
-    pixmap: &mut Pixmap,
-    linestring: &geo_types::LineString<f32>,
-    name: &str,
-    scale: f32,
-    tile_zoom: u8,
-  ) {
-    // Only render street names at higher zoom levels
-    if tile_zoom < 14 {
-      log::debug!("Skipping street name '{}' - zoom {} < 14", name, tile_zoom);
-      return;
-    }
-
-    let coords: Vec<_> = linestring.coords().collect();
-    if coords.len() < 2 {
-      log::debug!("Skipping street name '{}' - not enough coords", name);
-      return;
-    }
-
-    // Font size for street names (scale with tile size for high-res rendering)
-    let font_size = 12.0;
-
-    // Calculate path length and build scaled path
-    let scaled_coords: Vec<(f32, f32)> = coords
-      .iter()
-      .map(|c| (c.x * scale, c.y * scale))
-      .collect();
-
-    let path_length = calculate_path_length(&scaled_coords);
-
-    // Estimate text width (rough approximation)
-    let estimated_text_width = name.len() as f32 * font_size * 0.6;
-
-    // Skip if text is too long for the path
-    if estimated_text_width > path_length * 0.8 {
-      log::debug!("Skipping street name '{}' - text too long ({} > {})", name, estimated_text_width, path_length * 0.8);
-      return;
-    }
-
-    log::info!("Rendering street name '{}' at zoom {}, path_length={}", name, tile_zoom, path_length);
-
-    // Determine if we need to reverse the path (text should read left-to-right)
-    let should_reverse = scaled_coords.first().map(|f| f.0) > scaled_coords.last().map(|l| l.0);
-
-    let path_coords: Vec<(f32, f32)> = if should_reverse {
-      scaled_coords.into_iter().rev().collect()
-    } else {
-      scaled_coords
-    };
-
-    // Find starting position (center the text on the path)
-    let start_offset = (path_length - estimated_text_width) / 2.0;
-
-    render_text_along_path(
-      pixmap,
-      name,
-      &path_coords,
-      start_offset,
-      font_size,
-      Color::from_rgba8(80, 80, 80, 255),
-    );
   }
 
   fn render_point_with_class(
@@ -829,13 +893,10 @@ impl TileRenderer for VectorTileRenderer {
       layer_names
     );
 
-    // Collect all point features from all layers to render at the end
+    // Collect all point features and water labels from all layers to render at the end
     type PointFeature = (geo_types::Point<f32>, String, Option<String>, Option<String>, Option<String>, Option<i64>, bool);
     let mut all_point_features: Vec<PointFeature> = Vec::new();
-
-    // Collect all line features with names from all layers
-    type LineFeature = (geo_types::LineString<f32>, String, String);
-    let mut line_features: Vec<LineFeature> = Vec::new();
+    let mut all_line_labels: Vec<(geo_types::LineString<f32>, String, String)> = Vec::new();
 
     // Render layers in a sensible order: land, parks, water (on top), buildings, roads
     let layer_order = [
@@ -846,18 +907,16 @@ impl TileRenderer for VectorTileRenderer {
       "waterway",
       "building",
       "transportation",
-      "transportation_name",
       "road",
-      "roads",
       "highway",
     ];
 
     for layer_name in &layer_order {
       if let Some(index) = layer_names.iter().position(|n| n == *layer_name) {
         log::info!("Rendering ordered layer '{layer_name}' at index {index}");
-        let (point_features, layer_line_features) = Self::render_layer(&mut pixmap, &reader, index, layer_name, tile.zoom, scaled_size);
+        let (point_features, line_labels) = Self::render_layer(&mut pixmap, &reader, index, layer_name, tile.zoom, scaled_size);
         all_point_features.extend(point_features);
-        line_features.extend(layer_line_features);
+        all_line_labels.extend(line_labels);
       }
     }
 
@@ -865,9 +924,9 @@ impl TileRenderer for VectorTileRenderer {
     for (index, name) in layer_names.iter().enumerate() {
       if !layer_order.contains(&name.as_str()) {
         log::info!("Rendering extra layer '{name}' at index {index}");
-        let (point_features, layer_line_features) = Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
+        let (point_features, line_labels) = Self::render_layer(&mut pixmap, &reader, index, name, tile.zoom, scaled_size);
         all_point_features.extend(point_features);
-        line_features.extend(layer_line_features);
+        all_line_labels.extend(line_labels);
       }
     }
 
@@ -891,42 +950,63 @@ impl TileRenderer for VectorTileRenderer {
       );
     }
 
-    // Deduplicate street names - only render each unique name once (using longest segment)
-    log::info!("Collecting {} street label candidates", line_features.len());
-    #[allow(clippy::cast_possible_truncation)]
-    let scale = scaled_size as f32 / MVT_EXTENT;
+    // Render water and road feature labels along paths
+    log::info!("Rendering {} water/road feature labels", all_line_labels.len());
+    for (linestring, name, layer_name) in all_line_labels {
+      #[allow(clippy::cast_possible_truncation)]
+      let scale = scaled_size as f32 / MVT_EXTENT;
 
-    // Group line features by street name and keep the longest segment for each
-    let mut best_segments: std::collections::HashMap<String, (geo_types::LineString<f32>, f32)> =
-      std::collections::HashMap::new();
+      // Build scaled path coordinates
+      let scaled_coords: Vec<(f32, f32)> = linestring
+        .coords()
+        .map(|c| (c.x * scale, c.y * scale))
+        .collect();
 
-    for (linestring, _layer_name, street_name) in line_features {
-      // Calculate segment length
-      let length: f32 = linestring.coords()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .map(|w| {
-          let dx = w[1].x - w[0].x;
-          let dy = w[1].y - w[0].y;
-          (dx * dx + dy * dy).sqrt()
-        })
-        .sum();
+      if scaled_coords.len() < 2 {
+        continue; // Skip if not enough points
+      }
 
-      // Keep the longest segment for each street name
-      best_segments
-        .entry(street_name)
-        .and_modify(|(existing_line, existing_len)| {
-          if length > *existing_len {
-            *existing_line = linestring.clone();
-            *existing_len = length;
-          }
-        })
-        .or_insert((linestring, length));
-    }
+      // Different colors for roads vs water features
+      let (color, font_size_base) = if layer_name == "roads" {
+        (Color::from_rgba8(80, 80, 80, 255), 10.0) // Dark gray for roads, slightly larger
+      } else {
+        (Color::from_rgba8(60, 100, 140, 255), 9.0) // Blue-gray for water
+      };
 
-    log::info!("Rendering {} unique street labels", best_segments.len());
-    for (street_name, (linestring, _length)) in best_segments {
-      Self::render_street_name(&mut pixmap, &linestring, &street_name, scale, tile.zoom);
+      let font_size = font_size_base * (scaled_size as f32 / 256.0).min(2.0);
+
+      // Calculate path length
+      let path_length = calculate_path_length(&scaled_coords);
+
+      // Estimate text width
+      let estimated_text_width = name.len() as f32 * font_size * 0.6;
+
+      // Skip if text is too long for the path
+      if estimated_text_width > path_length * 0.8 {
+        continue;
+      }
+
+      // Determine if we need to reverse the path (text should read left-to-right)
+      let should_reverse = scaled_coords.first().map(|f| f.0) > scaled_coords.last().map(|l| l.0);
+
+      let path_coords: Vec<(f32, f32)> = if should_reverse {
+        scaled_coords.into_iter().rev().collect()
+      } else {
+        scaled_coords
+      };
+
+      // Center the text on the path
+      let start_offset = (path_length - estimated_text_width) / 2.0;
+
+      // Render text following the path
+      render_text_along_path(
+        &mut pixmap,
+        &name,
+        &path_coords,
+        start_offset,
+        font_size,
+        color,
+      );
     }
 
     // Convert pixmap to ColorImage
