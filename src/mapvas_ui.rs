@@ -9,8 +9,10 @@ use crate::{
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
+  task_tracker::{task_tracker, TaskCategory},
 };
 use chrono::{DateTime, Utc};
+use tokio_metrics::RuntimeMonitor;
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
@@ -20,6 +22,7 @@ pub struct MapApp {
   previous_had_highlighted: bool,
   last_heading_style: HeadingStyle,
   command_line: CommandLine,
+  runtime_monitor: Option<RuntimeMonitor>,
 }
 
 impl MapApp {
@@ -29,6 +32,7 @@ impl MapApp {
     remote: Remote,
     map_content: Rc<dyn MapLayerHolder>,
     config: Config,
+    runtime_monitor: Option<RuntimeMonitor>,
   ) -> Self {
     let settings_dialog =
       std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
@@ -40,6 +44,7 @@ impl MapApp {
       previous_had_highlighted: false,
       last_heading_style: config.heading_style,
       command_line: CommandLine::new(),
+      runtime_monitor,
     }
   }
 
@@ -252,7 +257,7 @@ impl eframe::App for MapApp {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
-          self.sidebar.ui(ui);
+          self.sidebar.ui(ui, self.runtime_monitor.as_ref());
 
           self.sidebar.width = ui.available_width().clamp(200.0, 600.0);
         });
@@ -698,7 +703,152 @@ impl Sidebar {
     t * t * t + 1.0
   }
 
-  fn ui(&mut self, ui: &mut egui::Ui) {
+  /// Display performance monitoring
+  fn show_performance_monitoring(ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
+    // Show runtime metrics if monitor is available
+    if let Some(monitor) = runtime_monitor {
+      let intervals: Vec<_> = monitor.intervals().take(1).collect();
+      if let Some(metrics) = intervals.first() {
+        ui.horizontal(|ui| {
+          ui.label("Live tasks:");
+          ui.label(
+            egui::RichText::new(format!("{}", metrics.live_tasks_count))
+              .strong()
+              .color(egui::Color32::from_rgb(255, 140, 0))
+          );
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Parks/sec:");
+          #[allow(clippy::cast_precision_loss)]
+          let parks_per_sec = metrics.total_park_count as f64 / metrics.elapsed.as_secs_f64();
+          ui.label(format!("{parks_per_sec:.0}"));
+        });
+      }
+    } else {
+      ui.label(
+        egui::RichText::new("Runtime metrics unavailable")
+          .italics()
+          .color(egui::Color32::GRAY)
+      );
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+
+    // Active tasks as subsection
+    ui.label(egui::RichText::new("Active Tasks").strong().size(11.0));
+    ui.add_space(4.0);
+
+    Self::show_active_tasks(ui);
+  }
+
+  /// Display active task list
+  fn show_active_tasks(ui: &mut egui::Ui) {
+    let tracker = task_tracker();
+    let tasks = tracker.snapshot();
+
+    if tasks.is_empty() {
+      ui.label(
+        egui::RichText::new("No active tasks")
+          .size(12.0)
+          .italics()
+          .color(egui::Color32::GRAY)
+      );
+      return;
+    }
+
+    // Sort by category for better organization
+    let mut tasks_by_category = std::collections::HashMap::new();
+    for (id, task) in tasks {
+      tasks_by_category
+        .entry(task.category.clone())
+        .or_insert_with(Vec::new)
+        .push((id, task));
+    }
+
+    // Display tasks by category in a specific order (server first, then others)
+    let category_order = [
+      TaskCategory::Server,
+      TaskCategory::TileLoad,
+      TaskCategory::TileSuperRes,
+      TaskCategory::Search,
+      TaskCategory::External,
+      TaskCategory::Other,
+    ];
+
+    for category in category_order {
+      if let Some(mut tasks) = tasks_by_category.remove(&category) {
+        // Sort by elapsed time (newest first)
+        tasks.sort_by_key(|(_, task)| std::cmp::Reverse(task.elapsed()));
+
+        let category_name = match category {
+          TaskCategory::TileLoad => "🗺 Tile Loading",
+          TaskCategory::TileSuperRes => "🔍 Super Resolution",
+          TaskCategory::Server => "🌐 Server",
+          TaskCategory::Search => "🔍 Search",
+          TaskCategory::External => "⚙ External",
+          TaskCategory::Other => "📋 Other",
+        };
+
+        ui.group(|ui| {
+          ui.label(egui::RichText::new(category_name).strong().size(11.0));
+          ui.separator();
+
+          if tasks.len() > 5 {
+            // Show count if too many tasks
+            ui.label(format!("{} active tasks", tasks.len()));
+            for (_, task) in tasks.into_iter().take(3) {
+              Self::show_task_info(ui, &task);
+            }
+            ui.label(
+              egui::RichText::new("... and more")
+                .size(10.0)
+                .italics()
+                .color(egui::Color32::GRAY)
+            );
+          } else {
+            for (_, task) in tasks {
+              Self::show_task_info(ui, &task);
+            }
+          }
+        });
+
+        ui.add_space(4.0);
+      }
+    }
+  }
+
+  /// Display individual task info
+  fn show_task_info(ui: &mut egui::Ui, task: &crate::task_tracker::TaskInfo) {
+    ui.horizontal(|ui| {
+      ui.label(
+        egui::RichText::new(&task.name)
+          .size(10.0)
+          .monospace()
+          .color(egui::Color32::from_rgb(70, 70, 70))
+      );
+
+      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let elapsed = task.elapsed();
+        let color = if elapsed.as_secs() > 10 {
+          egui::Color32::from_rgb(200, 100, 0) // Orange for long-running
+        } else if elapsed.as_secs() > 5 {
+          egui::Color32::from_rgb(180, 180, 0) // Yellow for moderate
+        } else {
+          egui::Color32::from_rgb(100, 180, 100) // Green for recent
+        };
+
+        ui.label(
+          egui::RichText::new(format!("{:.1}s", elapsed.as_secs_f32()))
+            .size(9.0)
+            .color(color)
+        );
+      });
+    });
+  }
+
+  fn ui(&mut self, ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
     ui.vertical(|ui| {
       // Sidebar header with close button
       ui.horizontal(|ui| {
@@ -771,6 +921,12 @@ impl Sidebar {
                   layer.ui(ui);
                 }
               });
+            });
+
+          egui::CollapsingHeader::new("📊 Performance Monitoring")
+            .default_open(false)
+            .show(ui, |ui| {
+              Self::show_performance_monitoring(ui, runtime_monitor);
             });
         });
     });

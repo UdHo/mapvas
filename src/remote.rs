@@ -7,7 +7,10 @@ use log::warn;
 use std::{net::SocketAddr, sync::mpsc::Sender};
 use tower_http::trace::{self, TraceLayer};
 
-use crate::map::{map_event::MapEvent, mapvas_egui::ParameterUpdate};
+use crate::{
+  map::{map_event::MapEvent, mapvas_egui::ParameterUpdate},
+  task_tracker::{TaskCategory, TaskGuard},
+};
 
 pub const DEFAULT_PORT: u16 = 12345;
 
@@ -43,6 +46,8 @@ pub async fn remote_runner(remote: Remote) {
     );
 
   tokio::spawn(async {
+    let _guard = TaskGuard::new("mapcat-server".to_string(), TaskCategory::Server);
+
     let addr = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT));
     log::info!("Mapcat server binding to {addr}");
     let listener = tokio::net::TcpListener::bind(addr)
