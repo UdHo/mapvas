@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use egui::IconData;
 use mapvas::{
-  config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp, profiling, remote::spawn_remote_runner,
+  config::Config,
+  map::{mapvas_egui::Map, tile_renderer::init_style_config},
+  mapvas_ui::MapApp,
+  profiling,
+  remote::spawn_remote_runner,
 };
 use tokio_metrics::RuntimeMonitor;
 
@@ -59,6 +63,10 @@ fn main() -> eframe::Result {
       egui_extras::install_image_loaders(&cc.egui_ctx);
 
       let config = Config::new();
+
+      // Initialize vector tile style config from path specified in config
+      init_style_config(config.vector_style_file.as_deref());
+
       let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
       spawn_remote_runner(runtime, remote.clone());
       Ok(Box::new(MapApp::new(

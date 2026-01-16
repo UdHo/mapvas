@@ -97,6 +97,9 @@ pub struct Config {
   pub commands_dir: Option<PathBuf>,
   pub search_providers: Vec<SearchProviderConfig>,
   pub heading_style: HeadingStyle,
+  /// Path to vector tile style configuration (JSON5 format)
+  #[serde(default)]
+  pub vector_style_file: Option<PathBuf>,
 }
 
 const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
@@ -151,6 +154,7 @@ impl Config {
       commands_dir,
       search_providers: Vec::new(),
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     }
   }
 
@@ -178,6 +182,8 @@ impl Config {
     {
       self.heading_style = other.heading_style;
     }
+
+    self.vector_style_file = self.vector_style_file.or(other.vector_style_file.clone());
 
     self
   }
@@ -239,6 +245,7 @@ impl Default for Config {
   fn default() -> Self {
     let config_path = home_dir().map(|p| p.join(".config").join("mapvas"));
     let commands_dir = config_path.as_ref().map(|p| p.join("commands"));
+    let vector_style_file = config_path.as_ref().map(|p| p.join("style.json5"));
     Self {
       config_path,
       tile_provider: vec![
@@ -262,6 +269,7 @@ impl Default for Config {
         SearchProviderConfig::Nominatim { base_url: None },
       ],
       heading_style: HeadingStyle::default(),
+      vector_style_file,
     }
   }
 }
