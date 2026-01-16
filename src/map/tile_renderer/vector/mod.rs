@@ -1,289 +1,35 @@
-use std::sync::LazyLock;
+// Vector tile renderer organized by feature type
+//
+// Module structure:
+// - styling: Colors and styling functions for all features
+// - labels: Text rendering (horizontal, rotated, along paths)
+// - roads: Road rendering (placeholder for future enhancements)
+// - water: Water body and waterway rendering (placeholder)
+// - places: City/town/village markers (placeholder)
+// - buildings: Building rendering (placeholder)
+// - terrain: Landuse/landcover rendering (placeholder)
+
+mod styling;
+mod labels;
+mod roads;
+mod water;
+mod places;
+mod buildings;
+mod terrain;
+
+// Re-export key functions from submodules
+use labels::{calculate_path_length, render_text, render_text_along_path};
+use styling::{get_fill_color, get_road_styling, BACKGROUND_COLOR};
 
 use egui::ColorImage;
-use fontdue::Font;
 use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use super::{TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
 
-// Embedded font - using a basic sans-serif font
-static FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
-
-// Lazy-loaded font instance
-static FONT: LazyLock<Font> = LazyLock::new(|| {
-  Font::from_bytes(FONT_DATA, fontdue::FontSettings::default())
-    .expect("Failed to load embedded font")
-});
-
 const TILE_SIZE: u32 = 256;
 const MVT_EXTENT: f32 = 4096.0;
 
-// Helper function to create colors (since from_rgba8 is not const)
-fn color(r: u8, g: u8, b: u8) -> Color {
-  Color::from_rgba8(r, g, b, 255)
-}
-
-// Color constants for OSM-style rendering
-static BACKGROUND_COLOR: LazyLock<Color> = LazyLock::new(|| color(242, 239, 233)); // Light cream
-static WATER_COLOR: LazyLock<Color> = LazyLock::new(|| color(170, 211, 223)); // Blue
-static LAND_COLOR: LazyLock<Color> = LazyLock::new(|| color(232, 227, 216)); // Slightly darker cream
-static PARK_COLOR: LazyLock<Color> = LazyLock::new(|| color(200, 230, 180)); // Green
-static BUILDING_COLOR: LazyLock<Color> = LazyLock::new(|| color(200, 190, 180)); // Tan/brown
-static ROAD_COLOR: LazyLock<Color> = LazyLock::new(|| color(255, 255, 255)); // White
-static ROAD_CASING_COLOR: LazyLock<Color> = LazyLock::new(|| color(180, 180, 180)); // Gray
-
-/// Renders text onto a pixmap at the given position.
-/// Returns the width of the rendered text for positioning purposes.
-#[allow(
-  clippy::cast_precision_loss,
-  clippy::cast_possible_truncation,
-  clippy::cast_possible_wrap,
-  clippy::cast_sign_loss
-)]
-fn render_text(
-  pixmap: &mut Pixmap,
-  text: &str,
-  x: f32,
-  y: f32,
-  font_size: f32,
-  color: Color,
-) -> f32 {
-  let font = &*FONT;
-
-  // Get metrics for a typical capital letter to establish baseline
-  // We'll use this to calculate a consistent baseline for all characters
-  let (ref_metrics, _) = font.rasterize('A', font_size);
-  let baseline_offset = ref_metrics.height as f32 + ref_metrics.ymin as f32;
-
-  let mut total_width = 0.0_f32;
-  let mut cursor_x = x;
-
-  for ch in text.chars() {
-    let (metrics, bitmap) = font.rasterize(ch, font_size);
-
-    if bitmap.is_empty() {
-      // Space or non-printable character
-      cursor_x += metrics.advance_width;
-      total_width += metrics.advance_width;
-      continue;
-    }
-
-    // Calculate position with consistent baseline
-    // All characters align to the same baseline derived from 'A'
-    let glyph_x = (cursor_x + metrics.xmin as f32).round() as i32;
-    let glyph_y =
-      (y + baseline_offset - metrics.height as f32 - metrics.ymin as f32).round() as i32;
-
-    // Draw glyph pixels
-    for (i, &alpha) in bitmap.iter().enumerate() {
-      if alpha == 0 {
-        continue;
-      }
-
-      let px = glyph_x + (i % metrics.width) as i32;
-      let py = glyph_y + (i / metrics.width) as i32;
-
-      // Bounds check
-      if px < 0 || py < 0 || px >= pixmap.width() as i32 || py >= pixmap.height() as i32 {
-        continue;
-      }
-
-      // Blend the glyph with the existing pixel
-      let pixel_idx = (py as u32 * pixmap.width() + px as u32) as usize * 4;
-      if let Some(pixel_slice) = pixmap.data_mut().get_mut(pixel_idx..pixel_idx + 4) {
-        let alpha_f = f32::from(alpha) / 255.0;
-        let src_r = (color.red() * 255.0) as u8;
-        let src_g = (color.green() * 255.0) as u8;
-        let src_b = (color.blue() * 255.0) as u8;
-
-        // Alpha blend
-        pixel_slice[0] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[0]) + alpha_f * f32::from(src_r)) as u8;
-        pixel_slice[1] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[1]) + alpha_f * f32::from(src_g)) as u8;
-        pixel_slice[2] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[2]) + alpha_f * f32::from(src_b)) as u8;
-        pixel_slice[3] = 255; // Fully opaque
-      }
-    }
-
-    cursor_x += metrics.advance_width;
-    total_width += metrics.advance_width;
-  }
-
-  total_width
-}
-
-/// Calculate the total length of a path
-fn calculate_path_length(coords: &[(f32, f32)]) -> f32 {
-  coords
-    .windows(2)
-    .map(|w| {
-      let dx = w[1].0 - w[0].0;
-      let dy = w[1].1 - w[0].1;
-      (dx * dx + dy * dy).sqrt()
-    })
-    .sum()
-}
-
-/// Find a point along the path at a given distance from the start
-/// Returns (x, y, angle) where angle is the direction of the path at that point
-fn point_along_path(coords: &[(f32, f32)], distance: f32) -> Option<(f32, f32, f32)> {
-  if coords.len() < 2 {
-    return None;
-  }
-
-  let mut remaining = distance;
-
-  for window in coords.windows(2) {
-    let (x1, y1) = window[0];
-    let (x2, y2) = window[1];
-
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let segment_length = (dx * dx + dy * dy).sqrt();
-
-    if remaining <= segment_length {
-      // Point is on this segment
-      let t = if segment_length > 0.0 {
-        remaining / segment_length
-      } else {
-        0.0
-      };
-      let x = x1 + t * dx;
-      let y = y1 + t * dy;
-      let angle = dy.atan2(dx);
-      return Some((x, y, angle));
-    }
-
-    remaining -= segment_length;
-  }
-
-  // Past the end - return the last point with the angle of the last segment
-  if coords.len() >= 2 {
-    let (x1, y1) = coords[coords.len() - 2];
-    let (x2, y2) = coords[coords.len() - 1];
-    let angle = (y2 - y1).atan2(x2 - x1);
-    Some((x2, y2, angle))
-  } else {
-    None
-  }
-}
-
-/// Render a single glyph bitmap rotated by the given angle around (cx, cy)
-#[allow(
-  clippy::cast_precision_loss,
-  clippy::cast_possible_truncation,
-  clippy::cast_possible_wrap,
-  clippy::cast_sign_loss,
-  clippy::too_many_arguments
-)]
-fn render_rotated_glyph(
-  pixmap: &mut Pixmap,
-  bitmap: &[u8],
-  glyph_width: usize,
-  glyph_height: usize,
-  cx: f32,
-  cy: f32,
-  angle: f32,
-  color: Color,
-) {
-  let cos_a = angle.cos();
-  let sin_a = angle.sin();
-
-  // Glyph center offset
-  let half_w = glyph_width as f32 / 2.0;
-  let half_h = glyph_height as f32 / 2.0;
-
-  for gy in 0..glyph_height {
-    for gx in 0..glyph_width {
-      let alpha = bitmap[gy * glyph_width + gx];
-      if alpha == 0 {
-        continue;
-      }
-
-      // Position relative to glyph center
-      let rel_x = gx as f32 - half_w;
-      let rel_y = gy as f32 - half_h;
-
-      // Rotate around center
-      let rot_x = rel_x * cos_a - rel_y * sin_a;
-      let rot_y = rel_x * sin_a + rel_y * cos_a;
-
-      // Final position
-      let px = (cx + rot_x).round() as i32;
-      let py = (cy + rot_y).round() as i32;
-
-      // Bounds check
-      if px < 0 || py < 0 || px >= pixmap.width() as i32 || py >= pixmap.height() as i32 {
-        continue;
-      }
-
-      // Blend the pixel
-      let pixel_idx = (py as u32 * pixmap.width() + px as u32) as usize * 4;
-      if let Some(pixel_slice) = pixmap.data_mut().get_mut(pixel_idx..pixel_idx + 4) {
-        let alpha_f = f32::from(alpha) / 255.0;
-        let src_r = (color.red() * 255.0) as u8;
-        let src_g = (color.green() * 255.0) as u8;
-        let src_b = (color.blue() * 255.0) as u8;
-
-        // Alpha blend
-        pixel_slice[0] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[0]) + alpha_f * f32::from(src_r)) as u8;
-        pixel_slice[1] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[1]) + alpha_f * f32::from(src_g)) as u8;
-        pixel_slice[2] =
-          ((1.0 - alpha_f) * f32::from(pixel_slice[2]) + alpha_f * f32::from(src_b)) as u8;
-        pixel_slice[3] = 255;
-      }
-    }
-  }
-}
-
-/// Render text along a path, with each character rotated to follow the path direction
-fn render_text_along_path(
-  pixmap: &mut Pixmap,
-  text: &str,
-  path: &[(f32, f32)],
-  start_offset: f32,
-  font_size: f32,
-  text_color: Color,
-) {
-  let font = &*FONT;
-
-  let mut current_offset = start_offset.max(0.0);
-
-  for ch in text.chars() {
-    let (metrics, bitmap) = font.rasterize(ch, font_size);
-
-    if bitmap.is_empty() {
-      // Space or non-printable - just advance
-      current_offset += metrics.advance_width;
-      continue;
-    }
-
-    // Find position and angle at current offset
-    let Some((x, y, angle)) = point_along_path(path, current_offset + metrics.advance_width / 2.0)
-    else {
-      break;
-    };
-
-    // Render the glyph rotated around its center
-    render_rotated_glyph(
-      pixmap,
-      &bitmap,
-      metrics.width,
-      metrics.height,
-      x,
-      y,
-      angle,
-      text_color,
-    );
-
-    current_offset += metrics.advance_width;
-  }
-}
 
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
 #[derive(Debug, Clone, Default)]
@@ -440,21 +186,37 @@ impl VectorTileRenderer {
       match &feature.geometry {
         geo_types::Geometry::Polygon(polygon) => {
           polygon_count += 1;
+
+          // For Protomaps landcover/landuse layers: use 'kind' which has the actual feature type
+          let polygon_class = if layer_name == "landcover" || layer_name == "landuse" {
+            feature_kind.unwrap_or(feature_class)
+          } else {
+            feature_class
+          };
+
           if polygon_count <= 2 {
             log::info!(
-              "Layer '{}' polygon {} class='{}': {} coords",
+              "Layer '{}' polygon {} class='{}' kind={:?}: {} coords",
               layer_name,
               polygon_count,
               feature_class,
+              feature_kind,
               polygon.exterior().coords().count()
             );
           }
-          Self::render_polygon_with_class(pixmap, polygon, layer_name, feature_class, scale);
+          Self::render_polygon_with_class(pixmap, polygon, layer_name, polygon_class, scale);
         }
         geo_types::Geometry::MultiPolygon(multi) => {
+          // For Protomaps landcover/landuse layers: use 'kind' which has the actual feature type
+          let polygon_class = if layer_name == "landcover" || layer_name == "landuse" {
+            feature_kind.unwrap_or(feature_class)
+          } else {
+            feature_class
+          };
+
           for polygon in multi.iter() {
             polygon_count += 1;
-            Self::render_polygon_with_class(pixmap, polygon, layer_name, feature_class, scale);
+            Self::render_polygon_with_class(pixmap, polygon, layer_name, polygon_class, scale);
           }
         }
         geo_types::Geometry::LineString(line) => {
@@ -557,134 +319,6 @@ impl VectorTileRenderer {
     (point_features, line_labels)
   }
 
-  fn get_fill_color(layer_name: &str, feature_class: &str) -> Option<Color> {
-    // Check feature class first for specific types
-    match feature_class {
-      // Water features
-      "water" | "ocean" | "bay" | "lake" | "river" | "stream" => Some(*WATER_COLOR),
-      // Green/park features
-      "grass" | "forest" | "wood" | "park" | "garden" | "meadow" | "scrub" => Some(*PARK_COLOR),
-      // Buildings
-      "building" => Some(*BUILDING_COLOR),
-      // Default to layer-based coloring
-      _ => match layer_name {
-        "water" | "waterway" => Some(*WATER_COLOR),
-        "landcover" | "landuse" => Some(*LAND_COLOR),
-        "park" | "green" => Some(*PARK_COLOR),
-        "building" => Some(*BUILDING_COLOR),
-        _ => None,
-      },
-    }
-  }
-
-  /// Returns (`casing_color`, `casing_width`, `inner_color`, `inner_width`) for roads
-  #[allow(clippy::match_same_arms)]
-  fn get_road_styling(
-    layer_name: &str,
-    feature_class: &str,
-    tile_zoom: u8,
-  ) -> (Color, f32, Color, f32) {
-    // Handle water features
-    if layer_name == "water" || layer_name == "waterway" {
-      return (*WATER_COLOR, 0.0, *WATER_COLOR, 1.5);
-    }
-
-    // Calculate zoom-based width multiplier
-    // At low zoom (3-8), roads should be MUCH thinner
-    // At medium zoom (9-12), roads gradually increase
-    // At high zoom (14+), roads are normal width
-    let zoom_scale = match tile_zoom {
-      0..=5 => 0.08, // Very zoomed out (continents) - extremely thin
-      6 => 0.12,
-      7 => 0.16,
-      8 => 0.22,
-      9 => 0.3,
-      10 => 0.4,
-      11 => 0.55,
-      12 => 0.7,
-      13 => 0.85,
-      14 => 1.0,   // Normal width (street level)
-      15.. => 1.0, // Keep at normal width
-    };
-
-    // Handle transportation/roads with more pronounced width and color differences
-    let (casing_color, base_casing_width, inner_color, base_inner_width) = match feature_class {
-      // Motorways/highways - widest, bright red (OSM style)
-      "motorway" | "motorway_link" => (
-        color(160, 20, 20), // Dark red casing
-        10.0,               // Very wide casing for highways
-        color(235, 75, 65), // Bright red inner
-        7.0,                // Wide inner
-      ),
-
-      // Trunk roads - very wide, orange
-      "trunk" | "trunk_link" => (
-        color(170, 85, 20),  // Dark orange casing
-        8.0,                 // Very wide
-        color(255, 150, 90), // Bright orange inner
-        5.5,
-      ),
-
-      // Primary roads - wide, yellow-orange
-      "primary" | "primary_link" => (
-        color(150, 110, 60),  // Brown-orange casing
-        6.5,                  // Wide
-        color(255, 200, 100), // Golden/tan inner
-        4.5,
-      ),
-
-      // Secondary roads - medium width, yellow
-      "secondary" | "secondary_link" => (
-        color(140, 140, 80),  // Olive casing
-        5.0,                  // Medium width
-        color(255, 240, 150), // Light yellow inner
-        3.5,
-      ),
-
-      // Tertiary roads - medium-small, light with gray border
-      "tertiary" | "tertiary_link" => (
-        color(120, 120, 120), // Medium gray casing
-        3.5,
-        color(255, 255, 255), // White inner
-        2.5,
-      ),
-
-      // Residential/unclassified - small, white with gray border
-      "residential" | "unclassified" => (
-        color(150, 150, 150), // Light gray casing
-        2.5,
-        color(255, 255, 255), // White inner
-        1.5,
-      ),
-
-      // Service roads - smallest, light gray
-      "service" | "minor" => (
-        color(180, 180, 180), // Very light gray casing
-        1.5,
-        color(230, 230, 230), // Almost white inner
-        1.0,
-      ),
-
-      // Paths/footways - very thin
-      "path" | "footway" | "pedestrian" | "cycleway" => (
-        color(200, 150, 100), // Brown casing
-        1.2,
-        color(250, 220, 200), // Light brown inner
-        0.8,
-      ),
-
-      // Default for unknown road types
-      _ => (*ROAD_CASING_COLOR, 2.5, *ROAD_COLOR, 1.5),
-    };
-
-    // Apply zoom-based scaling to widths
-    (
-      casing_color,
-      base_casing_width * zoom_scale,
-      inner_color,
-      base_inner_width * zoom_scale,
-    )
-  }
 
   fn render_polygon_with_class(
     pixmap: &mut Pixmap,
@@ -693,7 +327,7 @@ impl VectorTileRenderer {
     feature_class: &str,
     scale: f32,
   ) {
-    let Some(color) = Self::get_fill_color(layer_name, feature_class) else {
+    let Some(color) = get_fill_color(layer_name, feature_class) else {
       return;
     };
 
@@ -752,7 +386,7 @@ impl VectorTileRenderer {
     if let Some(path) = pb.finish() {
       // Determine road styling based on class, layer, and zoom level
       let (casing_color, casing_width, inner_color, inner_width) =
-        Self::get_road_styling(layer_name, feature_class, tile_zoom);
+        get_road_styling(layer_name, feature_class, tile_zoom);
 
       // First pass: draw casing (border) if applicable
       if casing_width > 0.0 {
