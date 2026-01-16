@@ -27,7 +27,7 @@ use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use super::{TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
 
-const TILE_SIZE: u32 = 256;
+const TILE_SIZE: u32 = 512;
 const MVT_EXTENT: f32 = 4096.0;
 
 
