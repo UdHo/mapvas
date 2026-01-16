@@ -17,6 +17,7 @@ use crate::{
     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer},
   },
   profile_scope,
+  task_tracker::{TaskCategory, TaskGuard},
 };
 
 use super::{Layer, LayerProperties};
@@ -340,6 +341,12 @@ impl TileLayer {
     );
 
     tokio::spawn(async move {
+      let task_name = format!(
+        "tile-superres-{}-{}-{}",
+        parent_tile.zoom, parent_tile.x, parent_tile.y
+      );
+      let _guard = TaskGuard::new(task_name, TaskCategory::TileSuperRes);
+
       // Download parent tile
       let tile_data = tile_loader
         .tile_data_with_priority(&parent_tile, tile_source, priority)
@@ -489,6 +496,9 @@ impl TileLayer {
     );
 
     tokio::spawn(async move {
+      let task_name = format!("tile-load-{}-{}-{}", tile.zoom, tile.x, tile.y);
+      let _guard = TaskGuard::new(task_name, TaskCategory::TileLoad);
+
       // Download phase (I/O - good for tokio)
       let tile_data = tile_loader
         .tile_data_with_priority(&tile, tile_source, priority)

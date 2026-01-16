@@ -12,5 +12,9 @@ pub mod parser;
 pub mod profiling;
 /// Server logic to send data to a running application.
 pub mod remote;
+/// Rayon thread pool for CPU-bound tile rendering.
+pub mod render_pool;
 /// Location search functionality with multiple providers.
 pub mod search;
+/// Task tracking for UI display.
+pub mod task_tracker;

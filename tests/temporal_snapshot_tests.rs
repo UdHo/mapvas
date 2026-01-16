@@ -31,7 +31,7 @@ fn create_test_app_with_temporal_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 fn create_test_app_with_unix_epoch_kml() -> MapApp {
@@ -55,7 +55,7 @@ fn create_test_app_with_unix_epoch_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -406,7 +406,7 @@ fn create_test_app_with_debug_range_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
@@ -430,7 +430,7 @@ fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -536,7 +536,7 @@ async fn large_file_temporal_parsing() {
   }
   remote.handle_map_event(MapEvent::Focus);
 
-  let app = MapApp::new(map, remote, data_holder, config);
+  let app = MapApp::new(map, remote, data_holder, config, None);
 
   let mut harness = Harness::new_state(
     |ctx, app: &mut MapApp| {

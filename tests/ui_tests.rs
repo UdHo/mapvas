@@ -8,7 +8,7 @@ fn create_test_app() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
   let (map, remote, data_holder) = Map::new(ctx);
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
