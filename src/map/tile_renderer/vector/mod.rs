@@ -9,7 +9,7 @@
 // - buildings: Building rendering (placeholder)
 // - terrain: Landuse/landcover rendering (placeholder)
 
-mod styling;
+pub mod styling;
 mod labels;
 mod roads;
 mod water;
@@ -19,16 +19,16 @@ mod terrain;
 
 // Re-export key functions from submodules
 use labels::{calculate_path_length, render_text, render_text_along_path};
-use styling::{get_fill_color, get_road_styling, BACKGROUND_COLOR};
+use styling::{
+  get_fill_color, get_place_font_size, get_road_styling, should_show_place, style_config,
+  BACKGROUND_COLOR,
+};
 
 use egui::ColorImage;
-use tiny_skia::{Color, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use super::{TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
-
-const TILE_SIZE: u32 = 512;
-const MVT_EXTENT: f32 = 4096.0;
 
 
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
@@ -71,7 +71,7 @@ impl VectorTileRenderer {
   ) {
     let layer_start = std::time::Instant::now();
     #[allow(clippy::cast_possible_truncation)]
-    let scale = tile_size as f32 / MVT_EXTENT;
+    let scale = tile_size as f32 / style_config().rendering.mvt_extent;
 
     let Ok(features) = reader.get_features(layer_index) else {
       log::warn!("Failed to get features for layer '{layer_name}'");
@@ -416,7 +416,7 @@ impl VectorTileRenderer {
     }
   }
 
-  #[allow(clippy::too_many_arguments, clippy::match_same_arms, clippy::cast_precision_loss)]
+  #[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
   fn render_point_with_class(
     pixmap: &mut Pixmap,
     point: geo_types::Point<f32>,
@@ -440,88 +440,28 @@ impl VectorTileRenderer {
         return;
       }
 
-      // Protomaps-based filtering using kind, kind_detail, and population_rank
-      // population_rank: 13-17 (lower = more populous)
-      // More lenient filtering to show cities earlier
-      let should_show = match (feature_kind_detail, population_rank, is_capital, tile_zoom) {
-        // Capitals always show from zoom 3+
-        (_, _, true, z) if z >= 3 => true,
-
-        // Cities by population rank - more lenient thresholds
-        (Some("city"), Some(pr), _, z) if z < 5 => pr <= 14, // Large cities (5M+)
-        (Some("city"), Some(pr), _, z) if z < 7 => pr <= 15, // Cities (1M+)
-        (Some("city"), Some(pr), _, z) if z < 9 => pr <= 16, // Medium cities (500K+)
-        (Some("city"), Some(pr), _, z) if z >= 9 => pr <= 17, // All cities
-        (Some("city"), None, _, z) => z >= 8,                // Cities without rank: zoom 8+
-
-        // Localities (may include cities) - treat like cities
-        (Some("locality"), Some(pr), _, z) if z < 5 => pr <= 14,
-        (Some("locality"), Some(pr), _, z) if z < 7 => pr <= 15,
-        (Some("locality"), Some(pr), _, z) if z < 9 => pr <= 16,
-        (Some("locality"), Some(pr), _, z) if z >= 9 => pr <= 17,
-        (Some("locality"), None, _, z) => z >= 8,
-
-        // Towns and villages
-        (Some("town"), _, _, z) => z >= 11,
-        (Some("village"), _, _, z) => z >= 14,
-
-        // Countries (always show from zoom 3)
-        (Some("country"), _, _, z) => z >= 3,
-
-        // Default: no label for other features
-        _ => false,
-      };
-
-      if !should_show {
-        return; // Skip this label
+      // Use centralized visibility check
+      if !should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom) {
+        return;
       }
 
-      // Calculate base font size based on feature importance
-      let base_font_size = match (feature_kind_detail, is_capital, population_rank) {
-        // Countries - largest
-        (Some("country"), _, _) => 14.0,
-
-        // Capitals - very large
-        (_, true, _) => 12.0,
-
-        // Cities by population rank (13-17, lower = more populous)
-        (Some("city"), _, Some(pr)) if pr <= 13 => 12.0, // Megacities (10M+)
-        (Some("city"), _, Some(pr)) if pr <= 14 => 11.0, // Large cities (5M+)
-        (Some("city"), _, Some(pr)) if pr <= 15 => 10.0, // Cities (1M+)
-        (Some("city"), _, Some(pr)) if pr <= 16 => 9.0,  // Medium cities (500K+)
-        (Some("city"), _, Some(pr)) if pr <= 17 => 8.5,  // Smaller cities
-
-        // Localities by population rank
-        (Some("locality"), _, Some(pr)) if pr <= 14 => 11.0,
-        (Some("locality"), _, Some(pr)) if pr <= 15 => 10.0,
-        (Some("locality"), _, Some(pr)) if pr <= 16 => 9.0,
-        (Some("locality"), _, Some(pr)) if pr <= 17 => 8.5,
-
-        // Cities/localities without rank
-        (Some("city"), _, None) => 9.0,
-        (Some("locality"), _, None) => 9.0,
-
-        // Towns - smaller
-        (Some("town"), _, _) => 8.0,
-
-        // Villages - smallest
-        (Some("village"), _, _) => 7.5,
-
-        // Default
-        _ => 9.0,
-      };
+      // Get font size from centralized config
+      let cfg = style_config();
+      let base_font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
 
       // Scale font size based on tile resolution, but cap to prevent huge text
-      let font_size = (base_font_size * (tile_size as f32 / 256.0)).min(20.0);
+      let font_size =
+        (base_font_size * (tile_size as f32 / 256.0)).min(cfg.font_sizes.max_font_size);
 
       // Draw small marker dot
-      let radius = 2.0 * (tile_size as f32 / 256.0).min(4.0);
+      let radius =
+        cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
       let mut pb = PathBuilder::new();
       pb.push_circle(x, y, radius);
 
       if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba8(50, 50, 50, 255));
+        paint.set_color(cfg.marker_dot.to_color());
         paint.anti_alias = true;
         pixmap.fill_path(
           &path,
@@ -533,8 +473,8 @@ impl VectorTileRenderer {
       }
 
       // Render text label offset to the right of the point
-      let text_x = x + radius + 2.0;
-      let text_y = y + font_size / 3.0; // Vertically center text with point
+      let text_x = x + radius + cfg.markers.text_offset_x;
+      let text_y = y + font_size / cfg.markers.text_vertical_center_factor;
 
       render_text(
         pixmap,
@@ -542,7 +482,7 @@ impl VectorTileRenderer {
         text_x,
         text_y,
         font_size,
-        Color::from_rgba8(0, 0, 0, 255),
+        cfg.place_label.to_color(),
       );
     }
   }
@@ -561,7 +501,7 @@ impl TileRenderer for VectorTileRenderer {
     scale: u32,
   ) -> Result<ColorImage, TileRenderError> {
     let start = std::time::Instant::now();
-    let scaled_size = TILE_SIZE * scale;
+    let scaled_size = style_config().rendering.tile_size * scale;
     log::info!(
       "VectorTileRenderer::render_scaled called for {tile:?}, data size: {} bytes, scale: {scale}x ({}x{})",
       data.len(),
@@ -661,7 +601,7 @@ impl TileRenderer for VectorTileRenderer {
     ) in all_point_features
     {
       #[allow(clippy::cast_possible_truncation)]
-      let scale = scaled_size as f32 / MVT_EXTENT;
+      let scale = scaled_size as f32 / style_config().rendering.mvt_extent;
       Self::render_point_with_class(
         &mut pixmap,
         point,
@@ -682,9 +622,10 @@ impl TileRenderer for VectorTileRenderer {
       "Rendering {} water/road feature labels",
       all_line_labels.len()
     );
+    let cfg = style_config();
     for (linestring, name, layer_name) in all_line_labels {
       #[allow(clippy::cast_possible_truncation)]
-      let scale = scaled_size as f32 / MVT_EXTENT;
+      let scale = scaled_size as f32 / cfg.rendering.mvt_extent;
 
       // Build scaled path coordinates
       let scaled_coords: Vec<(f32, f32)> = linestring
@@ -698,21 +639,23 @@ impl TileRenderer for VectorTileRenderer {
 
       // Different colors for roads vs water features
       let (color, font_size_base) = if layer_name == "roads" {
-        (Color::from_rgba8(80, 80, 80, 255), 10.0) // Dark gray for roads, slightly larger
+        (cfg.road_label.to_color(), cfg.font_sizes.road_label)
       } else {
-        (Color::from_rgba8(60, 100, 140, 255), 9.0) // Blue-gray for water
+        (cfg.water_label.to_color(), cfg.font_sizes.water_label)
       };
 
-      let font_size = font_size_base * (scaled_size as f32 / 256.0).min(2.0);
+      let font_size =
+        font_size_base * (scaled_size as f32 / 256.0).min(cfg.font_sizes.max_label_scale);
 
       // Calculate path length
       let path_length = calculate_path_length(&scaled_coords);
 
       // Estimate text width
-      let estimated_text_width = name.len() as f32 * font_size * 0.6;
+      let estimated_text_width =
+        name.len() as f32 * font_size * cfg.font_sizes.char_width_ratio;
 
       // Skip if text is too long for the path
-      if estimated_text_width > path_length * 0.8 {
+      if estimated_text_width > path_length * cfg.font_sizes.max_path_coverage {
         continue;
       }
 
