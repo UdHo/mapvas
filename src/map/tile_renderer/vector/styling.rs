@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, RwLock};
 
 use dirs::home_dir;
 use log::{error, info};
@@ -7,21 +8,84 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tiny_skia::Color;
 
 // =============================================================================
-// STYLE CONFIG - Loaded from file or defaults
+// STYLE CONFIG - Loaded from file, mutable at runtime
 // =============================================================================
 
-/// Global style configuration, loaded once at startup
-static STYLE_CONFIG: OnceLock<StyleConfig> = OnceLock::new();
+/// Global style configuration, can be modified at runtime
+static STYLE_CONFIG: LazyLock<RwLock<StyleConfig>> =
+  LazyLock::new(|| RwLock::new(StyleConfig::load_from(None)));
+
+/// Path to the style config file (for saving)
+static STYLE_CONFIG_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Version counter - incremented whenever style config changes
+/// Used by renderers to detect when they need to invalidate caches
+static STYLE_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Get the current style version number
+/// This increments each time the style config is modified
+#[must_use]
+pub fn style_version() -> u64 {
+  STYLE_VERSION.load(Ordering::Relaxed)
+}
 
 /// Initialize the style config with a specific path (call this early in app startup)
 /// If not called, `style_config()` will use the default path.
 pub fn init_style_config(path: Option<&Path>) {
-  let _ = STYLE_CONFIG.get_or_init(|| StyleConfig::load_from(path));
+  // Store the path for saving later
+  if let Ok(mut path_guard) = STYLE_CONFIG_PATH.write() {
+    *path_guard = path.map(PathBuf::from).or_else(StyleConfig::default_path);
+  }
+
+  // Load and set the config
+  let config = StyleConfig::load_from(path);
+  if let Ok(mut guard) = STYLE_CONFIG.write() {
+    *guard = config;
+  }
+
+  // Increment version to invalidate caches
+  STYLE_VERSION.fetch_add(1, Ordering::Relaxed);
+  info!("Style config initialized, version {}", style_version());
 }
 
-/// Get the global style configuration
-pub fn style_config() -> &'static StyleConfig {
-  STYLE_CONFIG.get_or_init(|| StyleConfig::load_from(None))
+/// Get a clone of the current style configuration
+#[must_use]
+pub fn style_config() -> StyleConfig {
+  STYLE_CONFIG.read().map_or_else(|_| StyleConfig::default(), |g| g.clone())
+}
+
+/// Update the global style configuration
+pub fn set_style_config(config: StyleConfig) {
+  if let Ok(mut guard) = STYLE_CONFIG.write() {
+    *guard = config;
+  }
+  // Increment version to invalidate caches
+  STYLE_VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Save the current style configuration to the file
+///
+/// # Errors
+/// Returns an error if the config path is unavailable or the file cannot be written.
+pub fn save_style_config() -> Result<(), String> {
+  let config = style_config();
+  let path = STYLE_CONFIG_PATH
+    .read()
+    .ok()
+    .and_then(|g| g.clone())
+    .or_else(StyleConfig::default_path)
+    .ok_or_else(|| "No style config path available".to_string())?;
+
+  // Ensure parent directory exists
+  if let Some(parent) = path.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
+  }
+
+  let content = config.to_documented_json5();
+  std::fs::write(&path, content).map_err(|e| format!("Failed to write style config: {e}"))?;
+
+  info!("Style configuration saved to {}", path.display());
+  Ok(())
 }
 
 /// RGB color representation, serialized as hex string (e.g., "#FF8800")
@@ -33,15 +97,18 @@ pub struct Rgb {
 }
 
 impl Rgb {
+  #[must_use]
   pub const fn new(r: u8, g: u8, b: u8) -> Self {
     Self { r, g, b }
   }
 
+  #[must_use]
   pub fn to_color(self) -> Color {
     Color::from_rgba8(self.r, self.g, self.b, 255)
   }
 
   /// Parse from hex string (with or without #)
+  #[must_use]
   pub fn from_hex(s: &str) -> Option<Self> {
     let s = s.trim_start_matches('#');
     if s.len() != 6 {
@@ -233,6 +300,7 @@ impl StyleConfig {
 
   /// Generate a documented JSON5 config with comments explaining each field
   #[must_use]
+  #[allow(clippy::too_many_lines)]
   pub fn to_documented_json5(&self) -> String {
     format!(
       r#"// MapVas Vector Tile Style Configuration
@@ -493,6 +561,7 @@ impl StyleConfig {
   }
 
   /// Get zoom scale factor for a given zoom level
+  #[must_use]
   pub fn get_zoom_scale(&self, zoom: u8) -> f32 {
     let idx = zoom as usize;
     if idx < self.zoom_scale.len() {
@@ -678,11 +747,14 @@ impl Default for RoadStyleConfig {
 }
 
 // =============================================================================
-// LAZY STATIC COLORS - For backwards compatibility
+// HELPER FUNCTIONS - Live values from config
 // =============================================================================
 
-pub static BACKGROUND_COLOR: LazyLock<Color> =
-  LazyLock::new(|| style_config().background.to_color());
+/// Get the current background color (updated live when config changes)
+#[must_use]
+pub fn background_color() -> Color {
+  style_config().background.to_color()
+}
 
 // =============================================================================
 // STYLING FUNCTIONS
@@ -703,7 +775,7 @@ pub fn get_fill_color(layer_name: &str, feature_class: &str) -> Option<Color> {
       "water" | "waterway" => Some(cfg.water.to_color()),
       "landcover" | "landuse" => Some(cfg.land.to_color()),
       "park" | "green" => Some(cfg.park.to_color()),
-      "building" => Some(cfg.building.to_color()),
+      "building" | "buildings" => Some(cfg.building.to_color()),
       _ => None,
     },
   }

@@ -3,7 +3,10 @@ mod vector;
 
 pub use raster::RasterTileRenderer;
 pub use vector::VectorTileRenderer;
-pub use vector::styling::init_style_config;
+pub use vector::styling::{
+  init_style_config, save_style_config, set_style_config, style_config, style_version, Rgb,
+  RoadStyle, StyleConfig,
+};
 
 use egui::ColorImage;
 use thiserror::Error;
