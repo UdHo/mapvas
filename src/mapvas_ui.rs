@@ -5,7 +5,13 @@ use egui::Widget as _;
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
   config::{Config, HeadingStyle, TileProvider, TileType},
-  map::mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+  map::{
+    mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+    tile_renderer::{
+      init_style_config, save_style_config, set_style_config, style_config, Rgb, RoadStyle,
+      StyleConfig,
+    },
+  },
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
@@ -955,6 +961,9 @@ struct SettingsDialog {
   new_search_provider_url: String,
   new_search_provider_headers: String,
   nominatim_base_url: String,
+  // Style editing state
+  style_config: StyleConfig,
+  style_changed: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -962,6 +971,7 @@ enum SettingsTab {
   TileProviders,
   SearchProviders,
   General,
+  Styling,
 }
 
 impl SettingsDialog {
@@ -990,6 +1000,8 @@ impl SettingsDialog {
       new_search_provider_url: String::new(),
       new_search_provider_headers: String::new(),
       nominatim_base_url: String::new(),
+      style_config: style_config(),
+      style_changed: false,
     }
   }
 
@@ -1027,6 +1039,7 @@ impl SettingsDialog {
             SettingsTab::SearchProviders,
             "Search Providers",
           );
+          ui.selectable_value(&mut self.selected_tab, SettingsTab::Styling, "Styling");
         });
 
         ui.separator();
@@ -1037,6 +1050,7 @@ impl SettingsDialog {
             SettingsTab::General => self.general_settings_ui(ui),
             SettingsTab::TileProviders => self.tile_providers_ui(ui),
             SettingsTab::SearchProviders => self.search_providers_ui(ui),
+            SettingsTab::Styling => self.styling_ui(ui),
           });
       });
     self.open = open;
@@ -1352,6 +1366,192 @@ impl SettingsDialog {
     });
   }
 
+  #[allow(clippy::too_many_lines)]
+  fn styling_ui(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Vector Tile Styling");
+    ui.separator();
+
+    ui.label("Configure colors and styling for vector tile rendering. Changes apply immediately.");
+    ui.add_space(8.0);
+
+    // Action buttons
+    ui.horizontal(|ui| {
+      if ui.button("Reset to Defaults").clicked() {
+        self.style_config = StyleConfig::default();
+        self.style_changed = true;
+        set_style_config(self.style_config.clone());
+      }
+
+      if ui.button("Reload from File").clicked() {
+        init_style_config(self.config.vector_style_file.as_deref());
+        self.style_config = style_config();
+        self.style_changed = false;
+      }
+
+      if self.style_changed {
+        if ui.button("Save to File").clicked() {
+          match save_style_config() {
+            Ok(()) => {
+              self.style_changed = false;
+              log::info!("Style saved successfully");
+            }
+            Err(e) => log::error!("Failed to save style: {e}"),
+          }
+        }
+        ui.label(egui::RichText::new("(unsaved changes)").italics().color(egui::Color32::YELLOW));
+      }
+    });
+
+    ui.add_space(8.0);
+
+    // Base colors section
+    egui::CollapsingHeader::new("Base Colors")
+      .default_open(true)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::color_edit(ui, "Background", &mut self.style_config.background);
+        changed |= Self::color_edit(ui, "Water", &mut self.style_config.water);
+        changed |= Self::color_edit(ui, "Land", &mut self.style_config.land);
+        changed |= Self::color_edit(ui, "Park", &mut self.style_config.park);
+        changed |= Self::color_edit(ui, "Building", &mut self.style_config.building);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Label colors section
+    egui::CollapsingHeader::new("Label Colors")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::color_edit(ui, "Place Labels", &mut self.style_config.place_label);
+        changed |= Self::color_edit(ui, "Road Labels", &mut self.style_config.road_label);
+        changed |= Self::color_edit(ui, "Water Labels", &mut self.style_config.water_label);
+        changed |= Self::color_edit(ui, "Marker Dot", &mut self.style_config.marker_dot);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Road styles section
+    egui::CollapsingHeader::new("Road Styles")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::road_style_edit(ui, "Motorway", &mut self.style_config.roads.motorway);
+        changed |= Self::road_style_edit(ui, "Trunk", &mut self.style_config.roads.trunk);
+        changed |= Self::road_style_edit(ui, "Primary", &mut self.style_config.roads.primary);
+        changed |= Self::road_style_edit(ui, "Secondary", &mut self.style_config.roads.secondary);
+        changed |= Self::road_style_edit(ui, "Tertiary", &mut self.style_config.roads.tertiary);
+        changed |= Self::road_style_edit(ui, "Residential", &mut self.style_config.roads.residential);
+        changed |= Self::road_style_edit(ui, "Service", &mut self.style_config.roads.service);
+        changed |= Self::road_style_edit(ui, "Path", &mut self.style_config.roads.path);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Rendering settings section
+    egui::CollapsingHeader::new("Rendering Settings")
+      .default_open(false)
+      .show(ui, |ui| {
+        ui.horizontal(|ui| {
+          ui.label("Tile Size:");
+          ui.label(format!("{}px", self.style_config.rendering.tile_size));
+          ui.small("(restart required to change)");
+        });
+      });
+
+    // Font sizes section
+    egui::CollapsingHeader::new("Font Sizes")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::float_slider(ui, "Country", &mut self.style_config.font_sizes.country, 8.0..=24.0);
+        changed |= Self::float_slider(ui, "Capital", &mut self.style_config.font_sizes.capital, 8.0..=20.0);
+        changed |= Self::float_slider(ui, "City", &mut self.style_config.font_sizes.city, 6.0..=18.0);
+        changed |= Self::float_slider(ui, "Town", &mut self.style_config.font_sizes.town, 6.0..=16.0);
+        changed |= Self::float_slider(ui, "Village", &mut self.style_config.font_sizes.village, 5.0..=14.0);
+        changed |= Self::float_slider(ui, "Road Label", &mut self.style_config.font_sizes.road_label, 6.0..=16.0);
+        changed |= Self::float_slider(ui, "Water Label", &mut self.style_config.font_sizes.water_label, 6.0..=16.0);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+  }
+
+  /// Interactive color editor - returns true if changed
+  fn color_edit(ui: &mut egui::Ui, label: &str, rgb: &mut Rgb) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+      let mut color = [rgb.r, rgb.g, rgb.b];
+      if ui.color_edit_button_srgb(&mut color).changed() {
+        rgb.r = color[0];
+        rgb.g = color[1];
+        rgb.b = color[2];
+        changed = true;
+      }
+      ui.label(label);
+      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.monospace(rgb.to_hex());
+      });
+    });
+    changed
+  }
+
+  /// Interactive road style editor - returns true if changed
+  fn road_style_edit(ui: &mut egui::Ui, label: &str, style: &mut RoadStyle) -> bool {
+    let mut changed = false;
+
+    egui::CollapsingHeader::new(label)
+      .default_open(false)
+      .show(ui, |ui| {
+        ui.horizontal(|ui| {
+          let mut casing = [style.casing.r, style.casing.g, style.casing.b];
+          if ui.color_edit_button_srgb(&mut casing).changed() {
+            style.casing = Rgb::new(casing[0], casing[1], casing[2]);
+            changed = true;
+          }
+          ui.label("Casing");
+
+          let mut inner = [style.inner.r, style.inner.g, style.inner.b];
+          if ui.color_edit_button_srgb(&mut inner).changed() {
+            style.inner = Rgb::new(inner[0], inner[1], inner[2]);
+            changed = true;
+          }
+          ui.label("Inner");
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Casing width:");
+          if ui.add(egui::DragValue::new(&mut style.casing_width).range(0.5..=20.0).speed(0.1)).changed() {
+            changed = true;
+          }
+          ui.label("Inner width:");
+          if ui.add(egui::DragValue::new(&mut style.inner_width).range(0.5..=15.0).speed(0.1)).changed() {
+            changed = true;
+          }
+        });
+      });
+
+    changed
+  }
+
+  /// Float slider editor - returns true if changed
+  fn float_slider(ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+      ui.label(format!("{label}:"));
+      if ui.add(egui::Slider::new(value, range).step_by(0.5)).changed() {
+        changed = true;
+      }
+    });
+    changed
+  }
   fn save_settings(&mut self) {
     use std::path::PathBuf;
 

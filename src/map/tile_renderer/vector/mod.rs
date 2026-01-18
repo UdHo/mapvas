@@ -20,8 +20,8 @@ mod terrain;
 // Re-export key functions from submodules
 use labels::{calculate_path_length, render_text, render_text_along_path};
 use styling::{
-  get_fill_color, get_place_font_size, get_road_styling, should_show_place, style_config,
-  BACKGROUND_COLOR,
+  background_color, get_fill_color, get_place_font_size, get_road_styling, should_show_place,
+  style_config,
 };
 
 use egui::ColorImage;
@@ -521,7 +521,7 @@ impl TileRenderer for VectorTileRenderer {
       .ok_or_else(|| TileRenderError::ParseError("Failed to create pixmap".to_string()))?;
 
     // Fill background
-    pixmap.fill(*BACKGROUND_COLOR);
+    pixmap.fill(background_color());
 
     // Get layer names and render in order (background layers first)
     let layer_names = reader
@@ -556,6 +556,7 @@ impl TileRenderer for VectorTileRenderer {
       "water",
       "waterway",
       "building",
+      "buildings", // Alternative name used by some tile providers
       "transportation",
       "road",
       "highway",
