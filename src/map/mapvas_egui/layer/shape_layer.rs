@@ -80,8 +80,9 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   let ellipsis = "...";
 
   // Measure using egui's text measurement utilities
-  let galley =
-    ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let galley = ui
+    .ctx()
+    .fonts_mut(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), egui::Color32::BLACK));
   let full_width = galley.size().x;
 
   // Add some safety margin to prevent edge cases
@@ -92,8 +93,9 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   }
 
   // Find the longest substring that fits with ellipsis
-  let ellipsis_galley =
-    ui.fonts(|f| f.layout_no_wrap(ellipsis.to_string(), font_id.clone(), egui::Color32::BLACK));
+  let ellipsis_galley = ui
+    .ctx()
+    .fonts_mut(|f| f.layout_no_wrap(ellipsis.to_string(), font_id.clone(), egui::Color32::BLACK));
   let ellipsis_width = ellipsis_galley.size().x;
 
   // If even ellipsis doesn't fit, return just dots
@@ -114,8 +116,9 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
     }
 
     let substring: String = chars[..mid].iter().collect();
-    let substring_galley =
-      ui.fonts(|f| f.layout_no_wrap(substring, font_id.clone(), egui::Color32::BLACK));
+    let substring_galley = ui
+      .ctx()
+      .fonts_mut(|f| f.layout_no_wrap(substring, font_id.clone(), egui::Color32::BLACK));
     let test_width = substring_galley.size().x + ellipsis_width;
 
     if test_width <= safe_available_width {
@@ -236,7 +239,7 @@ impl ShapeLayer {
       let header_id = egui::Id::new(format!("shape_layer_{layer_id}"));
 
       let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap();
-      let reserved_galley = ui.fonts(|f| {
+      let reserved_galley = ui.ctx().fonts_mut(|f| {
         f.layout_no_wrap(
           "📁  (9999) ".to_string(),
           font_id.clone(),

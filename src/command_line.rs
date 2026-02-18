@@ -421,7 +421,7 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
     return;
   }
 
-  let screen_rect = ctx.screen_rect();
+  let screen_rect = ctx.content_rect();
   let height = 30.0;
 
   egui::Area::new(egui::Id::new("command_line"))
@@ -470,7 +470,7 @@ pub fn show_command_line_ui(cmd: &mut CommandLine, ctx: &egui::Context) {
 
 /// Show a status message at the bottom of the screen
 fn show_status_message(message: &str, is_error: bool, ctx: &egui::Context) {
-  let screen_rect = ctx.screen_rect();
+  let screen_rect = ctx.content_rect();
   let height = 25.0;
 
   egui::Area::new(egui::Id::new("status_message"))
