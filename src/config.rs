@@ -210,3 +210,162 @@ impl Default for Config {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn heading_style_name_all_variants() {
+    assert_eq!(HeadingStyle::Arrow.name(), "Arrow");
+    assert_eq!(HeadingStyle::Line.name(), "Line");
+    assert_eq!(HeadingStyle::Chevron.name(), "Chevron");
+    assert_eq!(HeadingStyle::Needle.name(), "Needle");
+    assert_eq!(HeadingStyle::Sector.name(), "Sector");
+    assert_eq!(HeadingStyle::Rectangle.name(), "Rectangle");
+  }
+
+  #[test]
+  fn heading_style_all_returns_six() {
+    let all = HeadingStyle::all();
+    assert_eq!(all.len(), 6);
+    assert_eq!(all[0], HeadingStyle::Arrow);
+    assert_eq!(all[5], HeadingStyle::Rectangle);
+  }
+
+  #[test]
+  fn heading_style_default_is_arrow() {
+    assert_eq!(HeadingStyle::default(), HeadingStyle::Arrow);
+  }
+
+  #[test]
+  fn tile_provider_equality() {
+    let a = TileProvider {
+      name: "OSM".to_string(),
+      url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+    };
+    let b = TileProvider {
+      name: "OSM".to_string(),
+      url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+    };
+    let c = TileProvider {
+      name: "Other".to_string(),
+      url: "https://other.com/{z}/{x}/{y}.png".to_string(),
+    };
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+  }
+
+  #[test]
+  fn merge_tile_providers_deduplicated() {
+    let a = Config {
+      config_path: None,
+      tile_provider: vec![TileProvider {
+        name: "OSM".to_string(),
+        url: "https://osm.org".to_string(),
+      }],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let b = Config {
+      config_path: None,
+      tile_provider: vec![
+        TileProvider {
+          name: "OSM".to_string(),
+          url: "https://osm.org".to_string(),
+        },
+        TileProvider {
+          name: "Custom".to_string(),
+          url: "https://custom.org".to_string(),
+        },
+      ],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let merged = a.merge(&b);
+    assert_eq!(merged.tile_provider.len(), 2);
+  }
+
+  #[test]
+  fn merge_search_providers_deduplicated() {
+    let a = Config {
+      config_path: None,
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![SearchProviderConfig::Coordinate],
+      heading_style: HeadingStyle::default(),
+    };
+    let b = Config {
+      config_path: None,
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![
+        SearchProviderConfig::Coordinate,
+        SearchProviderConfig::Nominatim { base_url: None },
+      ],
+      heading_style: HeadingStyle::default(),
+    };
+    let merged = a.merge(&b);
+    assert_eq!(merged.search_providers.len(), 2);
+  }
+
+  #[test]
+  fn merge_config_path_first_wins() {
+    let a = Config {
+      config_path: Some(PathBuf::from("/a")),
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let b = Config {
+      config_path: Some(PathBuf::from("/b")),
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let merged = a.merge(&b);
+    assert_eq!(merged.config_path, Some(PathBuf::from("/a")));
+  }
+
+  #[test]
+  fn merge_config_path_fallback_to_other() {
+    let a = Config {
+      config_path: None,
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let b = Config {
+      config_path: Some(PathBuf::from("/b")),
+      tile_provider: vec![],
+      tile_cache_dir: None,
+      commands_dir: None,
+      search_providers: vec![],
+      heading_style: HeadingStyle::default(),
+    };
+    let merged = a.merge(&b);
+    assert_eq!(merged.config_path, Some(PathBuf::from("/b")));
+  }
+
+  #[test]
+  fn default_config_has_expected_structure() {
+    let config = Config::default();
+    assert_eq!(config.tile_provider.len(), 1);
+    assert_eq!(config.tile_provider[0].name, "OpenStreetMap");
+    assert_eq!(config.search_providers.len(), 2);
+    assert_eq!(config.heading_style, HeadingStyle::Arrow);
+    assert!(config.tile_cache_dir.is_some());
+  }
+}

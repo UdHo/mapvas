@@ -926,4 +926,113 @@ mod tests {
       "Collections with different geometries should not be equal"
     );
   }
+
+  fn parse_kml_file(filename: &str) -> Vec<MapEvent> {
+    use crate::parser::FileParser;
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let kml_path = format!(
+      "{}/tests/resources/{}",
+      env!("CARGO_MANIFEST_DIR"),
+      filename
+    );
+    let file = File::open(&kml_path).unwrap_or_else(|_| panic!("Could not open {kml_path}"));
+    let reader = Box::new(BufReader::new(file));
+    let mut parser = KmlParser::new();
+    parser.parse(reader).collect()
+  }
+
+  #[test]
+  fn test_kml_timespan_begin_only() {
+    let events = parse_kml_file("timespan_begin_only.kml");
+    assert!(!events.is_empty());
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      let leaves = extract_leaf_geometries(&layer.geometries[0]);
+      assert!(!leaves.is_empty());
+      if let Geometry::Point(_, metadata) = leaves[0] {
+        assert!(metadata.time_data.is_some());
+        let td = metadata.time_data.as_ref().unwrap();
+        assert!(td.time_span.is_some());
+        let ts = td.time_span.as_ref().unwrap();
+        assert!(ts.begin.is_some());
+        assert!(ts.end.is_none());
+      }
+    }
+  }
+
+  #[test]
+  fn test_kml_timespan_end_only() {
+    let events = parse_kml_file("timespan_end_only.kml");
+    assert!(!events.is_empty());
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      let leaves = extract_leaf_geometries(&layer.geometries[0]);
+      assert!(!leaves.is_empty());
+      if let Geometry::Point(_, metadata) = leaves[0] {
+        assert!(metadata.time_data.is_some());
+        let td = metadata.time_data.as_ref().unwrap();
+        assert!(td.time_span.is_some());
+        let ts = td.time_span.as_ref().unwrap();
+        assert!(ts.begin.is_none());
+        assert!(ts.end.is_some());
+      }
+    }
+  }
+
+  #[test]
+  fn test_kml_multi_geometry() {
+    let events = parse_kml_file("multi_geometry.kml");
+    assert!(!events.is_empty());
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      let leaves = extract_leaf_geometries(&layer.geometries[0]);
+      assert_eq!(leaves.len(), 2, "MultiGeometry should produce 2 leaf geometries");
+      assert!(matches!(leaves[0], Geometry::Point(_, _)));
+      assert!(matches!(leaves[1], Geometry::LineString(_, _)));
+    }
+  }
+
+  #[test]
+  fn test_kml_polygon_with_description() {
+    let events = parse_kml_file("polygon_with_description.kml");
+    assert!(!events.is_empty());
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      let leaves = extract_leaf_geometries(&layer.geometries[0]);
+      assert!(!leaves.is_empty());
+      if let Geometry::Polygon(coords, metadata) = leaves[0] {
+        assert!(coords.len() >= 4);
+        assert!(metadata.label.is_some());
+        let label = metadata.label.as_ref().unwrap();
+        assert_eq!(label.name, "Test Polygon");
+        // Description should have HTML stripped
+        if let Some(desc) = &label.description {
+          assert!(!desc.contains("<b>"), "HTML should be stripped");
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn test_kml_empty_document() {
+    let events = parse_kml_file("empty.kml");
+    // Empty KML may produce no events or an empty layer
+    if let Some(MapEvent::Layer(layer)) = events.first() {
+      let leaves = extract_leaf_geometries(&layer.geometries[0]);
+      assert!(leaves.is_empty(), "Empty KML should have no leaf geometries");
+    }
+  }
+
+  #[test]
+  fn test_kml_color_abgr_format() {
+    // KML uses ABGR color format
+    assert_eq!(
+      KmlParser::parse_kml_color("ff0000ff"),
+      Some(Color32::from_rgba_unmultiplied(255, 0, 0, 255))
+    );
+    assert_eq!(
+      KmlParser::parse_kml_color("ff00ff00"),
+      Some(Color32::from_rgba_unmultiplied(0, 255, 0, 255))
+    );
+    assert!(KmlParser::parse_kml_color("invalid").is_none());
+    assert!(KmlParser::parse_kml_color("ff00").is_none());
+  }
 }

@@ -148,3 +148,90 @@ impl RoutingSender {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::path::PathBuf;
+  use std::sync::mpsc;
+
+  struct TestRemote {
+    remote: Remote,
+    layer_rx: mpsc::Receiver<MapEvent>,
+    focus_rx: mpsc::Receiver<MapEvent>,
+    clear_rx: mpsc::Receiver<MapEvent>,
+    shutdown_rx: mpsc::Receiver<MapEvent>,
+  }
+
+  fn create_remote() -> TestRemote {
+    let (layer_tx, layer_rx) = mpsc::channel();
+    let (focus_tx, focus_rx) = mpsc::channel();
+    let (clear_tx, clear_rx) = mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel();
+    let (screenshot_tx, _screenshot_rx) = mpsc::channel();
+    let (command_tx, _command_rx) = mpsc::channel();
+    let remote = Remote {
+      layer: layer_tx,
+      focus: focus_tx,
+      clear: clear_tx,
+      shutdown: shutdown_tx,
+      screenshot: screenshot_tx,
+      command: command_tx,
+      update: egui::Context::default(),
+    };
+    TestRemote { remote, layer_rx, focus_rx, clear_rx, shutdown_rx }
+  }
+
+  #[test]
+  fn handle_layer_event() {
+    let t = create_remote();
+    let layer = crate::map::map_event::Layer::new("test".to_string());
+    t.remote.handle_map_event(MapEvent::Layer(layer));
+    let received = t.layer_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::Layer(_)));
+  }
+
+  #[test]
+  fn handle_focus_event() {
+    let t = create_remote();
+    t.remote.handle_map_event(MapEvent::Focus);
+    let received = t.focus_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::Focus));
+  }
+
+  #[test]
+  fn handle_focus_on_event() {
+    let t = create_remote();
+    let event = MapEvent::FocusOn {
+      coordinate: crate::map::coordinates::WGS84Coordinate::new(52.5, 13.4),
+      zoom_level: Some(10),
+    };
+    t.remote.handle_map_event(event);
+    let received = t.focus_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::FocusOn { .. }));
+  }
+
+  #[test]
+  fn handle_clear_event() {
+    let t = create_remote();
+    t.remote.handle_map_event(MapEvent::Clear);
+    let received = t.clear_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::Clear));
+  }
+
+  #[test]
+  fn handle_shutdown_event() {
+    let t = create_remote();
+    t.remote.handle_map_event(MapEvent::Shutdown);
+    let received = t.shutdown_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::Shutdown));
+  }
+
+  #[test]
+  fn handle_screenshot_event_goes_to_focus() {
+    let t = create_remote();
+    t.remote.handle_map_event(MapEvent::Screenshot(PathBuf::from("/tmp/test.png")));
+    let received = t.focus_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    assert!(matches!(received, MapEvent::Screenshot(_)));
+  }
+}

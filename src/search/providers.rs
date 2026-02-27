@@ -350,4 +350,52 @@ mod tests {
       panic!("Should have parsed coordinate");
     }
   }
+
+  #[test]
+  fn test_dms_coordinate_values() {
+    let parser = CoordinateParser::new();
+    let result = parser.parse_coordinate("52°30'N, 13°24'E").unwrap();
+    assert!((result.coordinate.lat - 52.5).abs() < 0.01);
+    assert!((result.coordinate.lon - 13.4).abs() < 0.01);
+  }
+
+  #[test]
+  fn test_dms_south_west() {
+    let parser = CoordinateParser::new();
+    let result = parser.parse_coordinate("33°52'S, 151°12'W").unwrap();
+    assert!(result.coordinate.lat < 0.0);
+    assert!(result.coordinate.lon < 0.0);
+  }
+
+  #[test]
+  fn test_boundary_coordinates() {
+    let parser = CoordinateParser::new();
+    // Origin
+    assert!(parser.parse_coordinate("0, 0").is_some());
+    // Near the poles/antimeridian (but still in valid range)
+    assert!(parser.parse_coordinate("89.9, 179.9").is_some());
+    assert!(parser.parse_coordinate("-89.9, -179.9").is_some());
+  }
+
+  #[test]
+  fn test_out_of_range_rejected() {
+    let parser = CoordinateParser::new();
+    assert!(parser.parse_coordinate("91, 0").is_none());
+    assert!(parser.parse_coordinate("0, 181").is_none());
+    assert!(parser.parse_coordinate("-91, 0").is_none());
+    assert!(parser.parse_coordinate("0, -181").is_none());
+  }
+
+  #[test]
+  fn test_various_whitespace_formats() {
+    let parser = CoordinateParser::new();
+    assert!(parser.parse_coordinate("  52.5 , 13.4  ").is_some());
+    assert!(parser.parse_coordinate("52.5  13.4").is_some());
+  }
+
+  #[test]
+  fn test_nominatim_provider_name() {
+    let provider = NominatimProvider::new(None);
+    assert_eq!(provider.name(), "OpenStreetMap Nominatim");
+  }
 }

@@ -289,3 +289,173 @@ impl GrepParser {
     coordinates.is_valid().then_some(coordinates)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn parser() -> GrepParser {
+    GrepParser::new(false)
+  }
+
+  #[test]
+  fn parse_single_coordinate_produces_point() {
+    let mut p = parser();
+    let event = p.parse_line("52.5, 13.4");
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 1);
+    assert!(matches!(
+      layer.geometries[0],
+      Geometry::Point(_, _)
+    ));
+  }
+
+  #[test]
+  fn parse_two_coordinates_produces_linestring() {
+    let mut p = parser();
+    let event = p.parse_line("52.5, 13.4 53.0, 14.0");
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 1);
+    assert!(matches!(
+      layer.geometries[0],
+      Geometry::LineString(_, _)
+    ));
+  }
+
+  #[test]
+  fn parse_three_plus_coords_with_fill_produces_polygon() {
+    let mut p = parser();
+    p.fill = FillStyle::Solid;
+    let event = p.parse_line("52.0, 13.0 53.0, 14.0 54.0, 15.0");
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 1);
+    assert!(matches!(
+      layer.geometries[0],
+      Geometry::Polygon(_, _)
+    ));
+  }
+
+  #[test]
+  fn parse_three_coords_nofill_produces_linestring() {
+    let mut p = parser();
+    let event = p.parse_line("52.0, 13.0 53.0, 14.0 54.0, 15.0");
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert!(matches!(
+      layer.geometries[0],
+      Geometry::LineString(_, _)
+    ));
+  }
+
+  #[test]
+  fn parse_coordinate_normal() {
+    let p = parser();
+    let coord = p.parse_coordinate("52.5", "13.4").unwrap();
+    assert!((coord.lat - 52.5).abs() < 0.001);
+    assert!((coord.lon - 13.4).abs() < 0.001);
+  }
+
+  #[test]
+  fn parse_coordinate_inverted() {
+    let p = GrepParser::new(true);
+    let coord = p.parse_coordinate("13.4", "52.5").unwrap();
+    assert!((coord.lat - 52.5).abs() < 0.001);
+    assert!((coord.lon - 13.4).abs() < 0.001);
+  }
+
+  #[test]
+  fn parse_coordinate_invalid_out_of_range() {
+    let p = parser();
+    assert!(p.parse_coordinate("91.0", "13.0").is_none());
+    assert!(p.parse_coordinate("52.0", "181.0").is_none());
+  }
+
+  #[test]
+  fn parse_coordinate_non_numeric() {
+    let p = parser();
+    assert!(p.parse_coordinate("abc", "13.0").is_none());
+    assert!(p.parse_coordinate("52.0", "xyz").is_none());
+  }
+
+  #[test]
+  fn parse_color_sets_color() {
+    let mut p = parser();
+    p.parse_color("some text red here");
+    assert_eq!(p.color, Color::from_str("red").unwrap());
+  }
+
+  #[test]
+  fn parse_color_case_insensitive() {
+    let mut p = parser();
+    p.parse_color("GREEN coordinates");
+    assert_eq!(p.color, Color::from_str("green").unwrap());
+  }
+
+  #[test]
+  fn parse_fill_sets_fill() {
+    let mut p = parser();
+    p.parse_fill("solid fill here");
+    assert_eq!(p.fill, FillStyle::Solid);
+  }
+
+  #[test]
+  fn parse_clear_detected() {
+    assert_eq!(GrepParser::parse_clear("CLEAR"), Some(MapEvent::Clear));
+    assert_eq!(GrepParser::parse_clear("clear"), Some(MapEvent::Clear));
+  }
+
+  #[test]
+  fn parse_clear_not_detected() {
+    assert!(GrepParser::parse_clear("some text without keyword").is_none());
+  }
+
+  #[test]
+  fn parse_label_with_pattern() {
+    let p = parser().with_label_pattern(r"name: (\w+)");
+    let label = p.parse_label("name: Berlin");
+    assert_eq!(label, Some("Berlin".to_string()));
+  }
+
+  #[test]
+  fn parse_label_no_pattern() {
+    let p = parser();
+    assert!(p.parse_label("anything").is_none());
+  }
+
+  #[test]
+  fn parse_label_no_match() {
+    let p = parser().with_label_pattern(r"name: (\w+)");
+    assert!(p.parse_label("no match here").is_none());
+  }
+
+  #[test]
+  fn no_match_line_returns_none() {
+    let mut p = parser();
+    assert!(p.parse_line("no coordinates here").is_none());
+  }
+
+  #[test]
+  fn empty_line_returns_none() {
+    let mut p = parser();
+    assert!(p.parse_line("").is_none());
+  }
+
+  #[test]
+  fn with_color_builder() {
+    let p = GrepParser::new(false).with_color(Color::from_str("red").unwrap());
+    assert_eq!(p.color, Color::from_str("red").unwrap());
+  }
+
+  #[test]
+  fn clear_line_returns_clear_event() {
+    let mut p = parser();
+    assert_eq!(p.parse_line("clear"), Some(MapEvent::Clear));
+  }
+}

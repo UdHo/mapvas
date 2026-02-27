@@ -109,3 +109,83 @@ pub enum MapEvent {
   /// Create a screenshot and store it to the given path.
   Screenshot(PathBuf),
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn color_from_str_all_variants() {
+    let cases = [
+      ("blue", Color32::BLUE),
+      ("darkblue", Color32::DARK_BLUE),
+      ("red", Color32::RED),
+      ("darkred", Color32::DARK_RED),
+      ("green", Color32::GREEN),
+      ("darkgreen", Color32::DARK_GREEN),
+      ("yellow", Color32::YELLOW),
+      ("black", Color32::BLACK),
+      ("white", Color32::WHITE),
+      ("grey", Color32::GRAY),
+      ("gray", Color32::GRAY),
+      ("brown", Color32::BROWN),
+    ];
+    for (name, expected) in cases {
+      let color = Color::from_str(name).unwrap();
+      assert_eq!(color.0, expected, "Color '{name}' should match");
+    }
+  }
+
+  #[test]
+  fn color_from_str_case_insensitive() {
+    assert_eq!(Color::from_str("Blue").unwrap().0, Color32::BLUE);
+    assert_eq!(Color::from_str("DARKRED").unwrap().0, Color32::DARK_RED);
+    assert_eq!(Color::from_str("GREEN").unwrap().0, Color32::GREEN);
+  }
+
+  #[test]
+  fn color_from_str_invalid() {
+    assert!(Color::from_str("purple").is_err());
+    assert!(Color::from_str("").is_err());
+    assert!(Color::from_str("notacolor").is_err());
+  }
+
+  #[test]
+  fn color_default_is_blue() {
+    assert_eq!(Color::default().0, Color32::BLUE);
+  }
+
+  #[test]
+  fn fillstyle_from_str_all_variants() {
+    assert_eq!(FillStyle::from_str("solid").unwrap(), FillStyle::Solid);
+    assert_eq!(
+      FillStyle::from_str("transparent").unwrap(),
+      FillStyle::Transparent
+    );
+    assert_eq!(FillStyle::from_str("nofill").unwrap(), FillStyle::NoFill);
+  }
+
+  #[test]
+  fn fillstyle_from_str_case_insensitive() {
+    assert_eq!(FillStyle::from_str("Solid").unwrap(), FillStyle::Solid);
+    assert_eq!(FillStyle::from_str("NOFILL").unwrap(), FillStyle::NoFill);
+  }
+
+  #[test]
+  fn fillstyle_from_str_invalid() {
+    assert!(FillStyle::from_str("hatched").is_err());
+    assert!(FillStyle::from_str("").is_err());
+  }
+
+  #[test]
+  fn fillstyle_default_is_nofill() {
+    assert_eq!(FillStyle::default(), FillStyle::NoFill);
+  }
+
+  #[test]
+  fn layer_new_constructor() {
+    let layer = Layer::new("test_layer".to_string());
+    assert_eq!(layer.id, "test_layer");
+    assert!(layer.geometries.is_empty());
+  }
+}

@@ -513,4 +513,171 @@ mod tests {
 
     assert_eq!(elements, expected);
   }
+
+  #[test]
+  fn label_short_unchanged_for_short_name() {
+    let label = Label::new("Berlin".to_string());
+    assert_eq!(label.short(), "Berlin");
+  }
+
+  #[test]
+  fn label_short_truncated_for_long_name() {
+    let label = Label::new("This is a very long label name that exceeds 25 characters".to_string());
+    assert!(label.short().len() <= 25);
+    assert!(label.short().ends_with("..."));
+  }
+
+  #[test]
+  fn label_short_arrow_notation_extraction() {
+    let label = Label::new("Label NodeId: 284325 → Target".to_string());
+    assert_eq!(label.short(), "NodeId: 284325");
+  }
+
+  #[test]
+  fn label_full_without_description() {
+    let label = Label::new("Test".to_string());
+    assert_eq!(label.full(), "Test");
+  }
+
+  #[test]
+  fn label_full_with_description() {
+    let label = Label::new("Test".to_string()).with_description("Some details".to_string());
+    assert_eq!(label.full(), "Test\n\nSome details");
+  }
+
+  #[test]
+  fn label_from_string() {
+    let label: Label = "hello".into();
+    assert_eq!(label.name, "hello");
+    assert!(label.description.is_none());
+  }
+
+  #[test]
+  fn label_from_owned_string() {
+    let label: Label = String::from("world").into();
+    assert_eq!(label.name, "world");
+  }
+
+  #[test]
+  fn style_defaults() {
+    let s = Style::default();
+    assert_eq!(s.color(), Color32::BLUE);
+    assert_eq!(s.fill_color(), Color32::TRANSPARENT);
+  }
+
+  #[test]
+  fn style_builder_methods() {
+    let s = Style::default()
+      .with_color(Color32::RED)
+      .with_fill_color(Color32::GREEN);
+    assert_eq!(s.color(), Color32::RED);
+    assert_eq!(s.fill_color(), Color32::GREEN);
+
+    // Test with_visible via geometry visibility
+    let hidden = Style::default().with_visible(false);
+    let geom = Geometry::Point(PixelCoordinate::new(0.0, 0.0), Metadata::default().with_style(hidden));
+    assert!(!geom.is_visible());
+  }
+
+  #[test]
+  fn style_overwrite_with_merging() {
+    let base = Style::default()
+      .with_color(Color32::RED)
+      .with_fill_color(Color32::GREEN);
+    let overlay = Style {
+      color: Some(Color32::YELLOW),
+      fill_color: None,
+      visible: true,
+    };
+    let result = base.overwrite_with(&overlay);
+    assert_eq!(result.color(), Color32::YELLOW);
+    assert_eq!(result.fill_color(), Color32::GREEN);
+  }
+
+  #[test]
+  fn metadata_is_visible_at_time_no_time_data() {
+    let m = Metadata::default();
+    let now = Utc::now();
+    assert!(m.is_visible_at_time(now));
+  }
+
+  #[test]
+  fn metadata_is_visible_at_time_with_matching_timestamp() {
+    let now = Utc::now();
+    let m = Metadata::default().with_timestamp(now);
+    assert!(m.is_visible_at_time(now));
+  }
+
+  #[test]
+  fn metadata_is_visible_at_time_with_non_matching_timestamp() {
+    let now = Utc::now();
+    let far_away = now + chrono::Duration::hours(1);
+    let m = Metadata::default().with_timestamp(now);
+    assert!(!m.is_visible_at_time(far_away));
+  }
+
+  #[test]
+  fn metadata_is_visible_at_time_with_time_span() {
+    let now = Utc::now();
+    let begin = now - chrono::Duration::hours(1);
+    let end = now + chrono::Duration::hours(1);
+    let m = Metadata::default().with_time_span(Some(begin), Some(end));
+    assert!(m.is_visible_at_time(now));
+    assert!(!m.is_visible_at_time(now + chrono::Duration::hours(2)));
+  }
+
+  #[test]
+  fn metadata_is_visible_in_time_window_overlapping() {
+    let now = Utc::now();
+    let m = Metadata::default().with_timestamp(now);
+    let window = chrono::Duration::hours(2);
+    assert!(m.is_visible_in_time_window(now, window));
+  }
+
+  #[test]
+  fn metadata_is_visible_in_time_window_non_overlapping() {
+    let now = Utc::now();
+    let far = now + chrono::Duration::hours(10);
+    let m = Metadata::default().with_timestamp(now);
+    let window = chrono::Duration::hours(1);
+    assert!(!m.is_visible_in_time_window(far, window));
+  }
+
+  #[test]
+  fn geometry_from_coords_empty() {
+    let coords: Vec<PixelCoordinate> = vec![];
+    assert!(Geometry::from_coords(coords).is_none());
+  }
+
+  #[test]
+  fn geometry_from_coords_single() {
+    let coords = vec![PixelCoordinate::new(1.0, 2.0)];
+    let geom = Geometry::from_coords(coords).unwrap();
+    assert!(matches!(geom, Geometry::Point(_, _)));
+  }
+
+  #[test]
+  fn geometry_from_coords_multiple() {
+    let coords = vec![
+      PixelCoordinate::new(1.0, 2.0),
+      PixelCoordinate::new(3.0, 4.0),
+    ];
+    let geom = Geometry::from_coords(coords).unwrap();
+    assert!(matches!(geom, Geometry::LineString(_, _)));
+  }
+
+  #[test]
+  fn geometry_is_visible_with_default_style() {
+    let geom = Geometry::Point(PixelCoordinate::new(1.0, 2.0), Metadata::default());
+    assert!(geom.is_visible());
+  }
+
+  #[test]
+  fn geometry_is_visible_with_hidden_style() {
+    let geom = Geometry::Point(
+      PixelCoordinate::new(1.0, 2.0),
+      Metadata::default().with_style(Style::default().with_visible(false)),
+    );
+    assert!(!geom.is_visible());
+  }
 }

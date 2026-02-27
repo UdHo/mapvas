@@ -171,3 +171,115 @@ impl Parser for TTJsonParser {
     self.layer_name = layer_name;
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn parse_json(json: &str) -> Option<MapEvent> {
+    let mut parser = TTJsonParser::new();
+    for line in json.lines() {
+      parser.parse_line(line);
+    }
+    parser.finalize()
+  }
+
+  #[test]
+  fn parse_line_returns_none_accumulates_data() {
+    let mut parser = TTJsonParser::new();
+    assert!(parser.parse_line("{").is_none());
+    assert!(!parser.data.is_empty());
+  }
+
+  #[test]
+  fn route_single_leg() {
+    let json = std::fs::read_to_string(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/tt_route.json"
+    ))
+    .unwrap();
+    let event = parse_json(&json).unwrap();
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 1);
+    if let Geometry::GeometryCollection(routes, _) = &layer.geometries[0] {
+      assert_eq!(routes.len(), 1);
+      if let Geometry::GeometryCollection(legs, _) = &routes[0] {
+        assert_eq!(legs.len(), 1);
+      } else {
+        panic!("Expected inner GeometryCollection");
+      }
+    } else {
+      panic!("Expected GeometryCollection");
+    }
+  }
+
+  #[test]
+  fn route_multiple_legs() {
+    let json = std::fs::read_to_string(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/tt_route_multi_leg.json"
+    ))
+    .unwrap();
+    let event = parse_json(&json).unwrap();
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    if let Geometry::GeometryCollection(routes, _) = &layer.geometries[0] {
+      if let Geometry::GeometryCollection(legs, _) = &routes[0] {
+        assert_eq!(legs.len(), 2);
+        for leg in legs {
+          assert!(matches!(leg, Geometry::LineString(_, _)));
+        }
+      } else {
+        panic!("Expected inner GeometryCollection");
+      }
+    }
+  }
+
+  #[test]
+  fn range_with_center() {
+    let json = std::fs::read_to_string(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/tt_range.json"
+    ))
+    .unwrap();
+    let event = parse_json(&json).unwrap();
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    // boundary polygon + center point
+    assert_eq!(layer.geometries.len(), 2);
+    assert!(matches!(layer.geometries[0], Geometry::Polygon(_, _)));
+    assert!(matches!(layer.geometries[1], Geometry::Polygon(_, _)));
+  }
+
+  #[test]
+  fn range_without_center() {
+    let json = std::fs::read_to_string(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/tests/resources/tt_range_no_center.json"
+    ))
+    .unwrap();
+    let event = parse_json(&json).unwrap();
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    // Only boundary polygon, no center
+    assert_eq!(layer.geometries.len(), 1);
+    assert!(matches!(layer.geometries[0], Geometry::Polygon(_, _)));
+  }
+
+  #[test]
+  fn invalid_json_returns_none() {
+    let event = parse_json("this is not json at all");
+    assert!(event.is_none());
+  }
+
+  #[test]
+  fn with_color_builder() {
+    let parser = TTJsonParser::new().with_color(Color::from(egui::Color32::RED));
+    assert_eq!(parser.color, Color::from(egui::Color32::RED));
+  }
+}

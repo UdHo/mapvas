@@ -1,0 +1,10 @@
+{
+  "reachableRange": {
+    "boundary": [
+      {"lat": 52.4, "lon": 13.3},
+      {"lat": 52.6, "lon": 13.3},
+      {"lat": 52.6, "lon": 13.5},
+      {"lat": 52.4, "lon": 13.5}
+    ]
+  }
+}

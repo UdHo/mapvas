@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Multi</name>
+      <MultiGeometry>
+        <Point>
+          <coordinates>13.4,52.5,0</coordinates>
+        </Point>
+        <LineString>
+          <coordinates>13.4,52.5,0 14.0,53.0,0</coordinates>
+        </LineString>
+      </MultiGeometry>
+    </Placemark>
+  </Document>
+</kml>
