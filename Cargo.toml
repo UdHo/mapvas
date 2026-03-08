@@ -63,7 +63,6 @@ default = []
 profiling = ["puffin", "puffin_egui", "puffin_http"]
 
 [dev-dependencies]
-tiny-skia = "0.12"
 egui_kittest = { version = "0.33.3", features = ["snapshot", "wgpu"] }
 wgpu = "28.0.0"
 futures = "0.3"

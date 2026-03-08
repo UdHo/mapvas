@@ -306,14 +306,20 @@ mod tests {
     let a = TileProvider {
       name: "OSM".to_string(),
       url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     let b = TileProvider {
       name: "OSM".to_string(),
       url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     let c = TileProvider {
       name: "Other".to_string(),
       url: "https://other.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     assert_eq!(a, b);
     assert_ne!(a, c);
@@ -326,11 +332,14 @@ mod tests {
       tile_provider: vec![TileProvider {
         name: "OSM".to_string(),
         url: "https://osm.org".to_string(),
+        tile_type: TileType::default(),
+        max_zoom: None,
       }],
       tile_cache_dir: None,
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: None,
@@ -338,16 +347,21 @@ mod tests {
         TileProvider {
           name: "OSM".to_string(),
           url: "https://osm.org".to_string(),
+          tile_type: TileType::default(),
+          max_zoom: None,
         },
         TileProvider {
           name: "Custom".to_string(),
           url: "https://custom.org".to_string(),
+          tile_type: TileType::default(),
+          max_zoom: None,
         },
       ],
       tile_cache_dir: None,
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.tile_provider.len(), 2);
@@ -362,6 +376,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![SearchProviderConfig::Coordinate],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: None,
@@ -373,6 +388,7 @@ mod tests {
         SearchProviderConfig::Nominatim { base_url: None },
       ],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.search_providers.len(), 2);
@@ -387,6 +403,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: Some(PathBuf::from("/b")),
@@ -395,6 +412,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.config_path, Some(PathBuf::from("/a")));
@@ -409,6 +427,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: Some(PathBuf::from("/b")),
@@ -417,6 +436,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.config_path, Some(PathBuf::from("/b")));
@@ -425,7 +445,7 @@ mod tests {
   #[test]
   fn default_config_has_expected_structure() {
     let config = Config::default();
-    assert_eq!(config.tile_provider.len(), 1);
+    assert_eq!(config.tile_provider.len(), 2);
     assert_eq!(config.tile_provider[0].name, "OpenStreetMap");
     assert_eq!(config.search_providers.len(), 2);
     assert_eq!(config.heading_style, HeadingStyle::Arrow);

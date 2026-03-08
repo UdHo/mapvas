@@ -733,37 +733,11 @@ mod tests {
 
   /// Helper to get tile data - tries cache first, then downloads
   #[allow(clippy::single_match)]
-  async fn get_berlin_tile_data() -> Option<Vec<u8>> {
+  fn get_berlin_tile_data() -> Option<Vec<u8>> {
     let mut tile_path = test_artifacts_dir();
     tile_path.push("berlin_tile_15_17603_10747.mvt");
 
-    // Try to load from cache first
-    if tile_path.exists() {
-      match std::fs::read(&tile_path) {
-        Ok(data) => return Some(data),
-        Err(_) => {} // Fall through to download
-      }
-    }
-
-    // Try to download from Martin server (Berlin Protomaps)
-    // Berlin center at zoom 15: x=17603, y=10747
-    let url = "http://192.168.178.31:3000/tiles/{z}/{x}/{y}.mvt";
-    let tile_url = url
-      .replace("{z}", "15")
-      .replace("{x}", "17603")
-      .replace("{y}", "10747");
-
-    match surf::get(&tile_url).await {
-      Ok(mut response) => match response.body_bytes().await {
-        Ok(data) => {
-          // Save to cache for future runs
-          let _ = std::fs::write(&tile_path, &data);
-          Some(data)
-        }
-        Err(_) => None,
-      },
-      Err(_) => None,
-    }
+    std::fs::read(&tile_path).ok()
   }
 
   /// Test that renders a Berlin tile and saves it as reference
@@ -773,7 +747,7 @@ mod tests {
   #[ignore = "Manual test to generate reference image"]
   #[allow(clippy::single_match, clippy::manual_let_else, clippy::cast_possible_truncation)]
   async fn generate_berlin_tile_reference() {
-    let tile_data = if let Some(data) = get_berlin_tile_data().await { data } else {
+    let tile_data = if let Some(data) = get_berlin_tile_data() { data } else {
       eprintln!("⚠️  Skipping test: Berlin tile data not available.");
       eprintln!("   Place tile data at: test_artifacts/berlin_tile_15_17603_10747.mvt");
       eprintln!("   Or ensure Martin server is running at http://192.168.178.31:3000");
@@ -821,7 +795,7 @@ mod tests {
   #[tokio::test]
   #[allow(clippy::manual_let_else, clippy::manual_assert, clippy::cast_lossless, clippy::cast_precision_loss)]
   async fn test_render_berlin_tile_regression() {
-    let tile_data = if let Some(data) = get_berlin_tile_data().await { data } else {
+    let tile_data = if let Some(data) = get_berlin_tile_data() { data } else {
       eprintln!("⚠️  Skipping regression test: Berlin tile data not available.");
       return;
     };
