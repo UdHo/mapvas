@@ -1,7 +1,7 @@
 //! Task tracking for displaying active tokio tasks
 
-use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Information about a tracked task
@@ -67,7 +67,8 @@ impl TaskTracker {
 
   /// Get a snapshot of all active tasks
   pub fn snapshot(&self) -> Vec<(u64, TaskInfo)> {
-    self.tasks
+    self
+      .tasks
       .lock()
       .unwrap()
       .iter()
@@ -77,7 +78,8 @@ impl TaskTracker {
 
   /// Get count of tasks by category
   pub fn count_by_category(&self, category: &TaskCategory) -> usize {
-    self.tasks
+    self
+      .tasks
       .lock()
       .unwrap()
       .values()

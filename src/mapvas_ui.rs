@@ -8,14 +8,14 @@ use crate::{
   map::{
     mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
     tile_renderer::{
-      init_style_config, save_style_config, set_style_config, style_config, Rgb, RoadStyle,
-      StyleConfig,
+      Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
+      style_config,
     },
   },
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
-  task_tracker::{task_tracker, TaskCategory},
+  task_tracker::{TaskCategory, task_tracker},
 };
 use chrono::{DateTime, Utc};
 use tokio_metrics::RuntimeMonitor;
@@ -720,7 +720,7 @@ impl Sidebar {
           ui.label(
             egui::RichText::new(format!("{}", metrics.live_tasks_count))
               .strong()
-              .color(egui::Color32::from_rgb(255, 140, 0))
+              .color(egui::Color32::from_rgb(255, 140, 0)),
           );
         });
 
@@ -735,7 +735,7 @@ impl Sidebar {
       ui.label(
         egui::RichText::new("Runtime metrics unavailable")
           .italics()
-          .color(egui::Color32::GRAY)
+          .color(egui::Color32::GRAY),
       );
     }
 
@@ -759,7 +759,7 @@ impl Sidebar {
         egui::RichText::new("No active tasks")
           .size(12.0)
           .italics()
-          .color(egui::Color32::GRAY)
+          .color(egui::Color32::GRAY),
       );
       return;
     }
@@ -811,7 +811,7 @@ impl Sidebar {
               egui::RichText::new("... and more")
                 .size(10.0)
                 .italics()
-                .color(egui::Color32::GRAY)
+                .color(egui::Color32::GRAY),
             );
           } else {
             for (_, task) in tasks {
@@ -832,7 +832,7 @@ impl Sidebar {
         egui::RichText::new(&task.name)
           .size(10.0)
           .monospace()
-          .color(egui::Color32::from_rgb(70, 70, 70))
+          .color(egui::Color32::from_rgb(70, 70, 70)),
       );
 
       ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -848,7 +848,7 @@ impl Sidebar {
         ui.label(
           egui::RichText::new(format!("{:.1}s", elapsed.as_secs_f32()))
             .size(9.0)
-            .color(color)
+            .color(color),
         );
       });
     });
@@ -1398,7 +1398,11 @@ impl SettingsDialog {
             Err(e) => log::error!("Failed to save style: {e}"),
           }
         }
-        ui.label(egui::RichText::new("(unsaved changes)").italics().color(egui::Color32::YELLOW));
+        ui.label(
+          egui::RichText::new("(unsaved changes)")
+            .italics()
+            .color(egui::Color32::YELLOW),
+        );
       }
     });
 
@@ -1445,7 +1449,8 @@ impl SettingsDialog {
         changed |= Self::road_style_edit(ui, "Primary", &mut self.style_config.roads.primary);
         changed |= Self::road_style_edit(ui, "Secondary", &mut self.style_config.roads.secondary);
         changed |= Self::road_style_edit(ui, "Tertiary", &mut self.style_config.roads.tertiary);
-        changed |= Self::road_style_edit(ui, "Residential", &mut self.style_config.roads.residential);
+        changed |=
+          Self::road_style_edit(ui, "Residential", &mut self.style_config.roads.residential);
         changed |= Self::road_style_edit(ui, "Service", &mut self.style_config.roads.service);
         changed |= Self::road_style_edit(ui, "Path", &mut self.style_config.roads.path);
         if changed {
@@ -1470,13 +1475,48 @@ impl SettingsDialog {
       .default_open(false)
       .show(ui, |ui| {
         let mut changed = false;
-        changed |= Self::float_slider(ui, "Country", &mut self.style_config.font_sizes.country, 8.0..=24.0);
-        changed |= Self::float_slider(ui, "Capital", &mut self.style_config.font_sizes.capital, 8.0..=20.0);
-        changed |= Self::float_slider(ui, "City", &mut self.style_config.font_sizes.city, 6.0..=18.0);
-        changed |= Self::float_slider(ui, "Town", &mut self.style_config.font_sizes.town, 6.0..=16.0);
-        changed |= Self::float_slider(ui, "Village", &mut self.style_config.font_sizes.village, 5.0..=14.0);
-        changed |= Self::float_slider(ui, "Road Label", &mut self.style_config.font_sizes.road_label, 6.0..=16.0);
-        changed |= Self::float_slider(ui, "Water Label", &mut self.style_config.font_sizes.water_label, 6.0..=16.0);
+        changed |= Self::float_slider(
+          ui,
+          "Country",
+          &mut self.style_config.font_sizes.country,
+          8.0..=24.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Capital",
+          &mut self.style_config.font_sizes.capital,
+          8.0..=20.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "City",
+          &mut self.style_config.font_sizes.city,
+          6.0..=18.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Town",
+          &mut self.style_config.font_sizes.town,
+          6.0..=16.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Village",
+          &mut self.style_config.font_sizes.village,
+          5.0..=14.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Road Label",
+          &mut self.style_config.font_sizes.road_label,
+          6.0..=16.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Water Label",
+          &mut self.style_config.font_sizes.water_label,
+          6.0..=16.0,
+        );
         if changed {
           self.style_changed = true;
           set_style_config(self.style_config.clone());
@@ -1528,11 +1568,25 @@ impl SettingsDialog {
 
         ui.horizontal(|ui| {
           ui.label("Casing width:");
-          if ui.add(egui::DragValue::new(&mut style.casing_width).range(0.5..=20.0).speed(0.1)).changed() {
+          if ui
+            .add(
+              egui::DragValue::new(&mut style.casing_width)
+                .range(0.5..=20.0)
+                .speed(0.1),
+            )
+            .changed()
+          {
             changed = true;
           }
           ui.label("Inner width:");
-          if ui.add(egui::DragValue::new(&mut style.inner_width).range(0.5..=15.0).speed(0.1)).changed() {
+          if ui
+            .add(
+              egui::DragValue::new(&mut style.inner_width)
+                .range(0.5..=15.0)
+                .speed(0.1),
+            )
+            .changed()
+          {
             changed = true;
           }
         });
@@ -1542,11 +1596,19 @@ impl SettingsDialog {
   }
 
   /// Float slider editor - returns true if changed
-  fn float_slider(ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) -> bool {
+  fn float_slider(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+  ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
       ui.label(format!("{label}:"));
-      if ui.add(egui::Slider::new(value, range).step_by(0.5)).changed() {
+      if ui
+        .add(egui::Slider::new(value, range).step_by(0.5))
+        .changed()
+      {
         changed = true;
       }
     });

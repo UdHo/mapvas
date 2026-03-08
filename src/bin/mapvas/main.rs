@@ -26,7 +26,7 @@ fn main() -> eframe::Result {
   // Single tokio runtime for all async I/O operations
   // CPU-bound rendering is handled by rayon thread pool (see src/render_pool.rs)
   let runtime = match tokio::runtime::Builder::new_multi_thread()
-    .worker_threads(4)  // Enough for I/O operations (downloads, HTTP server)
+    .worker_threads(4) // Enough for I/O operations (downloads, HTTP server)
     .thread_name("async-io")
     .enable_all()
     .build()

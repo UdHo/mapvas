@@ -4,8 +4,8 @@ mod vector;
 pub use raster::RasterTileRenderer;
 pub use vector::VectorTileRenderer;
 pub use vector::styling::{
-  init_style_config, save_style_config, set_style_config, style_config, style_version, Rgb,
-  RoadStyle, StyleConfig,
+  Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
+  style_config, style_version,
 };
 
 use egui::ColorImage;
@@ -55,7 +55,12 @@ pub trait TileRenderer: Send + Sync {
   /// Returns `TileRenderError` if the tile data cannot be decoded or rendered.
   ///
   /// Default implementation calls `render()` and ignores the scale (suitable for raster tiles).
-  fn render_scaled(&self, tile: &Tile, data: &[u8], _scale: u32) -> Result<ColorImage, TileRenderError> {
+  fn render_scaled(
+    &self,
+    tile: &Tile,
+    data: &[u8],
+    _scale: u32,
+  ) -> Result<ColorImage, TileRenderError> {
     self.render(tile, data)
   }
 

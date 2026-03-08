@@ -20,8 +20,9 @@ impl TileRenderer for RasterTileRenderer {
   fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
     let start = std::time::Instant::now();
 
-    let img_reader =
-      image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().map_err(|e| {
+    let img_reader = image::ImageReader::new(std::io::Cursor::new(data))
+      .with_guessed_format()
+      .map_err(|e| {
         TileRenderError::ImageDecode(format!("Failed to create image reader for {tile:?}: {e}"))
       })?;
 
@@ -57,7 +58,11 @@ mod tests {
   #[test]
   fn test_raster_renderer_invalid_data() {
     let renderer = RasterTileRenderer::new();
-    let tile = Tile { x: 0, y: 0, zoom: 0 };
+    let tile = Tile {
+      x: 0,
+      y: 0,
+      zoom: 0,
+    };
     let result = renderer.render(&tile, &[0, 1, 2, 3]);
     assert!(result.is_err());
   }

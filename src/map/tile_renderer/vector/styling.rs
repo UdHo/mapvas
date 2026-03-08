@@ -51,7 +51,9 @@ pub fn init_style_config(path: Option<&Path>) {
 /// Get a clone of the current style configuration
 #[must_use]
 pub fn style_config() -> StyleConfig {
-  STYLE_CONFIG.read().map_or_else(|_| StyleConfig::default(), |g| g.clone())
+  STYLE_CONFIG
+    .read()
+    .map_or_else(|_| StyleConfig::default(), |g| g.clone())
 }
 
 /// Update the global style configuration

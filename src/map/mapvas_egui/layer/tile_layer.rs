@@ -531,14 +531,12 @@ impl TileLayer {
       let tile_data = tile_loader
         .tile_data_with_priority(&tile, tile_source, priority)
         .await;
-      match &tile_data {
-        Ok(data) => log::info!("Tile {tile:?} data received: {} bytes", data.len()),
-        Err(_) => {
-          let _ = in_flight_tiles.lock().unwrap().remove(&tile);
-          return;
-        }
+      if tile_data.is_err() {
+        let _ = in_flight_tiles.lock().unwrap().remove(&tile);
+        return;
       }
       if let Ok(tile_data) = tile_data {
+        log::info!("Tile {tile:?} data received: {} bytes", tile_data.len());
         // Acquire permit before rendering (limits concurrent renders to 24)
         let in_flight_count = in_flight_tiles.lock().unwrap().len();
         log::debug!(
@@ -660,6 +658,44 @@ impl TileLayer {
       self.in_flight_tiles.lock().unwrap().remove(&tile);
     }
   }
+
+  fn handle_style_change(&mut self) {
+    let current_style_version = style_version();
+    if current_style_version == self.last_style_version {
+      return;
+    }
+    if self.tile_loader().tile_type() == TileType::Vector {
+      log::info!(
+        "Style changed (v{} -> v{}), clearing {} vector tiles, re-requesting {} tiles",
+        self.last_style_version,
+        current_style_version,
+        self.loaded_tiles.len(),
+        self.last_visible_tiles.len()
+      );
+      self.loaded_tiles.clear();
+      self.in_flight_tiles.lock().unwrap().clear();
+
+      let mut handles = self.render_abort_handles.lock().unwrap();
+      let abort_count = handles.len();
+      for handle in handles.drain(..) {
+        handle.abort();
+      }
+      drop(handles);
+      log::info!("Aborted {abort_count} running render tasks");
+
+      let tiles_to_request = self.last_visible_tiles.clone();
+      log::info!(
+        "Style change: immediately re-requesting {} tiles: {:?}",
+        tiles_to_request.len(),
+        tiles_to_request.iter().take(5).collect::<Vec<_>>()
+      );
+      for tile in tiles_to_request {
+        self.get_tile(tile);
+      }
+      self.ctx.request_repaint();
+    }
+    self.last_style_version = current_style_version;
+  }
 }
 
 impl Layer for TileLayer {
@@ -679,47 +715,7 @@ impl Layer for TileLayer {
       self.tile_loader_old_index = self.tile_loader_index;
     }
 
-    // Check if style config has changed (for vector tiles)
-    let current_style_version = style_version();
-    if current_style_version != self.last_style_version {
-      // Only clear vector tiles - raster tiles are not affected by style changes
-      if self.tile_loader().tile_type() == TileType::Vector {
-        log::info!(
-          "Style changed (v{} -> v{}), clearing {} vector tiles, re-requesting {} tiles",
-          self.last_style_version,
-          current_style_version,
-          self.loaded_tiles.len(),
-          self.last_visible_tiles.len()
-        );
-        self.loaded_tiles.clear();
-        self.in_flight_tiles.lock().unwrap().clear();
-
-        // Abort all running render tasks to free up resources immediately
-        {
-          let mut handles = self.render_abort_handles.lock().unwrap();
-          let abort_count = handles.len();
-          for handle in handles.drain(..) {
-            handle.abort();
-          }
-          log::info!("Aborted {} running render tasks", abort_count);
-        }
-
-        // Immediately re-request the last visible tiles
-        let tiles_to_request = self.last_visible_tiles.clone();
-        log::info!(
-          "Style change: immediately re-requesting {} tiles: {:?}",
-          tiles_to_request.len(),
-          tiles_to_request.iter().take(5).collect::<Vec<_>>()
-        );
-        for tile in tiles_to_request {
-          self.get_tile(tile);
-        }
-
-        // Request repaint to show results when ready
-        self.ctx.request_repaint();
-      }
-      self.last_style_version = current_style_version;
-    }
+    self.handle_style_change();
 
     if !self.visible() {
       return;
@@ -762,7 +758,7 @@ impl Layer for TileLayer {
     let visible_tiles: Vec<Tile> = tiles_in_box(min_pos, max_pos).collect();
 
     // Store visible tiles for immediate re-request on style change
-    self.last_visible_tiles = visible_tiles.clone();
+    self.last_visible_tiles.clone_from(&visible_tiles);
 
     // Load current visible tiles with highest priority
     for tile in &visible_tiles {

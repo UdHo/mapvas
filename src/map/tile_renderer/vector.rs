@@ -9,13 +9,13 @@
 // - buildings: Building rendering (placeholder)
 // - terrain: Landuse/landcover rendering (placeholder)
 
-pub mod styling;
-mod labels;
-mod roads;
-mod water;
-mod places;
 mod buildings;
+mod labels;
+mod places;
+mod roads;
+pub mod styling;
 mod terrain;
+mod water;
 
 // Re-export key functions from submodules
 use labels::{calculate_path_length, render_text, render_text_along_path};
@@ -29,7 +29,6 @@ use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use super::{TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
-
 
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
 #[derive(Debug, Clone, Default)]
@@ -319,7 +318,6 @@ impl VectorTileRenderer {
     (point_features, line_labels)
   }
 
-
   fn render_polygon_with_class(
     pixmap: &mut Pixmap,
     polygon: &geo_types::Polygon<f32>,
@@ -454,8 +452,7 @@ impl VectorTileRenderer {
         (base_font_size * (tile_size as f32 / 256.0)).min(cfg.font_sizes.max_font_size);
 
       // Draw small marker dot
-      let radius =
-        cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
+      let radius = cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
       let mut pb = PathBuilder::new();
       pb.push_circle(x, y, radius);
 
@@ -493,7 +490,11 @@ impl TileRenderer for VectorTileRenderer {
     self.render_scaled(tile, data, 1)
   }
 
-  #[allow(clippy::too_many_lines, clippy::items_after_statements, clippy::cast_precision_loss)]
+  #[allow(
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::cast_precision_loss
+  )]
   fn render_scaled(
     &self,
     tile: &Tile,
@@ -652,8 +653,7 @@ impl TileRenderer for VectorTileRenderer {
       let path_length = calculate_path_length(&scaled_coords);
 
       // Estimate text width
-      let estimated_text_width =
-        name.len() as f32 * font_size * cfg.font_sizes.char_width_ratio;
+      let estimated_text_width = name.len() as f32 * font_size * cfg.font_sizes.char_width_ratio;
 
       // Skip if text is too long for the path
       if estimated_text_width > path_length * cfg.font_sizes.max_path_coverage {
@@ -745,9 +745,15 @@ mod tests {
   /// cargo test `test_render_berlin_tile_reference` --lib -- --nocapture
   #[tokio::test]
   #[ignore = "Manual test to generate reference image"]
-  #[allow(clippy::single_match, clippy::manual_let_else, clippy::cast_possible_truncation)]
+  #[allow(
+    clippy::single_match,
+    clippy::manual_let_else,
+    clippy::cast_possible_truncation
+  )]
   async fn generate_berlin_tile_reference() {
-    let tile_data = if let Some(data) = get_berlin_tile_data() { data } else {
+    let tile_data = if let Some(data) = get_berlin_tile_data() {
+      data
+    } else {
       eprintln!("⚠️  Skipping test: Berlin tile data not available.");
       eprintln!("   Place tile data at: test_artifacts/berlin_tile_15_17603_10747.mvt");
       eprintln!("   Or ensure Martin server is running at http://192.168.178.31:3000");
@@ -793,9 +799,16 @@ mod tests {
   /// Note: Run with --test-threads=1 to avoid race conditions with the reference test,
   /// or run `test_render_berlin_tile_reference` first to generate the reference image.
   #[tokio::test]
-  #[allow(clippy::manual_let_else, clippy::manual_assert, clippy::cast_lossless, clippy::cast_precision_loss)]
+  #[allow(
+    clippy::manual_let_else,
+    clippy::manual_assert,
+    clippy::cast_lossless,
+    clippy::cast_precision_loss
+  )]
   async fn test_render_berlin_tile_regression() {
-    let tile_data = if let Some(data) = get_berlin_tile_data() { data } else {
+    let tile_data = if let Some(data) = get_berlin_tile_data() {
+      data
+    } else {
       eprintln!("⚠️  Skipping regression test: Berlin tile data not available.");
       return;
     };
@@ -817,7 +830,8 @@ mod tests {
     let mut reference_path = test_artifacts_dir();
     reference_path.push("berlin_tile_15_17603_10747_reference.png");
 
-    assert!(reference_path.exists(), 
+    assert!(
+      reference_path.exists(),
       "Reference image not found at {}. Run test_render_berlin_tile_reference first to generate it.",
       reference_path.display()
     );
@@ -848,9 +862,12 @@ mod tests {
     for i in 0..total_pixels {
       let idx = i * 4;
       let r_diff = (i32::from(rendered_pixels[idx]) - i32::from(reference_pixels[idx])).abs();
-      let g_diff = (i32::from(rendered_pixels[idx + 1]) - i32::from(reference_pixels[idx + 1])).abs();
-      let b_diff = (i32::from(rendered_pixels[idx + 2]) - i32::from(reference_pixels[idx + 2])).abs();
-      let a_diff = (i32::from(rendered_pixels[idx + 3]) - i32::from(reference_pixels[idx + 3])).abs();
+      let g_diff =
+        (i32::from(rendered_pixels[idx + 1]) - i32::from(reference_pixels[idx + 1])).abs();
+      let b_diff =
+        (i32::from(rendered_pixels[idx + 2]) - i32::from(reference_pixels[idx + 2])).abs();
+      let a_diff =
+        (i32::from(rendered_pixels[idx + 3]) - i32::from(reference_pixels[idx + 3])).abs();
 
       // Allow small differences (up to 2 per channel) due to floating point precision
       if r_diff > 2 || g_diff > 2 || b_diff > 2 || a_diff > 2 {
