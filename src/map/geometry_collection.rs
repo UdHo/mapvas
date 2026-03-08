@@ -575,7 +575,10 @@ mod tests {
 
     // Test with_visible via geometry visibility
     let hidden = Style::default().with_visible(false);
-    let geom = Geometry::Point(PixelCoordinate::new(0.0, 0.0), Metadata::default().with_style(hidden));
+    let geom = Geometry::Point(
+      PixelCoordinate::new(0.0, 0.0),
+      Metadata::default().with_style(hidden),
+    );
     assert!(!geom.is_visible());
   }
 

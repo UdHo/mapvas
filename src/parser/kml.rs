@@ -985,7 +985,11 @@ mod tests {
     assert!(!events.is_empty());
     if let Some(MapEvent::Layer(layer)) = events.first() {
       let leaves = extract_leaf_geometries(&layer.geometries[0]);
-      assert_eq!(leaves.len(), 2, "MultiGeometry should produce 2 leaf geometries");
+      assert_eq!(
+        leaves.len(),
+        2,
+        "MultiGeometry should produce 2 leaf geometries"
+      );
       assert!(matches!(leaves[0], Geometry::Point(_, _)));
       assert!(matches!(leaves[1], Geometry::LineString(_, _)));
     }
@@ -1017,7 +1021,10 @@ mod tests {
     // Empty KML may produce no events or an empty layer
     if let Some(MapEvent::Layer(layer)) = events.first() {
       let leaves = extract_leaf_geometries(&layer.geometries[0]);
-      assert!(leaves.is_empty(), "Empty KML should have no leaf geometries");
+      assert!(
+        leaves.is_empty(),
+        "Empty KML should have no leaf geometries"
+      );
     }
   }
 

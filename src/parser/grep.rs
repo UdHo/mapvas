@@ -306,10 +306,7 @@ mod tests {
       panic!("Expected Layer event");
     };
     assert_eq!(layer.geometries.len(), 1);
-    assert!(matches!(
-      layer.geometries[0],
-      Geometry::Point(_, _)
-    ));
+    assert!(matches!(layer.geometries[0], Geometry::Point(_, _)));
   }
 
   #[test]
@@ -320,10 +317,7 @@ mod tests {
       panic!("Expected Layer event");
     };
     assert_eq!(layer.geometries.len(), 1);
-    assert!(matches!(
-      layer.geometries[0],
-      Geometry::LineString(_, _)
-    ));
+    assert!(matches!(layer.geometries[0], Geometry::LineString(_, _)));
   }
 
   #[test]
@@ -335,10 +329,7 @@ mod tests {
       panic!("Expected Layer event");
     };
     assert_eq!(layer.geometries.len(), 1);
-    assert!(matches!(
-      layer.geometries[0],
-      Geometry::Polygon(_, _)
-    ));
+    assert!(matches!(layer.geometries[0], Geometry::Polygon(_, _)));
   }
 
   #[test]
@@ -348,10 +339,7 @@ mod tests {
     let MapEvent::Layer(layer) = event.unwrap() else {
       panic!("Expected Layer event");
     };
-    assert!(matches!(
-      layer.geometries[0],
-      Geometry::LineString(_, _)
-    ));
+    assert!(matches!(layer.geometries[0], Geometry::LineString(_, _)));
   }
 
   #[test]
