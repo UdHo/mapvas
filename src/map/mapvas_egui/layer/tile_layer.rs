@@ -53,7 +53,10 @@ fn split_image_into_tiles(image: &ColorImage, grid_size: usize) -> Vec<ColorImag
         }
       }
 
-      tiles.push(ColorImage::from_rgba_unmultiplied([tile_size, tile_size], &tile_rgba));
+      tiles.push(ColorImage::from_rgba_unmultiplied(
+        [tile_size, tile_size],
+        &tile_rgba,
+      ));
     }
   }
 
@@ -315,7 +318,10 @@ impl TileLayer {
     // Check if any of the child tiles are already loaded or in-flight
     {
       let in_flight = self.in_flight_tiles.lock().unwrap();
-      if child_tiles.iter().any(|t| self.loaded_tiles.contains_key(t) || in_flight.contains(t)) {
+      if child_tiles
+        .iter()
+        .any(|t| self.loaded_tiles.contains_key(t) || in_flight.contains(t))
+      {
         log::debug!("Super-resolution tiles for {parent_tile:?} already loading/loaded");
         return;
       }
@@ -362,9 +368,12 @@ impl TileLayer {
         .await;
 
       match &tile_data {
-        Ok(data) => log::info!("Super-resolution: parent tile {parent_tile:?} data received: {} bytes", data.len()),
+        Ok(data) => log::info!(
+          "Super-resolution: parent tile {parent_tile:?} data received: {} bytes",
+          data.len()
+        ),
         Err(e) => {
-          log::error!("Super-resolution: failed to fetch parent tile {parent_tile:?}: {e}");
+          log::warn!("Super-resolution: failed to fetch parent tile {parent_tile:?}: {e}");
           let mut in_flight = in_flight_tiles.lock().unwrap();
           for child_tile in &child_tiles {
             in_flight.remove(child_tile);
@@ -387,10 +396,8 @@ impl TileLayer {
           result
         });
 
-        let render_result = tokio::time::timeout(
-          std::time::Duration::from_secs(60),
-          blocking_task
-        ).await;
+        let render_result =
+          tokio::time::timeout(std::time::Duration::from_secs(60), blocking_task).await;
 
         let render_duration = render_start.elapsed();
 
@@ -429,7 +436,12 @@ impl TileLayer {
         };
 
         // Split into grid of tiles
-        log::info!("Super-resolution: splitting {parent_tile:?} into {} child tiles ({}x{} grid)", child_tiles.len(), grid_size, grid_size);
+        log::info!(
+          "Super-resolution: splitting {parent_tile:?} into {} child tiles ({}x{} grid)",
+          child_tiles.len(),
+          grid_size,
+          grid_size
+        );
         let split_tiles = split_image_into_tiles(&scaled_image, grid_size);
 
         // Send all child tiles
@@ -447,7 +459,10 @@ impl TileLayer {
           for child_tile in &child_tiles {
             in_flight.remove(child_tile);
           }
-          log::info!("Super-resolution: completed {} child tiles for {parent_tile:?}", child_tiles.len());
+          log::info!(
+            "Super-resolution: completed {} child tiles for {parent_tile:?}",
+            child_tiles.len()
+          );
         }
 
         ctx.request_repaint();
@@ -480,7 +495,10 @@ impl TileLayer {
 
     let mut in_flight = self.in_flight_tiles.lock().unwrap();
     if in_flight.contains(&tile) {
-      log::warn!("Tile {tile:?} already in-flight (total in-flight: {}), skipping", in_flight.len());
+      log::warn!(
+        "Tile {tile:?} already in-flight (total in-flight: {}), skipping",
+        in_flight.len()
+      );
       return; // Already loading
     }
     in_flight.insert(tile);
@@ -515,10 +533,8 @@ impl TileLayer {
         .await;
       match &tile_data {
         Ok(data) => log::info!("Tile {tile:?} data received: {} bytes", data.len()),
-        Err(e) => {
-          log::error!("Failed to fetch tile {tile:?}: {e}, removing from in-flight");
-          let removed = in_flight_tiles.lock().unwrap().remove(&tile);
-          log::info!("Tile {tile:?} removed from in-flight: {removed}");
+        Err(_) => {
+          let _ = in_flight_tiles.lock().unwrap().remove(&tile);
           return;
         }
       }
@@ -548,10 +564,8 @@ impl TileLayer {
         });
 
         // Add timeout to detect hanging renders
-        let render_result = tokio::time::timeout(
-          std::time::Duration::from_secs(30),
-          blocking_task
-        ).await;
+        let render_result =
+          tokio::time::timeout(std::time::Duration::from_secs(30), blocking_task).await;
 
         let render_duration = render_start.elapsed();
 
@@ -559,7 +573,9 @@ impl TileLayer {
         let render_result = match render_result {
           Ok(result) => result,
           Err(_timeout) => {
-            error!("Tile {tile:?} render TIMED OUT after 30s, releasing permit and removing from in-flight");
+            log::warn!(
+              "Tile {tile:?} render TIMED OUT after 30s, releasing permit and removing from in-flight"
+            );
             let removed = in_flight_tiles.lock().unwrap().remove(&tile);
             log::info!("Tile {tile:?} removed from in-flight after timeout: {removed}");
             return;
@@ -571,14 +587,15 @@ impl TileLayer {
 
         let egui_image = match render_result {
           Ok(Ok(image)) => image,
-          Ok(Err(e)) => {
-            error!("Failed to render tile {tile:?}: {e}, releasing permit and removing from in-flight");
+          Ok(Err(_)) => {
             let removed = in_flight_tiles.lock().unwrap().remove(&tile);
             log::info!("Tile {tile:?} removed from in-flight after render error: {removed}");
             return;
           }
           Err(e) => {
-            error!("Render task panicked for tile {tile:?}: {e}, releasing permit and removing from in-flight");
+            error!(
+              "Render task panicked for tile {tile:?}: {e}, releasing permit and removing from in-flight"
+            );
             let removed = in_flight_tiles.lock().unwrap().remove(&tile);
             log::info!("Tile {tile:?} removed from in-flight after panic: {removed}");
             return;
@@ -595,8 +612,10 @@ impl TileLayer {
         // Successfully completed - remove from in-flight
         log::info!("Tile {tile:?} successfully sent, removing from in-flight");
         let removed = in_flight_tiles.lock().unwrap().remove(&tile);
-        log::info!("Tile {tile:?} removed from in-flight after success: {removed}, remaining in-flight: {}",
-          in_flight_tiles.lock().unwrap().len());
+        log::info!(
+          "Tile {tile:?} removed from in-flight after success: {removed}, remaining in-flight: {}",
+          in_flight_tiles.lock().unwrap().len()
+        );
 
         // Shorter delay for higher priority tiles
         let delay = match priority {
@@ -611,7 +630,10 @@ impl TileLayer {
     });
 
     // Store abort handle so we can cancel this task on style change
-    abort_handles.lock().unwrap().push(task_handle.abort_handle());
+    abort_handles
+      .lock()
+      .unwrap()
+      .push(task_handle.abort_handle());
   }
 
   fn preload_tiles(&self, visible_tiles: &[Tile]) {
