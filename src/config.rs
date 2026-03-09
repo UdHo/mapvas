@@ -42,10 +42,51 @@ impl HeadingStyle {
   }
 }
 
+/// Type of tile data served by a tile provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum TileType {
+  /// Raster tiles (PNG, JPEG) - rendered images from the server.
+  #[default]
+  Raster,
+  /// Vector tiles (MVT/PBF) - raw geometry data rendered client-side.
+  Vector,
+}
+
+impl TileType {
+  #[must_use]
+  pub fn name(&self) -> &'static str {
+    match self {
+      TileType::Raster => "Raster",
+      TileType::Vector => "Vector",
+    }
+  }
+
+  #[must_use]
+  pub fn all() -> &'static [TileType] {
+    &[TileType::Raster, TileType::Vector]
+  }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct TileProvider {
   pub name: String,
   pub url: String,
+  #[serde(default)]
+  pub tile_type: TileType,
+  #[serde(default)]
+  pub max_zoom: Option<u8>,
+}
+
+impl TileProvider {
+  /// Get the maximum zoom level for this provider, using defaults if not specified.
+  /// Returns 19 for raster tiles and 15 for vector tiles.
+  #[must_use]
+  pub fn get_max_zoom(&self) -> u8 {
+    self.max_zoom.unwrap_or(match self.tile_type {
+      TileType::Raster => 19,
+      TileType::Vector => 15,
+    })
+  }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -56,9 +97,14 @@ pub struct Config {
   pub commands_dir: Option<PathBuf>,
   pub search_providers: Vec<SearchProviderConfig>,
   pub heading_style: HeadingStyle,
+  /// Path to vector tile style configuration (JSON5 format)
+  #[serde(default)]
+  pub vector_style_file: Option<PathBuf>,
 }
 
 const DEFAULT_TILE_URL: &str = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
+const DEFAULT_VECTOR_TILE_URL: &str =
+  "https://tiles.openfreemap.org/planet/20251231_001001_pt/{zoom}/{x}/{y}.pbf";
 
 impl Config {
   #[must_use]
@@ -90,6 +136,8 @@ impl Config {
           vec![TileProvider {
             name: "ENV".to_string(),
             url: v,
+            tile_type: TileType::default(),
+            max_zoom: None,
           }]
         });
 
@@ -106,6 +154,7 @@ impl Config {
       commands_dir,
       search_providers: Vec::new(),
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     }
   }
 
@@ -133,6 +182,8 @@ impl Config {
     {
       self.heading_style = other.heading_style;
     }
+
+    self.vector_style_file = self.vector_style_file.or(other.vector_style_file.clone());
 
     self
   }
@@ -194,12 +245,23 @@ impl Default for Config {
   fn default() -> Self {
     let config_path = home_dir().map(|p| p.join(".config").join("mapvas"));
     let commands_dir = config_path.as_ref().map(|p| p.join("commands"));
+    let vector_style_file = config_path.as_ref().map(|p| p.join("style.json5"));
     Self {
       config_path,
-      tile_provider: vec![TileProvider {
-        name: "OpenStreetMap".to_string(),
-        url: DEFAULT_TILE_URL.to_string(),
-      }],
+      tile_provider: vec![
+        TileProvider {
+          name: "OpenStreetMap".to_string(),
+          url: DEFAULT_TILE_URL.to_string(),
+          tile_type: TileType::Raster,
+          max_zoom: Some(19),
+        },
+        TileProvider {
+          name: "OpenFreeMap Vector (experimental)".to_string(),
+          url: DEFAULT_VECTOR_TILE_URL.to_string(),
+          tile_type: TileType::Vector,
+          max_zoom: Some(15),
+        },
+      ],
       tile_cache_dir: home_dir().map(|p| p.join(".mapvas_tile_cache")),
       commands_dir,
       search_providers: vec![
@@ -207,6 +269,7 @@ impl Default for Config {
         SearchProviderConfig::Nominatim { base_url: None },
       ],
       heading_style: HeadingStyle::default(),
+      vector_style_file,
     }
   }
 }
@@ -243,14 +306,20 @@ mod tests {
     let a = TileProvider {
       name: "OSM".to_string(),
       url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     let b = TileProvider {
       name: "OSM".to_string(),
       url: "https://example.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     let c = TileProvider {
       name: "Other".to_string(),
       url: "https://other.com/{z}/{x}/{y}.png".to_string(),
+      tile_type: TileType::default(),
+      max_zoom: None,
     };
     assert_eq!(a, b);
     assert_ne!(a, c);
@@ -263,11 +332,14 @@ mod tests {
       tile_provider: vec![TileProvider {
         name: "OSM".to_string(),
         url: "https://osm.org".to_string(),
+        tile_type: TileType::default(),
+        max_zoom: None,
       }],
       tile_cache_dir: None,
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: None,
@@ -275,16 +347,21 @@ mod tests {
         TileProvider {
           name: "OSM".to_string(),
           url: "https://osm.org".to_string(),
+          tile_type: TileType::default(),
+          max_zoom: None,
         },
         TileProvider {
           name: "Custom".to_string(),
           url: "https://custom.org".to_string(),
+          tile_type: TileType::default(),
+          max_zoom: None,
         },
       ],
       tile_cache_dir: None,
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.tile_provider.len(), 2);
@@ -299,6 +376,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![SearchProviderConfig::Coordinate],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: None,
@@ -310,6 +388,7 @@ mod tests {
         SearchProviderConfig::Nominatim { base_url: None },
       ],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.search_providers.len(), 2);
@@ -324,6 +403,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: Some(PathBuf::from("/b")),
@@ -332,6 +412,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.config_path, Some(PathBuf::from("/a")));
@@ -346,6 +427,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let b = Config {
       config_path: Some(PathBuf::from("/b")),
@@ -354,6 +436,7 @@ mod tests {
       commands_dir: None,
       search_providers: vec![],
       heading_style: HeadingStyle::default(),
+      vector_style_file: None,
     };
     let merged = a.merge(&b);
     assert_eq!(merged.config_path, Some(PathBuf::from("/b")));
@@ -362,7 +445,7 @@ mod tests {
   #[test]
   fn default_config_has_expected_structure() {
     let config = Config::default();
-    assert_eq!(config.tile_provider.len(), 1);
+    assert_eq!(config.tile_provider.len(), 2);
     assert_eq!(config.tile_provider[0].name, "OpenStreetMap");
     assert_eq!(config.search_providers.len(), 2);
     assert_eq!(config.heading_style, HeadingStyle::Arrow);

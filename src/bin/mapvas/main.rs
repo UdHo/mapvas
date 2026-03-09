@@ -2,8 +2,13 @@ use std::sync::Arc;
 
 use egui::IconData;
 use mapvas::{
-  config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp, profiling, remote::spawn_remote_runner,
+  config::Config,
+  map::{mapvas_egui::Map, tile_renderer::init_style_config},
+  mapvas_ui::MapApp,
+  profiling,
+  remote::spawn_remote_runner,
 };
+use tokio_metrics::RuntimeMonitor;
 
 fn load_icon() -> Option<Arc<IconData>> {
   Some(Arc::new(
@@ -18,15 +23,27 @@ fn main() -> eframe::Result {
   // Initialize profiling
   profiling::init_profiling();
 
-  // Tokio runtime.
-  let rt = match tokio::runtime::Runtime::new() {
+  // Single tokio runtime for all async I/O operations
+  // CPU-bound rendering is handled by rayon thread pool (see src/render_pool.rs)
+  let runtime = match tokio::runtime::Builder::new_multi_thread()
+    .worker_threads(4) // Enough for I/O operations (downloads, HTTP server)
+    .thread_name("async-io")
+    .enable_all()
+    .build()
+  {
     Ok(rt) => rt,
     Err(e) => {
-      eprintln!("Error: Failed to create tokio runtime: {e}");
+      eprintln!("Error: Failed to create runtime: {e}");
       std::process::exit(1);
     }
   };
-  let _enter = rt.enter();
+
+  // Create runtime monitor for metrics
+  let runtime_handle = runtime.handle().clone();
+  let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
+
+  // Enter runtime globally (used by ambient tokio::spawn calls)
+  let _enter = runtime.enter();
 
   let options = eframe::NativeOptions {
     viewport: egui::ViewportBuilder {
@@ -41,14 +58,24 @@ fn main() -> eframe::Result {
   eframe::run_native(
     "mapvas",
     options,
-    Box::new(|cc| {
+    Box::new(move |cc| {
       // Image support
       egui_extras::install_image_loaders(&cc.egui_ctx);
 
       let config = Config::new();
+
+      // Initialize vector tile style config from path specified in config
+      init_style_config(config.vector_style_file.as_deref());
+
       let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
-      spawn_remote_runner(rt, remote.clone());
-      Ok(Box::new(MapApp::new(map, remote, data_holder, config)))
+      spawn_remote_runner(runtime, remote.clone());
+      Ok(Box::new(MapApp::new(
+        map,
+        remote,
+        data_holder,
+        config,
+        Some(runtime_monitor),
+      )))
     }),
   )
 }

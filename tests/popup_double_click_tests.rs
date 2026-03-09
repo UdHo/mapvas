@@ -61,7 +61,7 @@ fn create_test_app_with_nested_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config)
+  MapApp::new(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]

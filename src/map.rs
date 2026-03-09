@@ -10,3 +10,5 @@ pub mod map_event;
 pub mod mapvas_egui;
 /// Map tile functionality.
 mod tile_loader;
+/// Tile rendering abstraction for raster and vector tiles.
+pub mod tile_renderer;

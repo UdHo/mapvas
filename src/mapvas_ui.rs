@@ -4,13 +4,21 @@ use egui::Widget as _;
 
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
-  config::{Config, HeadingStyle, TileProvider},
-  map::mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+  config::{Config, HeadingStyle, TileProvider, TileType},
+  map::{
+    mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+    tile_renderer::{
+      Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
+      style_config,
+    },
+  },
   profile_scope,
   remote::Remote,
   search::{SearchManager, SearchProviderConfig, ui::SearchUI},
+  task_tracker::{TaskCategory, task_tracker},
 };
 use chrono::{DateTime, Utc};
+use tokio_metrics::RuntimeMonitor;
 
 /// Holds the UI data of mapvas.
 pub struct MapApp {
@@ -20,6 +28,7 @@ pub struct MapApp {
   previous_had_highlighted: bool,
   last_heading_style: HeadingStyle,
   command_line: CommandLine,
+  runtime_monitor: Option<RuntimeMonitor>,
 }
 
 impl MapApp {
@@ -29,6 +38,7 @@ impl MapApp {
     remote: Remote,
     map_content: Rc<dyn MapLayerHolder>,
     config: Config,
+    runtime_monitor: Option<RuntimeMonitor>,
   ) -> Self {
     let settings_dialog =
       std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
@@ -40,6 +50,7 @@ impl MapApp {
       previous_had_highlighted: false,
       last_heading_style: config.heading_style,
       command_line: CommandLine::new(),
+      runtime_monitor,
     }
   }
 
@@ -252,7 +263,7 @@ impl eframe::App for MapApp {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
-          self.sidebar.ui(ui);
+          self.sidebar.ui(ui, self.runtime_monitor.as_ref());
 
           self.sidebar.width = ui.available_width().clamp(200.0, 600.0);
         });
@@ -698,7 +709,152 @@ impl Sidebar {
     t * t * t + 1.0
   }
 
-  fn ui(&mut self, ui: &mut egui::Ui) {
+  /// Display performance monitoring
+  fn show_performance_monitoring(ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
+    // Show runtime metrics if monitor is available
+    if let Some(monitor) = runtime_monitor {
+      let intervals: Vec<_> = monitor.intervals().take(1).collect();
+      if let Some(metrics) = intervals.first() {
+        ui.horizontal(|ui| {
+          ui.label("Live tasks:");
+          ui.label(
+            egui::RichText::new(format!("{}", metrics.live_tasks_count))
+              .strong()
+              .color(egui::Color32::from_rgb(255, 140, 0)),
+          );
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Parks/sec:");
+          #[allow(clippy::cast_precision_loss)]
+          let parks_per_sec = metrics.total_park_count as f64 / metrics.elapsed.as_secs_f64();
+          ui.label(format!("{parks_per_sec:.0}"));
+        });
+      }
+    } else {
+      ui.label(
+        egui::RichText::new("Runtime metrics unavailable")
+          .italics()
+          .color(egui::Color32::GRAY),
+      );
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+
+    // Active tasks as subsection
+    ui.label(egui::RichText::new("Active Tasks").strong().size(11.0));
+    ui.add_space(4.0);
+
+    Self::show_active_tasks(ui);
+  }
+
+  /// Display active task list
+  fn show_active_tasks(ui: &mut egui::Ui) {
+    let tracker = task_tracker();
+    let tasks = tracker.snapshot();
+
+    if tasks.is_empty() {
+      ui.label(
+        egui::RichText::new("No active tasks")
+          .size(12.0)
+          .italics()
+          .color(egui::Color32::GRAY),
+      );
+      return;
+    }
+
+    // Sort by category for better organization
+    let mut tasks_by_category = std::collections::HashMap::new();
+    for (id, task) in tasks {
+      tasks_by_category
+        .entry(task.category.clone())
+        .or_insert_with(Vec::new)
+        .push((id, task));
+    }
+
+    // Display tasks by category in a specific order (server first, then others)
+    let category_order = [
+      TaskCategory::Server,
+      TaskCategory::TileLoad,
+      TaskCategory::TileSuperRes,
+      TaskCategory::Search,
+      TaskCategory::External,
+      TaskCategory::Other,
+    ];
+
+    for category in category_order {
+      if let Some(mut tasks) = tasks_by_category.remove(&category) {
+        // Sort by elapsed time (newest first)
+        tasks.sort_by_key(|(_, task)| std::cmp::Reverse(task.elapsed()));
+
+        let category_name = match category {
+          TaskCategory::TileLoad => "🗺 Tile Loading",
+          TaskCategory::TileSuperRes => "🔍 Super Resolution",
+          TaskCategory::Server => "🌐 Server",
+          TaskCategory::Search => "🔍 Search",
+          TaskCategory::External => "⚙ External",
+          TaskCategory::Other => "📋 Other",
+        };
+
+        ui.group(|ui| {
+          ui.label(egui::RichText::new(category_name).strong().size(11.0));
+          ui.separator();
+
+          if tasks.len() > 5 {
+            // Show count if too many tasks
+            ui.label(format!("{} active tasks", tasks.len()));
+            for (_, task) in tasks.into_iter().take(3) {
+              Self::show_task_info(ui, &task);
+            }
+            ui.label(
+              egui::RichText::new("... and more")
+                .size(10.0)
+                .italics()
+                .color(egui::Color32::GRAY),
+            );
+          } else {
+            for (_, task) in tasks {
+              Self::show_task_info(ui, &task);
+            }
+          }
+        });
+
+        ui.add_space(4.0);
+      }
+    }
+  }
+
+  /// Display individual task info
+  fn show_task_info(ui: &mut egui::Ui, task: &crate::task_tracker::TaskInfo) {
+    ui.horizontal(|ui| {
+      ui.label(
+        egui::RichText::new(&task.name)
+          .size(10.0)
+          .monospace()
+          .color(egui::Color32::from_rgb(70, 70, 70)),
+      );
+
+      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let elapsed = task.elapsed();
+        let color = if elapsed.as_secs() > 10 {
+          egui::Color32::from_rgb(200, 100, 0) // Orange for long-running
+        } else if elapsed.as_secs() > 5 {
+          egui::Color32::from_rgb(180, 180, 0) // Yellow for moderate
+        } else {
+          egui::Color32::from_rgb(100, 180, 100) // Green for recent
+        };
+
+        ui.label(
+          egui::RichText::new(format!("{:.1}s", elapsed.as_secs_f32()))
+            .size(9.0)
+            .color(color),
+        );
+      });
+    });
+  }
+
+  fn ui(&mut self, ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
     ui.vertical(|ui| {
       // Sidebar header with close button
       ui.horizontal(|ui| {
@@ -772,6 +928,12 @@ impl Sidebar {
                 }
               });
             });
+
+          egui::CollapsingHeader::new("📊 Performance Monitoring")
+            .default_open(false)
+            .show(ui, |ui| {
+              Self::show_performance_monitoring(ui, runtime_monitor);
+            });
         });
     });
 
@@ -790,6 +952,7 @@ struct SettingsDialog {
   selected_tab: SettingsTab,
   new_provider_name: String,
   new_provider_url: String,
+  new_provider_tile_type: TileType,
   cache_directory: String,
   screenshot_path: String,
   settings_changed: bool,
@@ -798,6 +961,9 @@ struct SettingsDialog {
   new_search_provider_url: String,
   new_search_provider_headers: String,
   nominatim_base_url: String,
+  // Style editing state
+  style_config: StyleConfig,
+  style_changed: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -805,6 +971,7 @@ enum SettingsTab {
   TileProviders,
   SearchProviders,
   General,
+  Styling,
 }
 
 impl SettingsDialog {
@@ -825,6 +992,7 @@ impl SettingsDialog {
       selected_tab: SettingsTab::General,
       new_provider_name: String::new(),
       new_provider_url: String::new(),
+      new_provider_tile_type: TileType::default(),
       cache_directory,
       screenshot_path,
       settings_changed: false,
@@ -832,6 +1000,8 @@ impl SettingsDialog {
       new_search_provider_url: String::new(),
       new_search_provider_headers: String::new(),
       nominatim_base_url: String::new(),
+      style_config: style_config(),
+      style_changed: false,
     }
   }
 
@@ -869,6 +1039,7 @@ impl SettingsDialog {
             SettingsTab::SearchProviders,
             "Search Providers",
           );
+          ui.selectable_value(&mut self.selected_tab, SettingsTab::Styling, "Styling");
         });
 
         ui.separator();
@@ -879,6 +1050,7 @@ impl SettingsDialog {
             SettingsTab::General => self.general_settings_ui(ui),
             SettingsTab::TileProviders => self.tile_providers_ui(ui),
             SettingsTab::SearchProviders => self.search_providers_ui(ui),
+            SettingsTab::Styling => self.styling_ui(ui),
           });
       });
     self.open = open;
@@ -968,6 +1140,7 @@ impl SettingsDialog {
       for (i, provider) in self.tile_providers.iter().enumerate() {
         ui.horizontal(|ui| {
           ui.label(&provider.name);
+          ui.label(format!("[{}]", provider.tile_type.name()));
           ui.label("-");
           ui.small(&provider.url);
           if ui.small_button("🗑").clicked() && self.tile_providers.len() > 1 {
@@ -994,14 +1167,31 @@ impl SettingsDialog {
         ui.label("URL:");
         ui.text_edit_singleline(&mut self.new_provider_url);
       });
+      ui.horizontal(|ui| {
+        ui.label("Type:");
+        egui::ComboBox::from_id_salt("new_provider_tile_type")
+          .selected_text(self.new_provider_tile_type.name())
+          .show_ui(ui, |ui| {
+            for tile_type in TileType::all() {
+              ui.selectable_value(
+                &mut self.new_provider_tile_type,
+                *tile_type,
+                tile_type.name(),
+              );
+            }
+          });
+      });
       ui.small("Use {x}, {y}, {zoom} as placeholders (e.g., https://tile.openstreetmap.org/{zoom}/{x}/{y}.png)");
       if ui.button("Add Provider").clicked() && !self.new_provider_name.is_empty() && !self.new_provider_url.is_empty() {
         self.tile_providers.push(TileProvider {
           name: self.new_provider_name.clone(),
           url: self.new_provider_url.clone(),
+          tile_type: self.new_provider_tile_type,
+          max_zoom: None,
         });
         self.new_provider_name.clear();
         self.new_provider_url.clear();
+        self.new_provider_tile_type = TileType::default();
         self.settings_changed = true;
       }
     });
@@ -1176,6 +1366,254 @@ impl SettingsDialog {
     });
   }
 
+  #[allow(clippy::too_many_lines)]
+  fn styling_ui(&mut self, ui: &mut egui::Ui) {
+    ui.heading("Vector Tile Styling");
+    ui.separator();
+
+    ui.label("Configure colors and styling for vector tile rendering. Changes apply immediately.");
+    ui.add_space(8.0);
+
+    // Action buttons
+    ui.horizontal(|ui| {
+      if ui.button("Reset to Defaults").clicked() {
+        self.style_config = StyleConfig::default();
+        self.style_changed = true;
+        set_style_config(self.style_config.clone());
+      }
+
+      if ui.button("Reload from File").clicked() {
+        init_style_config(self.config.vector_style_file.as_deref());
+        self.style_config = style_config();
+        self.style_changed = false;
+      }
+
+      if self.style_changed {
+        if ui.button("Save to File").clicked() {
+          match save_style_config() {
+            Ok(()) => {
+              self.style_changed = false;
+              log::info!("Style saved successfully");
+            }
+            Err(e) => log::error!("Failed to save style: {e}"),
+          }
+        }
+        ui.label(
+          egui::RichText::new("(unsaved changes)")
+            .italics()
+            .color(egui::Color32::YELLOW),
+        );
+      }
+    });
+
+    ui.add_space(8.0);
+
+    // Base colors section
+    egui::CollapsingHeader::new("Base Colors")
+      .default_open(true)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::color_edit(ui, "Background", &mut self.style_config.background);
+        changed |= Self::color_edit(ui, "Water", &mut self.style_config.water);
+        changed |= Self::color_edit(ui, "Land", &mut self.style_config.land);
+        changed |= Self::color_edit(ui, "Park", &mut self.style_config.park);
+        changed |= Self::color_edit(ui, "Building", &mut self.style_config.building);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Label colors section
+    egui::CollapsingHeader::new("Label Colors")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::color_edit(ui, "Place Labels", &mut self.style_config.place_label);
+        changed |= Self::color_edit(ui, "Road Labels", &mut self.style_config.road_label);
+        changed |= Self::color_edit(ui, "Water Labels", &mut self.style_config.water_label);
+        changed |= Self::color_edit(ui, "Marker Dot", &mut self.style_config.marker_dot);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Road styles section
+    egui::CollapsingHeader::new("Road Styles")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::road_style_edit(ui, "Motorway", &mut self.style_config.roads.motorway);
+        changed |= Self::road_style_edit(ui, "Trunk", &mut self.style_config.roads.trunk);
+        changed |= Self::road_style_edit(ui, "Primary", &mut self.style_config.roads.primary);
+        changed |= Self::road_style_edit(ui, "Secondary", &mut self.style_config.roads.secondary);
+        changed |= Self::road_style_edit(ui, "Tertiary", &mut self.style_config.roads.tertiary);
+        changed |=
+          Self::road_style_edit(ui, "Residential", &mut self.style_config.roads.residential);
+        changed |= Self::road_style_edit(ui, "Service", &mut self.style_config.roads.service);
+        changed |= Self::road_style_edit(ui, "Path", &mut self.style_config.roads.path);
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+
+    // Rendering settings section
+    egui::CollapsingHeader::new("Rendering Settings")
+      .default_open(false)
+      .show(ui, |ui| {
+        ui.horizontal(|ui| {
+          ui.label("Tile Size:");
+          ui.label(format!("{}px", self.style_config.rendering.tile_size));
+          ui.small("(restart required to change)");
+        });
+      });
+
+    // Font sizes section
+    egui::CollapsingHeader::new("Font Sizes")
+      .default_open(false)
+      .show(ui, |ui| {
+        let mut changed = false;
+        changed |= Self::float_slider(
+          ui,
+          "Country",
+          &mut self.style_config.font_sizes.country,
+          8.0..=24.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Capital",
+          &mut self.style_config.font_sizes.capital,
+          8.0..=20.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "City",
+          &mut self.style_config.font_sizes.city,
+          6.0..=18.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Town",
+          &mut self.style_config.font_sizes.town,
+          6.0..=16.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Village",
+          &mut self.style_config.font_sizes.village,
+          5.0..=14.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Road Label",
+          &mut self.style_config.font_sizes.road_label,
+          6.0..=16.0,
+        );
+        changed |= Self::float_slider(
+          ui,
+          "Water Label",
+          &mut self.style_config.font_sizes.water_label,
+          6.0..=16.0,
+        );
+        if changed {
+          self.style_changed = true;
+          set_style_config(self.style_config.clone());
+        }
+      });
+  }
+
+  /// Interactive color editor - returns true if changed
+  fn color_edit(ui: &mut egui::Ui, label: &str, rgb: &mut Rgb) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+      let mut color = [rgb.r, rgb.g, rgb.b];
+      if ui.color_edit_button_srgb(&mut color).changed() {
+        rgb.r = color[0];
+        rgb.g = color[1];
+        rgb.b = color[2];
+        changed = true;
+      }
+      ui.label(label);
+      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.monospace(rgb.to_hex());
+      });
+    });
+    changed
+  }
+
+  /// Interactive road style editor - returns true if changed
+  fn road_style_edit(ui: &mut egui::Ui, label: &str, style: &mut RoadStyle) -> bool {
+    let mut changed = false;
+
+    egui::CollapsingHeader::new(label)
+      .default_open(false)
+      .show(ui, |ui| {
+        ui.horizontal(|ui| {
+          let mut casing = [style.casing.r, style.casing.g, style.casing.b];
+          if ui.color_edit_button_srgb(&mut casing).changed() {
+            style.casing = Rgb::new(casing[0], casing[1], casing[2]);
+            changed = true;
+          }
+          ui.label("Casing");
+
+          let mut inner = [style.inner.r, style.inner.g, style.inner.b];
+          if ui.color_edit_button_srgb(&mut inner).changed() {
+            style.inner = Rgb::new(inner[0], inner[1], inner[2]);
+            changed = true;
+          }
+          ui.label("Inner");
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Casing width:");
+          if ui
+            .add(
+              egui::DragValue::new(&mut style.casing_width)
+                .range(0.5..=20.0)
+                .speed(0.1),
+            )
+            .changed()
+          {
+            changed = true;
+          }
+          ui.label("Inner width:");
+          if ui
+            .add(
+              egui::DragValue::new(&mut style.inner_width)
+                .range(0.5..=15.0)
+                .speed(0.1),
+            )
+            .changed()
+          {
+            changed = true;
+          }
+        });
+      });
+
+    changed
+  }
+
+  /// Float slider editor - returns true if changed
+  fn float_slider(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+  ) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+      ui.label(format!("{label}:"));
+      if ui
+        .add(egui::Slider::new(value, range).step_by(0.5))
+        .changed()
+      {
+        changed = true;
+      }
+    });
+    changed
+  }
   fn save_settings(&mut self) {
     use std::path::PathBuf;
 
