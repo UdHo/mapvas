@@ -2,11 +2,13 @@
 
 ## Unreleased
 
-- Auto parser for paste functionality. Supports multiple formats.
+## [0.2.8] - 2026-03-10
+
 - Vector tile rendering (MVT/PBF) with roads, labels, buildings, water, terrain and forest layers.
 - Configurable map styles via `style.json5`.
 - Tile provider type (raster/vector) and max zoom configurable per provider.
 - Config menu in the UI to switch tile providers.
+- Auto parser for paste functionality. Supports multiple formats.
 - Performance: parallel tile rendering with rayon.
 
 ## 0.2.6

@@ -141,7 +141,7 @@ impl SearchProvider for NominatimProvider {
       .get(&url)
       .header(
         "User-Agent",
-        "MapVas/0.2.4 (https://github.com/UdHo/mapvas)",
+        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
       )
       .recv_json::<Value>()
       .await
@@ -197,7 +197,7 @@ impl SearchProvider for NominatimProvider {
       .get(&url)
       .header(
         "User-Agent",
-        "MapVas/0.2.4 (https://github.com/UdHo/mapvas)",
+        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
       )
       .recv_json::<Value>()
       .await
