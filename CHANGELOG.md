@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.2.9] - 2026-03-11
+
+- Double-click eye icon to solo an element (hide all others in the layer); double-click again to show all.
+- Virtual scroll for large layers replaces pagination, providing smooth continuous scrolling.
+
 ## [0.2.8] - 2026-03-10
 
 - Vector tile rendering (MVT/PBF) with roads, labels, buildings, water, terrain and forest layers.
