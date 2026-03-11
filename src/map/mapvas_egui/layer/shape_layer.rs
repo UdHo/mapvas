@@ -23,8 +23,9 @@ use std::{
   },
 };
 
-const MAX_ITEMS_PER_COLLECTION: usize = 100;
-const ITEMS_PER_PAGE: usize = 50;
+const VIRTUAL_SCROLL_THRESHOLD: usize = 100;
+const VIRTUAL_SCROLL_ROW_HEIGHT: f32 = 26.0;
+const VIRTUAL_SCROLL_MAX_HEIGHT: f32 = 600.0;
 const HIGLIGHT_PIXEL_DISTANCE: f64 = 10.0;
 
 /// Search pattern that can be either a regex or literal string
@@ -40,8 +41,6 @@ pub struct ShapeLayer {
   geometry_visibility: HashMap<(String, usize), bool>,
   collection_expansion: HashMap<(String, usize, Vec<usize>), bool>,
   nested_geometry_visibility: HashMap<(String, usize, Vec<usize>), bool>,
-  collection_pagination: HashMap<(String, usize, Vec<usize>), usize>,
-  layer_pagination: HashMap<String, usize>,
   recv: Arc<Receiver<MapEvent>>,
   send: Sender<MapEvent>,
   layer_properties: LayerProperties,
@@ -148,8 +147,6 @@ impl ShapeLayer {
       geometry_visibility: HashMap::new(),
       collection_expansion: HashMap::new(),
       nested_geometry_visibility: HashMap::new(),
-      collection_pagination: HashMap::new(),
-      layer_pagination: HashMap::new(),
       recv: recv.into(),
       send,
       layer_properties: LayerProperties::default(),
@@ -253,7 +250,7 @@ impl ShapeLayer {
       let mut header =
         egui::CollapsingHeader::new(format!("📁 {truncated_layer_id} ({shapes_count})"))
           .id_salt(header_id)
-          .default_open(has_highlighted_geometry && shapes_count <= MAX_ITEMS_PER_COLLECTION);
+          .default_open(has_highlighted_geometry && shapes_count <= VIRTUAL_SCROLL_THRESHOLD);
 
       if was_truncated {
         header = header.show_background(true);
@@ -268,72 +265,32 @@ impl ShapeLayer {
 
       let header_response = header.show(ui, |ui| {
         if let Some(shapes) = self.shape_map.get(&layer_id).cloned() {
-          let total_shapes = shapes.len();
+          // Pre-filter to get visible indices
+          let filtered_indices: Vec<usize> = shapes
+            .iter()
+            .enumerate()
+            .filter(|(_, shape)| self.geometry_matches_filter(shape))
+            .map(|(idx, _)| idx)
+            .collect();
+          let total_filtered = filtered_indices.len();
 
-          if total_shapes > MAX_ITEMS_PER_COLLECTION {
-            ui.label(format!(
-              "⚠️ Large layer with {total_shapes} geometries - showing paginated view"
-            ));
-            ui.separator();
-
-            let current_page = *self.layer_pagination.get(&layer_id).unwrap_or(&0);
-            let total_pages = total_shapes.div_ceil(ITEMS_PER_PAGE);
-            let start_idx = current_page * ITEMS_PER_PAGE;
-            let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_shapes);
-
-            ui.horizontal(|ui| {
-              ui.label(format!(
-                "Page {} of {} (showing {}-{} of {})",
-                current_page + 1,
-                total_pages,
-                start_idx + 1,
-                end_idx,
-                total_shapes
-              ));
-            });
-
-            ui.horizontal(|ui| {
-              if ui.button("◀ Previous").clicked() && current_page > 0 {
-                self
-                  .layer_pagination
-                  .insert(layer_id.clone(), current_page - 1);
-              }
-
-              if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
-                self
-                  .layer_pagination
-                  .insert(layer_id.clone(), current_page + 1);
-              }
-
-              if ui.button("🎯 Show All on Map").clicked() {
-                for shape_idx in start_idx..end_idx {
-                  self
-                    .geometry_visibility
-                    .insert((layer_id.clone(), shape_idx), true);
-                }
-              }
-            });
-
-            ui.separator();
-
-            for (idx, shape) in shapes
-              .iter()
-              .enumerate()
-              .skip(start_idx)
-              .take(ITEMS_PER_PAGE)
-            {
-              // Apply filter to sidebar display
-              if self.geometry_matches_filter(shape) {
-                self.show_shape_ui(ui, &layer_id, idx, shape);
-                if idx < end_idx - 1 {
+          if total_filtered > VIRTUAL_SCROLL_THRESHOLD {
+            let scroll_id =
+              egui::Id::new(format!("layer_scroll_{layer_id}"));
+            egui::ScrollArea::vertical()
+              .id_salt(scroll_id)
+              .max_height(VIRTUAL_SCROLL_MAX_HEIGHT)
+              .show_rows(ui, VIRTUAL_SCROLL_ROW_HEIGHT, total_filtered, |ui, row_range| {
+                for row in row_range {
+                  let idx = filtered_indices[row];
+                  self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
                   ui.separator();
                 }
-              }
-            }
+              });
           } else {
-            for (shape_idx, shape) in shapes.iter().enumerate() {
-              self.show_shape_ui(ui, &layer_id, shape_idx, shape);
-              if shape_idx < shapes.len() - 1 {
+            for (i, &idx) in filtered_indices.iter().enumerate() {
+              self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
+              if i < total_filtered - 1 {
                 ui.separator();
               }
             }
@@ -908,65 +865,32 @@ impl ShapeLayer {
       ));
       let header_response = egui::CollapsingHeader::new(collection_label)
         .id_salt(header_id)
-        .default_open(is_expanded && nested_geometries.len() <= MAX_ITEMS_PER_COLLECTION)
+        .default_open(is_expanded && nested_geometries.len() <= VIRTUAL_SCROLL_THRESHOLD)
         .show(ui, |ui| {
           let total_items = nested_geometries.len();
+          let sibling_count = nested_geometries.len();
 
-          if total_items > MAX_ITEMS_PER_COLLECTION {
-            let current_page = *self
-              .collection_pagination
-              .get(&collection_key)
-              .unwrap_or(&0);
-            let total_pages = total_items.div_ceil(ITEMS_PER_PAGE);
-            let start_idx = current_page * ITEMS_PER_PAGE;
-            let end_idx = (start_idx + ITEMS_PER_PAGE).min(total_items);
-
-            ui.horizontal(|ui| {
-              ui.label(format!(
-                "Page {} of {} (showing {}-{} of {})",
-                current_page + 1,
-                total_pages,
-                start_idx + 1,
-                end_idx,
-                total_items
-              ));
-            });
-
-            ui.horizontal(|ui| {
-              if ui.button("◀ Previous").clicked() && current_page > 0 {
-                self
-                  .collection_pagination
-                  .insert(collection_key.clone(), current_page - 1);
-              }
-
-              if ui.button("Next ▶").clicked() && current_page < total_pages - 1 {
-                self
-                  .collection_pagination
-                  .insert(collection_key.clone(), current_page + 1);
-              }
-            });
-
-            ui.separator();
-
-            for (idx, sub_geometry) in nested_geometries
-              .iter()
-              .enumerate()
-              .skip(start_idx)
-              .take(ITEMS_PER_PAGE)
-            {
-              let mut sub_path = nested_path.to_vec();
-              sub_path.push(idx);
-              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, nested_geometries.len());
-              if idx < end_idx - 1 {
-                ui.separator();
-              }
-            }
+          if total_items > VIRTUAL_SCROLL_THRESHOLD {
+            let scroll_id = egui::Id::new(format!(
+              "nested_scroll_{layer_id}_{shape_idx}_{nested_path:?}"
+            ));
+            egui::ScrollArea::vertical()
+              .id_salt(scroll_id)
+              .max_height(VIRTUAL_SCROLL_MAX_HEIGHT)
+              .show_rows(ui, VIRTUAL_SCROLL_ROW_HEIGHT, total_items, |ui, row_range| {
+                for idx in row_range {
+                  let mut sub_path = nested_path.to_vec();
+                  sub_path.push(idx);
+                  self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, &nested_geometries[idx], sibling_count);
+                  ui.separator();
+                }
+              });
           } else {
             for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
               let mut sub_path = nested_path.to_vec();
               sub_path.push(sub_idx);
-              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, nested_geometries.len());
-              if sub_idx < nested_geometries.len() - 1 {
+              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, sibling_count);
+              if sub_idx < total_items - 1 {
                 ui.separator();
               }
             }
@@ -2665,8 +2589,6 @@ mod tests {
         geometry_visibility: HashMap::new(),
         collection_expansion: HashMap::new(),
         nested_geometry_visibility: HashMap::new(),
-        collection_pagination: HashMap::new(),
-        layer_pagination: HashMap::new(),
         recv: Arc::new(recv),
         send,
         layer_properties: crate::map::mapvas_egui::layer::LayerProperties { visible: true },
