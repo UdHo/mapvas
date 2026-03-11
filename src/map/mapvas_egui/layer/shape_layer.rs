@@ -23,9 +23,7 @@ use std::{
   },
 };
 
-const VIRTUAL_SCROLL_THRESHOLD: usize = 100;
-const VIRTUAL_SCROLL_ROW_HEIGHT: f32 = 26.0;
-const VIRTUAL_SCROLL_MAX_HEIGHT: f32 = 600.0;
+const SCROLL_AREA_MAX_HEIGHT: f32 = 600.0;
 const HIGLIGHT_PIXEL_DISTANCE: f64 = 10.0;
 
 /// Search pattern that can be either a regex or literal string
@@ -250,7 +248,7 @@ impl ShapeLayer {
       let mut header =
         egui::CollapsingHeader::new(format!("📁 {truncated_layer_id} ({shapes_count})"))
           .id_salt(header_id)
-          .default_open(has_highlighted_geometry && shapes_count <= VIRTUAL_SCROLL_THRESHOLD);
+          .default_open(has_highlighted_geometry);
 
       if was_truncated {
         header = header.show_background(true);
@@ -274,27 +272,18 @@ impl ShapeLayer {
             .collect();
           let total_filtered = filtered_indices.len();
 
-          if total_filtered > VIRTUAL_SCROLL_THRESHOLD {
-            let scroll_id =
-              egui::Id::new(format!("layer_scroll_{layer_id}"));
-            egui::ScrollArea::vertical()
-              .id_salt(scroll_id)
-              .max_height(VIRTUAL_SCROLL_MAX_HEIGHT)
-              .show_rows(ui, VIRTUAL_SCROLL_ROW_HEIGHT, total_filtered, |ui, row_range| {
-                for row in row_range {
-                  let idx = filtered_indices[row];
-                  self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
+          let scroll_id = egui::Id::new(format!("layer_scroll_{layer_id}"));
+          egui::ScrollArea::vertical()
+            .id_salt(scroll_id)
+            .max_height(SCROLL_AREA_MAX_HEIGHT)
+            .show(ui, |ui| {
+              for (i, &idx) in filtered_indices.iter().enumerate() {
+                self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
+                if i < total_filtered - 1 {
                   ui.separator();
                 }
-              });
-          } else {
-            for (i, &idx) in filtered_indices.iter().enumerate() {
-              self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
-              if i < total_filtered - 1 {
-                ui.separator();
               }
-            }
-          }
+            });
         }
       });
 
@@ -381,6 +370,11 @@ impl ShapeLayer {
       None
     };
 
+    let is_scroll_target = self
+      .just_double_clicked
+      .as_ref()
+      .is_some_and(|(l, idx, _)| l == layer_id && *idx == shape_idx);
+
     let frame = if let Some(color) = bg_color {
       egui::Frame::default()
         .fill(color)
@@ -390,7 +384,7 @@ impl ShapeLayer {
       egui::Frame::default()
     };
 
-    frame.show(ui, |ui| {
+    let frame_response = frame.show(ui, |ui| {
       // Handle collections differently - they get their own CollapsingHeader without eye icon
       if let Geometry::GeometryCollection(geometries, metadata) = shape {
         self.show_geometry_collection_inline(ui, layer_id, shape_idx, geometries, metadata);
@@ -398,8 +392,7 @@ impl ShapeLayer {
         // Non-collections get the traditional eye icon + content layout
         ui.horizontal(|ui| {
           let visibility_icon = if geometry_visible { "👁" } else { "🚫" };
-          let eye_response =
-            ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
+          let eye_response = ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
           if eye_response.double_clicked() {
             if let Some(shapes) = self.shape_map.get(layer_id) {
               // Check if this element is already solo (only visible one)
@@ -449,6 +442,12 @@ impl ShapeLayer {
         });
       }
     });
+
+    if is_scroll_target {
+      frame_response
+        .response
+        .scroll_to_me(Some(egui::Align::Center));
+    }
 
     // Handle nested collection label popups (recursive for deeply nested structures)
     for (layer_id, shapes) in &self.shape_map {
@@ -783,7 +782,14 @@ impl ShapeLayer {
       .show(ui, |ui| {
         for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
           let nested_path = vec![nested_idx];
-          self.show_nested_geometry_content(ui, layer_id, shape_idx, &nested_path, nested_geometry, geometries.len());
+          self.show_nested_geometry_content(
+            ui,
+            layer_id,
+            shape_idx,
+            &nested_path,
+            nested_geometry,
+            geometries.len(),
+          );
           if nested_idx < geometries.len() - 1 {
             ui.separator();
           }
@@ -865,36 +871,34 @@ impl ShapeLayer {
       ));
       let header_response = egui::CollapsingHeader::new(collection_label)
         .id_salt(header_id)
-        .default_open(is_expanded && nested_geometries.len() <= VIRTUAL_SCROLL_THRESHOLD)
+        .default_open(is_expanded)
         .show(ui, |ui| {
           let total_items = nested_geometries.len();
           let sibling_count = nested_geometries.len();
 
-          if total_items > VIRTUAL_SCROLL_THRESHOLD {
-            let scroll_id = egui::Id::new(format!(
-              "nested_scroll_{layer_id}_{shape_idx}_{nested_path:?}"
-            ));
-            egui::ScrollArea::vertical()
-              .id_salt(scroll_id)
-              .max_height(VIRTUAL_SCROLL_MAX_HEIGHT)
-              .show_rows(ui, VIRTUAL_SCROLL_ROW_HEIGHT, total_items, |ui, row_range| {
-                for idx in row_range {
-                  let mut sub_path = nested_path.to_vec();
-                  sub_path.push(idx);
-                  self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, &nested_geometries[idx], sibling_count);
+          let scroll_id = egui::Id::new(format!(
+            "nested_scroll_{layer_id}_{shape_idx}_{nested_path:?}"
+          ));
+          egui::ScrollArea::vertical()
+            .id_salt(scroll_id)
+            .max_height(SCROLL_AREA_MAX_HEIGHT)
+            .show(ui, |ui| {
+              for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
+                let mut sub_path = nested_path.to_vec();
+                sub_path.push(sub_idx);
+                self.show_nested_geometry_content(
+                  ui,
+                  layer_id,
+                  shape_idx,
+                  &sub_path,
+                  sub_geometry,
+                  sibling_count,
+                );
+                if sub_idx < total_items - 1 {
                   ui.separator();
                 }
-              });
-          } else {
-            for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
-              let mut sub_path = nested_path.to_vec();
-              sub_path.push(sub_idx);
-              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, sibling_count);
-              if sub_idx < total_items - 1 {
-                ui.separator();
               }
-            }
-          }
+            });
         });
 
       // Update expansion state
@@ -940,8 +944,7 @@ impl ShapeLayer {
 
         // Visibility toggle button for individual geometries
         let visibility_icon = if nested_visible { "👁" } else { "🚫" };
-        let eye_response =
-          ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
+        let eye_response = ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
         if eye_response.double_clicked() {
           let parent_path = &nested_path[..nested_path.len() - 1];
           let current_idx = nested_path[nested_path.len() - 1];
@@ -1028,6 +1031,17 @@ impl ShapeLayer {
         let rect = horizontal_response.response.rect;
         ui.painter()
           .rect_filled(rect, 2.0, egui::Color32::from_rgb(100, 100, 200));
+
+        // Scroll to this element if it was just double-clicked on the map
+        if self
+          .just_double_clicked
+          .as_ref()
+          .is_some_and(|(l, idx, path)| l == layer_id && *idx == shape_idx && path == nested_path)
+        {
+          horizontal_response
+            .response
+            .scroll_to_me(Some(egui::Align::Center));
+        }
       }
 
       // Handle visibility toggle after the horizontal closure
