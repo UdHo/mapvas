@@ -441,10 +441,27 @@ impl ShapeLayer {
         // Non-collections get the traditional eye icon + content layout
         ui.horizontal(|ui| {
           let visibility_icon = if geometry_visible { "👁" } else { "🚫" };
-          if ui
-            .add_sized([24.0, 20.0], egui::Button::new(visibility_icon))
-            .clicked()
-          {
+          let eye_response =
+            ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
+          if eye_response.double_clicked() {
+            if let Some(shapes) = self.shape_map.get(layer_id) {
+              // Check if this element is already solo (only visible one)
+              let is_solo = geometry_visible
+                && (0..shapes.len()).all(|i| {
+                  i == shape_idx
+                    || !*self
+                      .geometry_visibility
+                      .get(&(layer_id.to_string(), i))
+                      .unwrap_or(&true)
+                });
+              for i in 0..shapes.len() {
+                self.geometry_visibility.insert(
+                  (layer_id.to_string(), i),
+                  if is_solo { true } else { i == shape_idx },
+                );
+              }
+            }
+          } else if eye_response.clicked() {
             self
               .geometry_visibility
               .insert(geometry_key.clone(), !geometry_visible);
@@ -809,7 +826,7 @@ impl ShapeLayer {
       .show(ui, |ui| {
         for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
           let nested_path = vec![nested_idx];
-          self.show_nested_geometry_content(ui, layer_id, shape_idx, &nested_path, nested_geometry);
+          self.show_nested_geometry_content(ui, layer_id, shape_idx, &nested_path, nested_geometry, geometries.len());
           if nested_idx < geometries.len() - 1 {
             ui.separator();
           }
@@ -865,6 +882,7 @@ impl ShapeLayer {
     shape_idx: usize,
     nested_path: &[usize],
     geometry: &Geometry<PixelCoordinate>,
+    sibling_count: usize,
   ) {
     let nested_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
     let nested_visible = *self
@@ -938,7 +956,7 @@ impl ShapeLayer {
             {
               let mut sub_path = nested_path.to_vec();
               sub_path.push(idx);
-              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
+              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, nested_geometries.len());
               if idx < end_idx - 1 {
                 ui.separator();
               }
@@ -947,7 +965,7 @@ impl ShapeLayer {
             for (sub_idx, sub_geometry) in nested_geometries.iter().enumerate() {
               let mut sub_path = nested_path.to_vec();
               sub_path.push(sub_idx);
-              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry);
+              self.show_nested_geometry_content(ui, layer_id, shape_idx, &sub_path, sub_geometry, nested_geometries.len());
               if sub_idx < nested_geometries.len() - 1 {
                 ui.separator();
               }
@@ -998,10 +1016,33 @@ impl ShapeLayer {
 
         // Visibility toggle button for individual geometries
         let visibility_icon = if nested_visible { "👁" } else { "🚫" };
-        if ui
-          .add_sized([24.0, 20.0], egui::Button::new(visibility_icon))
-          .clicked()
-        {
+        let eye_response =
+          ui.add_sized([24.0, 20.0], egui::Button::new(visibility_icon));
+        if eye_response.double_clicked() {
+          let parent_path = &nested_path[..nested_path.len() - 1];
+          let current_idx = nested_path[nested_path.len() - 1];
+          // Check if this element is already solo (only visible one among siblings)
+          let is_solo = nested_visible
+            && (0..sibling_count).all(|i| {
+              i == current_idx
+                || !*self
+                  .nested_geometry_visibility
+                  .get(&{
+                    let mut p = parent_path.to_vec();
+                    p.push(i);
+                    (layer_id.to_string(), shape_idx, p)
+                  })
+                  .unwrap_or(&true)
+            });
+          for i in 0..sibling_count {
+            let mut sibling_path = parent_path.to_vec();
+            sibling_path.push(i);
+            self.nested_geometry_visibility.insert(
+              (layer_id.to_string(), shape_idx, sibling_path),
+              if is_solo { true } else { i == current_idx },
+            );
+          }
+        } else if eye_response.clicked() {
           toggle_visibility = true;
         }
 
