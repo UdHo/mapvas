@@ -167,6 +167,14 @@ pub trait Layer {
     // Default implementation returns None
     crate::map::mapvas_egui::timeline_widget::IntervalLock::None
   }
+
+  /// Whether this layer has pending async work (e.g. tiles downloading/rendering).
+  fn has_pending_work(&self) -> bool {
+    false
+  }
+
+  /// Configure this layer for headless rendering (disable preloading, etc.).
+  fn set_headless(&mut self) {}
 }
 
 /// Common properties for all layers.

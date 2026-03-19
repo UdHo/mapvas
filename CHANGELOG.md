@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Headless rendering: `mapcat --headless` renders maps directly to PNG (file or stdin input, configurable dimensions, auto-detects format).
+
 ## [0.2.9] - 2026-03-11
 
 - Double-click eye icon to solo an element (hide all others in the layer); double-click again to show all.

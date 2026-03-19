@@ -45,8 +45,70 @@ struct Args {
   #[arg(short, long, default_value = "")]
   screenshot: String,
 
-  /// A file to parse. stdin is used if this is not provided.
+  /// Render directly to an image file instead of sending to mapvas
+  #[arg(short, long)]
+  output: Option<std::path::PathBuf>,
+
+  /// Image width in pixels (only with --output)
+  #[arg(long, default_value_t = 1980)]
+  width: u32,
+
+  /// Image height in pixels (only with --output)
+  #[arg(long, default_value_t = 1200)]
+  height: u32,
+
+  /// Files to parse. stdin is used if not provided.
   files: Vec<std::path::PathBuf>,
+}
+
+fn render_output(args: &Args) {
+  use mapvas::{
+    config::Config, headless::HeadlessRenderer, map::tile_renderer::init_style_config,
+    parser::ContentAutoParser,
+  };
+
+  let config = Config::new();
+  init_style_config(config.vector_style_file.as_deref());
+
+  let renderer = HeadlessRenderer::with_config(config);
+
+  let mut events: Vec<MapEvent> = Vec::new();
+  if args.files.is_empty() {
+    // Read from stdin
+    let mut content = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut content) {
+      eprintln!("Error: Failed to read from stdin: {e}");
+      std::process::exit(1);
+    }
+    let content_parser = ContentAutoParser::new(content)
+      .with_label_pattern(&args.label_pattern)
+      .with_invert_coordinates(args.invert_coordinates);
+    events.extend(content_parser.parse());
+  } else {
+    for path in &args.files {
+      let mut parser = AutoFileParser::new(path)
+        .with_label_pattern(&args.label_pattern)
+        .with_invert_coordinates(args.invert_coordinates);
+      events.extend(parser.parse());
+    }
+  }
+
+  // Always focus on data in output mode
+  events.push(MapEvent::Focus);
+
+  let img = renderer.render(&events, args.width, args.height);
+
+  let output_path = args.output.as_ref().expect("Headless path should be set");
+  if let Err(e) = img.save(output_path) {
+    eprintln!("Failed to save image: {e}");
+    std::process::exit(1);
+  }
+  eprintln!(
+    "Saved {}x{} image to {}",
+    args.width,
+    args.height,
+    output_path.display()
+  );
 }
 
 fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
@@ -73,6 +135,11 @@ async fn main() {
   let color = Color::from_str(&args.color).unwrap_or_default();
 
   env_logger::init();
+
+  if args.output.is_some() {
+    render_output(&args);
+    return;
+  }
 
   let (initial_sender, mapvas_was_spawned) = sender::MapSender::new().await;
 

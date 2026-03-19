@@ -1,5 +1,7 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use clap::Parser;
 use egui::IconData;
 use mapvas::{
   config::Config,
@@ -10,6 +12,14 @@ use mapvas::{
 };
 use tokio_metrics::RuntimeMonitor;
 
+#[derive(Parser)]
+#[command(name = "mapvas", about = "A map viewer with drawing functionality")]
+struct Cli {
+  /// Input files to load (geojson, kml, gpx, json, etc.)
+  #[arg()]
+  files: Vec<PathBuf>,
+}
+
 fn load_icon() -> Option<Arc<IconData>> {
   Some(Arc::new(
     eframe::icon_data::from_png_bytes(include_bytes!("../../../logo.png")).ok()?,
@@ -17,16 +27,14 @@ fn load_icon() -> Option<Arc<IconData>> {
 }
 
 fn main() -> eframe::Result {
-  // init logger.
   env_logger::init();
-
-  // Initialize profiling
   profiling::init_profiling();
 
-  // Single tokio runtime for all async I/O operations
-  // CPU-bound rendering is handled by rayon thread pool (see src/render_pool.rs)
+  let _cli = Cli::parse();
+
+  // GUI mode
   let runtime = match tokio::runtime::Builder::new_multi_thread()
-    .worker_threads(4) // Enough for I/O operations (downloads, HTTP server)
+    .worker_threads(4)
     .thread_name("async-io")
     .enable_all()
     .build()
@@ -38,11 +46,8 @@ fn main() -> eframe::Result {
     }
   };
 
-  // Create runtime monitor for metrics
   let runtime_handle = runtime.handle().clone();
   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
-
-  // Enter runtime globally (used by ambient tokio::spawn calls)
   let _enter = runtime.enter();
 
   let options = eframe::NativeOptions {
@@ -59,12 +64,9 @@ fn main() -> eframe::Result {
     "mapvas",
     options,
     Box::new(move |cc| {
-      // Image support
       egui_extras::install_image_loaders(&cc.egui_ctx);
 
       let config = Config::new();
-
-      // Initialize vector tile style config from path specified in config
       init_style_config(config.vector_style_file.as_deref());
 
       let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());

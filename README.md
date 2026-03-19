@@ -50,6 +50,21 @@ curl 'https://api.example.com/geo' | mapcat   # From API
 
 Or just drag and drop files onto the map window.
 
+## Headless Rendering
+
+Render maps directly to PNG without opening a window:
+
+```bash
+# Render a file
+mapcat -o map.png data.geojson
+
+# Pipe data
+cat data.geojson | mapcat -o map.png
+
+# Custom image size
+mapcat -o map.png data.geojson --width 3200 --height 2400
+```
+
 ## Basic Controls
 
 | Action           | Description        |
