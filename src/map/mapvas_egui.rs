@@ -541,6 +541,26 @@ impl Widget for &mut Map {
 }
 
 impl Map {
+  pub fn set_headless(&mut self) {
+    if let Ok(mut layers) = self.layers.lock() {
+      for layer in layers.iter_mut() {
+        layer.set_headless();
+      }
+    }
+  }
+
+  #[must_use]
+  pub fn has_pending_work(&self) -> bool {
+    if let Ok(layers) = self.layers.lock() {
+      for layer in layers.iter() {
+        if layer.has_pending_work() {
+          return true;
+        }
+      }
+    }
+    false
+  }
+
   #[must_use]
   pub fn has_highlighted_geometry(&self) -> bool {
     if let Ok(layers) = self.layers.lock() {

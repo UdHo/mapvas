@@ -54,6 +54,11 @@ impl MapApp {
     }
   }
 
+  #[must_use]
+  pub fn has_pending_work(&self) -> bool {
+    self.map.has_pending_work()
+  }
+
   /// Show the sidebar toggle button when sidebar is hidden
   fn show_sidebar_toggle_button(&mut self, ctx: &egui::Context) {
     // Use a simple area for the toggle button

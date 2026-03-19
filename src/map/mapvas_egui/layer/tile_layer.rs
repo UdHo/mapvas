@@ -96,6 +96,8 @@ pub struct TileLayer {
   last_visible_tiles: Vec<Tile>,
   // Abort handles for in-flight render tasks (to cancel on style change)
   render_abort_handles: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+  // Whether to preload adjacent and zoom-level tiles (disabled in headless mode)
+  preload_enabled: bool,
 }
 
 const NAME: &str = "Tile Layer";
@@ -127,6 +129,7 @@ impl TileLayer {
       last_style_version: style_version(),
       last_visible_tiles: Vec::new(),
       render_abort_handles: Arc::new(Mutex::new(Vec::new())),
+      preload_enabled: true,
     };
 
     // Spawn diagnostic task to monitor in-flight tiles
@@ -768,7 +771,9 @@ impl Layer for TileLayer {
     }
 
     // Start preloading adjacent and zoom level tiles
-    self.preload_tiles(&visible_tiles);
+    if self.preload_enabled {
+      self.preload_tiles(&visible_tiles);
+    }
 
     // Draw parent tiles if detailed tiles are not available yet. Coarser tiles are drawn first to
     // have detailed textures visible on top.
@@ -910,6 +915,14 @@ impl Layer for TileLayer {
 
   fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
     false
+  }
+
+  fn has_pending_work(&self) -> bool {
+    !self.in_flight_tiles.lock().unwrap().is_empty()
+  }
+
+  fn set_headless(&mut self) {
+    self.preload_enabled = false;
   }
 }
 

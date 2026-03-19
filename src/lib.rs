@@ -2,6 +2,8 @@
 pub mod command_line;
 /// Contains the configuration for the application.
 pub mod config;
+/// Headless map renderer using egui_kittest Harness.
+pub mod headless;
 /// Contains the main map logic, including drawing, zooming,...
 pub mod map;
 /// Contains the UI around the map.
