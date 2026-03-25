@@ -29,6 +29,7 @@ pub struct MapApp {
   last_heading_style: HeadingStyle,
   command_line: CommandLine,
   runtime_monitor: Option<RuntimeMonitor>,
+  headless: bool,
 }
 
 impl MapApp {
@@ -51,7 +52,17 @@ impl MapApp {
       last_heading_style: config.heading_style,
       command_line: CommandLine::new(),
       runtime_monitor,
+      headless: false,
     }
+  }
+
+  pub fn set_headless(&mut self) {
+    self.headless = true;
+  }
+
+  #[must_use]
+  pub fn has_pending_work(&self) -> bool {
+    self.map.has_pending_work()
   }
 
   /// Show the sidebar toggle button when sidebar is hidden
@@ -269,7 +280,7 @@ impl eframe::App for MapApp {
         });
     }
 
-    if !self.sidebar.is_fully_visible() {
+    if !self.sidebar.is_fully_visible() && !self.headless {
       self.show_sidebar_toggle_button(ctx);
     }
 
