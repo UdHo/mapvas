@@ -304,34 +304,33 @@ mod tests {
     {"lat": 53.569150, "lon": 9.963780}
   ]
 }"#;
-    let mut parser = super::JsonParser::default();
-    parser.parse_line(data);
-    let event = parser.finalize().expect("should produce an event");
-    let MapEvent::Layer(layer) = event else {
-      panic!("Expected Layer event");
-    };
-    assert_eq!(layer.geometries.len(), 1, "Should produce exactly one geometry (a linestring), not individual points");
-    assert!(
-      matches!(layer.geometries[0], Geometry::LineString(_, _)),
-      "The geometry should be a LineString, got {:?}",
-      layer.geometries[0]
-    );
-    if let Geometry::LineString(coords, _) = &layer.geometries[0] {
-      assert_eq!(coords.len(), 3, "LineString should have 3 coordinates");
-    }
+    let events = parse_str::<JsonParser>(data);
+    let layer = extract_layer(&events, "json");
+
+    let expected = LayerBuilder::new("json")
+      .with_geometry(GeometryBuilder::linestring(&[
+        (53.568_815, 9.963_959),
+        (53.568_83, 9.963_95),
+        (53.569_15, 9.963_78),
+      ]))
+      .build();
+
+    assert_layer_eq(layer, &expected);
   }
 
   #[test]
   fn test_concatenated_json_objects() {
     let data = r#"{"lat": 53.0, "lon": 10.0}
 {"lat": 54.0, "lon": 11.0}"#;
-    let mut parser = super::JsonParser::default();
-    parser.parse_line(data);
-    let event = parser.finalize().expect("should produce an event");
-    let MapEvent::Layer(layer) = event else {
-      panic!("Expected Layer event");
-    };
-    assert_eq!(layer.geometries.len(), 2, "Should produce two points from two concatenated JSON objects");
+    let events = parse_str::<JsonParser>(data);
+    let layer = extract_layer(&events, "json");
+
+    let expected = LayerBuilder::new("json")
+      .with_geometry(GeometryBuilder::point(53.0, 10.0))
+      .with_geometry(GeometryBuilder::point(54.0, 11.0))
+      .build();
+
+    assert_layer_eq(layer, &expected);
   }
 
   #[test]

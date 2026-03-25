@@ -1,5 +1,4 @@
 use egui::Color32;
-use log::error;
 use serde::{Deserialize, Serialize};
 
 use crate::map::{
@@ -156,10 +155,7 @@ impl Parser for TTJsonParser {
   fn finalize(&mut self) -> Option<MapEvent> {
     let routes: Result<JsonResponse, _> = serde_json::from_str(&self.data);
     match routes {
-      Err(e) => {
-        error!("{e:?}");
-        None
-      }
+      Err(_) => None,
       Ok(JsonResponse::Routes { routes }) => Some(self.convert_routes(&routes)),
       Ok(JsonResponse::Range { polygon }) => {
         Some(self.convert_range(polygon.center, &polygon.boundary))
