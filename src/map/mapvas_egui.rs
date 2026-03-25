@@ -50,6 +50,7 @@ pub struct Map {
   keys: Vec<String>,
   geometry_info: Option<GeometryInfo>,
   config: Config,
+  headless: bool,
 }
 
 impl Map {
@@ -107,6 +108,7 @@ impl Map {
         keys,
         geometry_info: None,
         config: cfg,
+        headless: false,
       },
       remote,
       map_data_holder,
@@ -521,6 +523,7 @@ impl Widget for &mut Map {
     }
 
     fit_to_screen(&mut self.transform, &rect);
+    self.handle_map_events(rect);
     {
       profile_scope!("Map::draw_layers");
       if ui.is_rect_visible(rect)
@@ -534,7 +537,6 @@ impl Widget for &mut Map {
         }
       }
     }
-    self.handle_map_events(rect);
 
     response
   }
@@ -542,6 +544,7 @@ impl Widget for &mut Map {
 
 impl Map {
   pub fn set_headless(&mut self) {
+    self.headless = true;
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
         layer.set_headless();
