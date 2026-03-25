@@ -39,7 +39,7 @@ impl JsonParser {
   }
 
   #[expect(clippy::cast_possible_truncation)]
-  fn find_coordinates(&mut self, v: &Value) -> Option<PixelCoordinate> {
+  fn find_coordinates(&mut self, v: &Value, inside_array: bool) -> Option<PixelCoordinate> {
     profile_scope!("JsonParser::find_coordinates");
     match v {
       Value::Array(vec) => {
@@ -53,7 +53,7 @@ impl JsonParser {
         }
         let coords = vec
           .iter()
-          .filter_map(|v| self.find_coordinates(v))
+          .filter_map(|v| self.find_coordinates(v, true))
           .collect::<Vec<_>>();
 
         if let Some(g) = Geometry::from_coords(coords) {
@@ -63,12 +63,15 @@ impl JsonParser {
       Value::Object(map) => {
         if let Some(coord) = Self::try_get_coordinate_from_obj(map) {
           let metadata = StyleParser::extract_metadata_from_json(Some(v));
-          let point = Geometry::Point(coord, metadata);
-          self.geometry.push(point);
+          let has_metadata = metadata.label.is_some() || metadata.style.is_some();
+          if !inside_array || has_metadata {
+            let point = Geometry::Point(coord, metadata);
+            self.geometry.push(point);
+          }
           return Some(coord);
         }
         for (_, v) in map {
-          let _ = self.find_coordinates(v);
+          let _ = self.find_coordinates(v, false);
         }
       }
       _ => (),
@@ -106,8 +109,17 @@ impl Parser for JsonParser {
 
   fn finalize(&mut self) -> Option<MapEvent> {
     profile_scope!("JsonParser::finalize");
-    let parsed: Value = serde_json::from_str(&self.data).ok()?;
-    self.find_coordinates(&parsed);
+    // Try parsing as a single JSON document first
+    if let Ok(parsed) = serde_json::from_str::<Value>(&self.data) {
+      self.find_coordinates(&parsed, false);
+    } else {
+      // Try parsing as concatenated JSON objects (multiple objects in one file)
+      let data = std::mem::take(&mut self.data);
+      let mut deserializer = serde_json::Deserializer::from_str(&data).into_iter::<Value>();
+      while let Some(Ok(parsed)) = deserializer.next() {
+        self.find_coordinates(&parsed, false);
+      }
+    }
     if !self.geometry.is_empty() {
       let mut layer = Layer::new(self.layer_name.clone());
       layer.geometries.clone_from(&self.geometry);
@@ -280,6 +292,46 @@ mod tests {
     let mut parser = super::JsonParser::default();
     assert_eq!(parser.parse_line(&data), None);
     assert!(parser.finalize().is_some());
+  }
+
+  #[test]
+  fn test_coordinate_array_produces_linestring_not_points() {
+    let data = r#"
+{
+  "route_coordinates": [
+    {"lat": 53.568815, "lon": 9.963959},
+    {"lat": 53.568830, "lon": 9.963950},
+    {"lat": 53.569150, "lon": 9.963780}
+  ]
+}"#;
+    let mut parser = super::JsonParser::default();
+    parser.parse_line(data);
+    let event = parser.finalize().expect("should produce an event");
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 1, "Should produce exactly one geometry (a linestring), not individual points");
+    assert!(
+      matches!(layer.geometries[0], Geometry::LineString(_, _)),
+      "The geometry should be a LineString, got {:?}",
+      layer.geometries[0]
+    );
+    if let Geometry::LineString(coords, _) = &layer.geometries[0] {
+      assert_eq!(coords.len(), 3, "LineString should have 3 coordinates");
+    }
+  }
+
+  #[test]
+  fn test_concatenated_json_objects() {
+    let data = r#"{"lat": 53.0, "lon": 10.0}
+{"lat": 54.0, "lon": 11.0}"#;
+    let mut parser = super::JsonParser::default();
+    parser.parse_line(data);
+    let event = parser.finalize().expect("should produce an event");
+    let MapEvent::Layer(layer) = event else {
+      panic!("Expected Layer event");
+    };
+    assert_eq!(layer.geometries.len(), 2, "Should produce two points from two concatenated JSON objects");
   }
 
   #[test]
