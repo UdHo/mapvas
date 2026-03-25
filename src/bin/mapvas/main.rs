@@ -1,7 +1,5 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::Parser;
 use egui::IconData;
 use mapvas::{
   config::Config,
@@ -11,14 +9,6 @@ use mapvas::{
   remote::spawn_remote_runner,
 };
 use tokio_metrics::RuntimeMonitor;
-
-#[derive(Parser)]
-#[command(name = "mapvas", about = "A map viewer with drawing functionality")]
-struct Cli {
-  /// Input files to load (geojson, kml, gpx, json, etc.)
-  #[arg()]
-  files: Vec<PathBuf>,
-}
 
 fn load_icon() -> Option<Arc<IconData>> {
   Some(Arc::new(
@@ -30,9 +20,6 @@ fn main() -> eframe::Result {
   env_logger::init();
   profiling::init_profiling();
 
-  let _cli = Cli::parse();
-
-  // GUI mode
   let runtime = match tokio::runtime::Builder::new_multi_thread()
     .worker_threads(4)
     .thread_name("async-io")

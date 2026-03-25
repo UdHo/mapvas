@@ -57,7 +57,8 @@ impl HeadlessRenderer {
       remote.handle_map_event(event.clone());
     }
 
-    let app = MapApp::new(map, remote, data_holder, self.config.clone(), None);
+    let mut app = MapApp::new(map, remote, data_holder, self.config.clone(), None);
+    app.set_headless();
 
     #[allow(clippy::cast_precision_loss)]
     let mut harness = Harness::builder()

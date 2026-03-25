@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Headless rendering: `mapcat --headless` renders maps directly to PNG (file or stdin input, configurable dimensions, auto-detects format).
+- Headless rendering: `mapcat -o file.png` renders maps directly to PNG (file or stdin input, configurable dimensions, auto-detects format).
 
 ## [0.2.9] - 2026-03-11
 
