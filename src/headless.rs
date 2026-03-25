@@ -18,6 +18,7 @@ use crate::{
 /// pipeline headlessly, producing an `image::RgbaImage`.
 pub struct HeadlessRenderer {
   config: Config,
+  wait_for_tiles: bool,
 }
 
 impl HeadlessRenderer {
@@ -26,13 +27,23 @@ impl HeadlessRenderer {
   pub fn new() -> Self {
     Self {
       config: Config::new(),
+      wait_for_tiles: true,
     }
   }
 
   /// Create a new headless renderer with a specific config.
   #[must_use]
   pub fn with_config(config: Config) -> Self {
-    Self { config }
+    Self {
+      config,
+      wait_for_tiles: true,
+    }
+  }
+
+  #[must_use]
+  pub fn without_tiles(mut self) -> Self {
+    self.wait_for_tiles = false;
+    self
   }
 
   /// Render map with the given events to an image.
@@ -85,17 +96,19 @@ impl HeadlessRenderer {
     // 3. Checks if any layer still has pending work (tiles in flight)
     // We keep going as long as tiles are still downloading/rendering,
     // even if egui isn't requesting immediate repaints.
-    let step_dt = std::time::Duration::from_secs_f32(0.1);
-    let max_steps = 600; // 60 seconds max
-    for _ in 0..max_steps {
-      harness.step();
-      std::thread::sleep(step_dt);
-      if !harness.state().has_pending_work() {
-        break;
+    if self.wait_for_tiles {
+      let step_dt = std::time::Duration::from_secs_f32(0.1);
+      let max_steps = 600; // 60 seconds max
+      for _ in 0..max_steps {
+        harness.step();
+        std::thread::sleep(step_dt);
+        if !harness.state().has_pending_work() {
+          break;
+        }
       }
+      // One final run to render any last tiles that arrived
+      let _ = harness.try_run_realtime();
     }
-    // One final run to render any last tiles that arrived
-    let _ = harness.try_run_realtime();
 
     harness.render().expect("Failed to render headless image")
   }
@@ -117,7 +130,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_headless_render_empty() {
-    let renderer = HeadlessRenderer::new();
+    let renderer = HeadlessRenderer::new().without_tiles();
     let img = renderer.render(&[], 800, 600);
     assert_eq!(img.width(), 800);
     assert_eq!(img.height(), 600);
@@ -152,7 +165,7 @@ mod tests {
     let mut events: Vec<MapEvent> = parser.parse(Box::new(cursor)).collect();
     events.push(MapEvent::Focus);
 
-    let renderer = HeadlessRenderer::new();
+    let renderer = HeadlessRenderer::new().without_tiles();
     let img = renderer.render(&events, 1600, 1200);
     assert_eq!(img.width(), 1600);
     assert_eq!(img.height(), 1200);
