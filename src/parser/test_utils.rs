@@ -7,6 +7,14 @@ use crate::parser::FileParser;
 use std::fs::File;
 use std::io::BufReader;
 
+/// Helper to parse a string with a given parser
+#[must_use]
+pub fn parse_str<P: FileParser + Default>(data: &str) -> Vec<MapEvent> {
+  let mut parser = P::default();
+  let cursor = std::io::Cursor::new(data.as_bytes().to_vec());
+  parser.parse(Box::new(cursor)).collect()
+}
+
 /// Helper to load a test file and parse it with a given parser
 #[must_use]
 pub fn load_and_parse<P: FileParser + Default>(filename: &str) -> Vec<MapEvent> {
