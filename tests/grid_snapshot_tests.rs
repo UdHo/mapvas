@@ -13,7 +13,8 @@ use std::io::Cursor;
 fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Parse the GeoJSON content and inject it as a map event
   let mut parser = GeoJsonParser::default();
@@ -34,7 +35,8 @@ fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
 fn create_test_app_grid_mode() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
   MapApp::new(map, remote, data_holder, config, None)
 }
 

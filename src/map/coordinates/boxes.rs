@@ -291,6 +291,26 @@ impl BoundingBox {
   pub fn height(&self) -> f32 {
     self.max_y - self.min_y
   }
+
+  #[must_use]
+  pub fn min_x(&self) -> f32 {
+    self.min_x
+  }
+
+  #[must_use]
+  pub fn min_y(&self) -> f32 {
+    self.min_y
+  }
+
+  #[must_use]
+  pub fn max_x(&self) -> f32 {
+    self.max_x
+  }
+
+  #[must_use]
+  pub fn max_y(&self) -> f32 {
+    self.max_y
+  }
 }
 
 #[cfg(test)]
