@@ -5,7 +5,7 @@ use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
-use super::Parser;
+use super::{style::StyleParser, Parser};
 use crate::{
   map::{
     coordinates::WGS84Coordinate,
@@ -20,6 +20,9 @@ static COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
         .case_insensitive(true)
         .build()
         .expect("Color regex must compile")
+});
+static HEX_COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"#([0-9a-fA-F]{3,8})\b").expect("Hex color regex must compile")
 });
 static FILL_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new(r"(solid|transparent|nofill)")
@@ -185,6 +188,11 @@ impl GrepParser {
       let _ = Color::from_str(color)
         .map(|parsed_color| self.color = parsed_color)
         .map_err(|()| error!("Failed parsing {color}"));
+    }
+    for (_, [hex]) in HEX_COLOR_RE.captures_iter(line).map(|c| c.extract()) {
+      if let Some(color32) = StyleParser::parse_hex_color(hex) {
+        self.color = Color::from(color32);
+      }
     }
   }
 
@@ -433,6 +441,38 @@ mod tests {
   fn empty_line_returns_none() {
     let mut p = parser();
     assert!(p.parse_line("").is_none());
+  }
+
+  #[test]
+  fn parse_hex_color_sets_color() {
+    let mut p = parser();
+    p.parse_color("color #ff0000 here");
+    assert_eq!(p.color, Color::from(Color32::RED));
+  }
+
+  #[test]
+  fn parse_hex_color_short_form() {
+    let mut p = parser();
+    p.parse_color("#f00");
+    assert_eq!(p.color, Color::from(Color32::RED));
+  }
+
+  #[test]
+  fn parse_hex_color_with_alpha() {
+    let mut p = parser();
+    p.parse_color("#ff000080");
+    assert_eq!(
+      p.color,
+      Color::from(Color32::from_rgba_unmultiplied(255, 0, 0, 128))
+    );
+  }
+
+  #[test]
+  fn parse_hex_color_in_coordinate_line() {
+    let mut p = parser();
+    let event = p.parse_line("#00ff00 52.5, 13.4");
+    assert_eq!(p.color, Color::from(Color32::GREEN));
+    assert!(event.is_some());
   }
 
   #[test]

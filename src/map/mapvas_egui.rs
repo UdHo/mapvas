@@ -58,7 +58,7 @@ impl Map {
     let cfg = crate::config::Config::new();
 
     let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
-    let shape_layer = layer::ShapeLayer::new(cfg.clone());
+    let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone());
     let shape_layer_sender = shape_layer.get_sender();
 
     let (command, command_sender) = layer::CommandLayer::new();

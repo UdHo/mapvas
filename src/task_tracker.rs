@@ -16,6 +16,7 @@ pub struct TaskInfo {
 pub enum TaskCategory {
   TileLoad,
   TileSuperRes,
+  GeoRender,
   Server,
   Search,
   External,

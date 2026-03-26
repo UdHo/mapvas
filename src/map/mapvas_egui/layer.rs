@@ -7,6 +7,8 @@ mod commands;
 mod drawable;
 /// Geometry highlighting logic.
 mod geometry_highlighting;
+/// Offscreen geometry rasterization for cached rendering.
+mod geometry_rasterizer;
 /// Geometry selection and closest point calculations.
 mod geometry_selection;
 /// Handles screenshot functionality.

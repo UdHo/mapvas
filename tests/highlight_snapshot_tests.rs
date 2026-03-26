@@ -13,7 +13,8 @@ use std::io::Cursor;
 fn create_test_app_with_geometries() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Use nested folders KML to have both collections and individual geometries
   let kml_content = fs::read_to_string("tests/resources/nested_folders.kml")

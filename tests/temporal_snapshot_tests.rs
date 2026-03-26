@@ -13,7 +13,8 @@ use std::io::Cursor;
 fn create_test_app_with_temporal_kml() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Read and parse the temporal KML file
   let kml_content = fs::read_to_string("tests/resources/temporal_test.kml")
@@ -37,7 +38,8 @@ fn create_test_app_with_temporal_kml() -> MapApp {
 fn create_test_app_with_unix_epoch_kml() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Read and parse the unix epoch KML file
   let kml_content = fs::read_to_string("tests/resources/unix_epoch_timestamps.kml")
@@ -388,7 +390,8 @@ async fn unix_epoch_temporal_filtering() {
 fn create_test_app_with_debug_range_kml() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Read and parse the debug range KML file (2-minute span)
   let kml_content = fs::read_to_string("tests/resources/temporal_test.kml")
@@ -412,7 +415,8 @@ fn create_test_app_with_debug_range_kml() -> MapApp {
 fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Read and parse the unix epoch KML file without timezone
   let kml_content = fs::read_to_string("tests/resources/unix_epoch_timestamps.kml")
@@ -525,7 +529,8 @@ async fn large_file_temporal_parsing() {
 
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   let mut parser = KmlParser::new();
   let cursor = Cursor::new(kml_content.as_bytes());

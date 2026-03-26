@@ -1,30 +1,52 @@
 use super::{
-  Layer, LayerProperties, drawable::Drawable as _, geometry_highlighting::GeometryHighlighter,
-  geometry_selection,
+  Layer, LayerProperties, geometry_highlighting::GeometryHighlighter,
+  geometry_rasterizer, geometry_selection,
 };
+use rstar::{AABB, RTree, RTreeObject};
+
 use crate::{
-  config::Config,
+  config::{Config, HeadingStyle},
   map::{
-    coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
+    coordinates::{
+      BoundingBox, Coordinate, PixelCoordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE,
+      Transform, WGS84Coordinate, tiles_in_box,
+    },
     geometry_collection::{Geometry, Metadata, Style},
     map_event::{Layer as EventLayer, MapEvent},
   },
   profile_scope,
+  task_tracker::{TaskCategory, TaskGuard},
 };
 use chrono::{DateTime, Duration, Utc};
-use egui::{Color32, Pos2, Rect, Ui};
+use egui::{Color32, ColorImage, Pos2, Rect, Ui};
 use regex::Regex;
 use std::{
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   fmt::Write,
   sync::{
-    Arc,
+    Arc, Mutex,
     mpsc::{Receiver, Sender},
   },
 };
 
 const SCROLL_AREA_MAX_HEIGHT: f32 = 600.0;
 const HIGLIGHT_PIXEL_DISTANCE: f64 = 10.0;
+/// Render resolution (pixels) for every geometry tile, regardless of zoom level.
+const GEO_TILE_PIXEL_SIZE: u32 = 512;
+
+/// Entry stored in the R-tree spatial index.
+struct GeometryEntry {
+  layer_id: String,
+  shape_idx: usize,
+  envelope: AABB<[f32; 2]>,
+}
+
+impl RTreeObject for GeometryEntry {
+  type Envelope = AABB<[f32; 2]>;
+  fn envelope(&self) -> Self::Envelope {
+    self.envelope
+  }
+}
 
 /// Search pattern that can be either a regex or literal string
 enum SearchPattern {
@@ -57,6 +79,20 @@ pub struct ShapeLayer {
   filter_pattern: Option<SearchPattern>,
   // Track if a double-click action just occurred (separate from hover highlighting)
   pub(crate) just_double_clicked: Option<(String, usize, Vec<usize>)>, // (layer_id, shape_idx, nested_path)
+  // Tile-based geometry cache (world-space tiles, invariant to pan; zoom-level-aware).
+  tile_cache: HashMap<Tile, egui::TextureHandle>,
+  /// R-tree spatial index for fast bounding-box queries (tile rendering and hover highlighting).
+  spatial_index: RTree<GeometryEntry>,
+  cache_version: u64,
+  version: u64,
+  // Async geometry tile rendering — mirrors the TileLayer channel pattern.
+  geo_tile_sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
+  geo_tile_receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
+  in_flight_geo_tiles: Arc<Mutex<HashSet<Tile>>>,
+  render_semaphore: Arc<tokio::sync::Semaphore>,
+  ctx: egui::Context,
+  /// When true, render geo tiles synchronously (used in headless/test mode).
+  headless: bool,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -134,10 +170,68 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
   }
 }
 
+/// CPU-heavy rasterization of a geometry tile into a `ColorImage`.
+/// This is designed to be called from `tokio::task::spawn_blocking`.
+#[allow(clippy::needless_pass_by_value)]
+fn rasterize_geo_tile_to_image(
+  geometries: Vec<Geometry<PixelCoordinate>>,
+  tile: Tile,
+  heading_style: HeadingStyle,
+) -> Option<ColorImage> {
+  let (nw, se) = tile.position();
+  let tile_xmin = nw.x;
+  let tile_ymin = nw.y;
+  let ws = se.x - nw.x;
+  #[allow(clippy::cast_precision_loss)]
+  let zoom_factor = GEO_TILE_PIXEL_SIZE as f32 / ws;
+
+  let tile_transform = Transform::default()
+    .zoomed(zoom_factor)
+    .translated(PixelPosition {
+      x: -tile_xmin * zoom_factor,
+      y: -tile_ymin * zoom_factor,
+    });
+
+  #[allow(clippy::cast_precision_loss)]
+  let tile_rect = egui::Rect::from_min_max(
+    egui::pos2(0.0, 0.0),
+    egui::pos2(GEO_TILE_PIXEL_SIZE as f32, GEO_TILE_PIXEL_SIZE as f32),
+  );
+
+  let pixmap = geometry_rasterizer::rasterize_geometries(
+    geometries.iter(),
+    &tile_transform,
+    tile_rect,
+    heading_style,
+  )?;
+
+  // tiny_skia stores premultiplied RGBA; un-premultiply before handing to egui.
+  let mut straight = Vec::with_capacity(pixmap.data().len());
+  for p in pixmap.data().chunks_exact(4) {
+    let a = p[3];
+    if a == 0 {
+      straight.extend_from_slice(&[0, 0, 0, 0]);
+    } else {
+      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      let inv = 255.0_f32 / f32::from(a);
+      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      straight.push((f32::from(p[0]) * inv).min(255.0) as u8);
+      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      straight.push((f32::from(p[1]) * inv).min(255.0) as u8);
+      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      straight.push((f32::from(p[2]) * inv).min(255.0) as u8);
+      straight.push(a);
+    }
+  }
+  let px = GEO_TILE_PIXEL_SIZE as usize;
+  Some(ColorImage::from_rgba_unmultiplied([px, px], &straight))
+}
+
 impl ShapeLayer {
   #[must_use]
-  pub fn new(config: Config) -> Self {
+  pub fn new(config: Config, ctx: egui::Context) -> Self {
     let (send, recv) = std::sync::mpsc::channel();
+    let (geo_tile_sender, geo_tile_receiver) = std::sync::mpsc::channel();
 
     Self {
       shape_map: HashMap::new(),
@@ -157,33 +251,62 @@ impl ShapeLayer {
       search_results: Vec::new(),
       filter_pattern: None,
       just_double_clicked: None,
+      tile_cache: HashMap::new(),
+      spatial_index: RTree::new(),
+      cache_version: 0,
+      version: 0,
+      geo_tile_sender,
+      geo_tile_receiver,
+      in_flight_geo_tiles: Arc::new(Mutex::new(HashSet::new())),
+      render_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
+      ctx,
+      headless: false,
     }
   }
 
   /// Update highlighting based on mouse hover position
   fn update_hover_highlighting(&mut self, mouse_pos: egui::Pos2, transform: &Transform) {
     profile_scope!("ShapeLayer::update_hover_highlighting");
+
+    // Use the R-tree to find only geometries near the mouse cursor.
+    let world_pos = transform.invert().apply(mouse_pos.into());
+    #[allow(clippy::cast_possible_truncation)]
+    let world_radius = HIGLIGHT_PIXEL_DISTANCE as f32 / transform.zoom;
+    let query = AABB::from_corners(
+      [world_pos.x - world_radius, world_pos.y - world_radius],
+      [world_pos.x + world_radius, world_pos.y + world_radius],
+    );
+    let candidates: Vec<(String, usize)> = self
+      .spatial_index
+      .locate_in_envelope_intersecting(&query)
+      .map(|e| (e.layer_id.clone(), e.shape_idx))
+      .collect();
+
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
-    for (layer_id, shapes) in &self.shape_map {
-      if *self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        for (shape_idx, shape) in shapes.iter().enumerate() {
-          let geometry_key = (layer_id.clone(), shape_idx);
-          if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-            // Check top-level geometry
-            self.find_closest_in_geometry(
-              layer_id,
-              shape_idx,
-              &Vec::new(),
-              shape,
-              mouse_pos,
-              transform,
-              &mut closest_distance,
-              &mut closest_geometry,
-            );
-          }
-        }
+    for (layer_id, shape_idx) in candidates {
+      if !*self.layer_visibility.get(&layer_id).unwrap_or(&true) {
+        continue;
+      }
+      if !*self
+        .geometry_visibility
+        .get(&(layer_id.clone(), shape_idx))
+        .unwrap_or(&true)
+      {
+        continue;
+      }
+      if let Some(shape) = self.shape_map.get(&layer_id).and_then(|s| s.get(shape_idx)) {
+        self.find_closest_in_geometry(
+          &layer_id,
+          shape_idx,
+          &[],
+          shape,
+          mouse_pos,
+          transform,
+          &mut closest_distance,
+          &mut closest_geometry,
+        );
       }
     }
 
@@ -199,8 +322,10 @@ impl ShapeLayer {
   }
 
   fn handle_new_shapes(&mut self) {
+    let mut received = false;
     for event in self.recv.try_iter() {
       if let MapEvent::Layer(EventLayer { id, geometries }) = event {
+        received = true;
         let l = self.shape_map.entry(id.clone()).or_default();
         let start_idx = l.len();
         l.extend(geometries.into_iter());
@@ -212,6 +337,161 @@ impl ShapeLayer {
             .entry((id.clone(), i))
             .or_insert(true);
         }
+      }
+    }
+    if received {
+      self.version += 1;
+    }
+  }
+
+  fn invalidate_cache(&mut self) {
+    self.version += 1;
+  }
+
+  /// Receive any geometry tiles that finished rendering on background threads.
+  fn collect_new_geo_tile_data(&mut self, ui: &egui::Ui) {
+    for (tile, image) in self.geo_tile_receiver.try_iter() {
+      let handle = ui.ctx().load_texture(
+        format!("geo_tile_{}_{}_{}", tile.zoom, tile.x, tile.y),
+        image,
+        egui::TextureOptions::default(),
+      );
+      self.tile_cache.insert(tile, handle);
+      self.in_flight_geo_tiles.lock().unwrap().remove(&tile);
+    }
+  }
+
+  /// Rebuild the R-tree spatial index from all current geometries.
+  /// Called whenever `version` advances past `cache_version`.
+  fn rebuild_spatial_index(&mut self) {
+    let entries: Vec<GeometryEntry> = self
+      .shape_map
+      .iter()
+      .flat_map(|(layer_id, shapes)| {
+        shapes.iter().enumerate().filter_map(|(shape_idx, shape)| {
+          let bbox = shape.bounding_box();
+          if !bbox.is_valid() {
+            return None;
+          }
+          Some(GeometryEntry {
+            layer_id: layer_id.clone(),
+            shape_idx,
+            envelope: AABB::from_corners(
+              [bbox.min_x(), bbox.min_y()],
+              [bbox.max_x(), bbox.max_y()],
+            ),
+          })
+        })
+      })
+      .collect();
+    self.spatial_index = RTree::bulk_load(entries);
+  }
+
+  /// Return the `Tile`s visible in the current viewport, using the same zoom formula as `TileLayer`.
+  #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+  fn compute_visible_geo_tiles(transform: &Transform, rect: Rect) -> Vec<Tile> {
+    let max_dim = rect.width().max(rect.height());
+    let zoom = ((transform.zoom * max_dim / TILE_SIZE).log2() as u8).saturating_add(2);
+    let zoom = zoom.min(19); // cap at OSM max zoom to avoid explosion of tiny tiles
+    let inv = transform.invert();
+    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
+    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
+    tiles_in_box(min_pos, max_pos).collect()
+  }
+
+  /// Collect geometries that overlap the given `Tile`, applying all visibility / filter rules.
+  fn collect_tile_geometries(&self, tile: Tile) -> Vec<Geometry<PixelCoordinate>> {
+    let (nw, se) = tile.position();
+    let query = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
+    self
+      .spatial_index
+      .locate_in_envelope_intersecting(&query)
+      .filter_map(|entry| {
+        if !*self.layer_visibility.get(&entry.layer_id).unwrap_or(&true) {
+          return None;
+        }
+        if !*self
+          .geometry_visibility
+          .get(&(entry.layer_id.clone(), entry.shape_idx))
+          .unwrap_or(&true)
+        {
+          return None;
+        }
+        let shape = self
+          .shape_map
+          .get(&entry.layer_id)?
+          .get(entry.shape_idx)?;
+        if let Some(t) = self.temporal_current_time
+          && !self.is_geometry_visible_at_time(shape, t)
+        {
+          return None;
+        }
+        if !self.geometry_matches_filter(shape) {
+          return None;
+        }
+        self.filter_nested_visibility(&entry.layer_id, entry.shape_idx, &[], shape)
+      })
+      .collect()
+  }
+
+  /// Paint a cached tile onto the map using the current screen transform.
+  fn paint_geo_tile(
+    painter: &egui::Painter,
+    handle: &egui::TextureHandle,
+    tile: Tile,
+    transform: &Transform,
+  ) {
+    let (nw, se) = tile.position();
+    let screen_nw: egui::Pos2 = transform.apply(nw).into();
+    let screen_se: egui::Pos2 = transform.apply(se).into();
+    let tile_rect = egui::Rect::from_min_max(screen_nw, screen_se);
+    painter.image(
+      handle.id(),
+      tile_rect,
+      egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+      Color32::WHITE,
+    );
+  }
+
+  /// Recursively filter a geometry tree based on nested visibility settings.
+  /// Returns None if the geometry itself is hidden.
+  fn filter_nested_visibility(
+    &self,
+    layer_id: &str,
+    shape_idx: usize,
+    path: &[usize],
+    geometry: &Geometry<PixelCoordinate>,
+  ) -> Option<Geometry<PixelCoordinate>> {
+    let key = (layer_id.to_string(), shape_idx, path.to_vec());
+    if !*self.nested_geometry_visibility.get(&key).unwrap_or(&true) {
+      return None;
+    }
+
+    match geometry {
+      Geometry::GeometryCollection(geometries, metadata) => {
+        let filtered: Vec<_> = geometries
+          .iter()
+          .enumerate()
+          .filter_map(|(i, g)| {
+            let mut child_path = path.to_vec();
+            child_path.push(i);
+            self.filter_nested_visibility(layer_id, shape_idx, &child_path, g)
+          })
+          .collect();
+        if filtered.is_empty() {
+          None
+        } else {
+          Some(Geometry::GeometryCollection(filtered, metadata.clone()))
+        }
+      }
+      other => {
+        // Check temporal visibility for nested geometries
+        if let Some(current_time) = self.temporal_current_time
+          && !self.is_individual_geometry_visible_at_time(other, current_time)
+        {
+          return None;
+        }
+        Some(other.clone())
       }
     }
   }
@@ -262,29 +542,33 @@ impl ShapeLayer {
       }
 
       let header_response = header.show(ui, |ui| {
-        if let Some(shapes) = self.shape_map.get(&layer_id).cloned() {
-          // Pre-filter to get visible indices
-          let filtered_indices: Vec<usize> = shapes
-            .iter()
-            .enumerate()
-            .filter(|(_, shape)| self.geometry_matches_filter(shape))
-            .map(|(idx, _)| idx)
-            .collect();
-          let total_filtered = filtered_indices.len();
+        let shapes_count = self.shape_map.get(&layer_id).map_or(0, Vec::len);
+        let row_height = ui.spacing().interact_size.y;
+        let scroll_id = egui::Id::new(format!("layer_scroll_{layer_id}"));
 
-          let scroll_id = egui::Id::new(format!("layer_scroll_{layer_id}"));
-          egui::ScrollArea::vertical()
-            .id_salt(scroll_id)
-            .max_height(SCROLL_AREA_MAX_HEIGHT)
-            .show(ui, |ui| {
-              for (i, &idx) in filtered_indices.iter().enumerate() {
-                self.show_shape_ui(ui, &layer_id, idx, &shapes[idx]);
-                if i < total_filtered - 1 {
-                  ui.separator();
-                }
-              }
-            });
+        let mut scroll_area = egui::ScrollArea::vertical()
+          .id_salt(scroll_id)
+          .max_height(SCROLL_AREA_MAX_HEIGHT);
+
+        // Jump directly to the double-clicked row. Row index = shape index (no filter).
+        if let Some((clicked_layer, clicked_idx, _)) = &self.just_double_clicked
+          && clicked_layer == &layer_id
+        {
+          #[allow(clippy::cast_precision_loss)]
+          let offset = (*clicked_idx as f32 * (row_height + ui.spacing().item_spacing.y)
+            - SCROLL_AREA_MAX_HEIGHT / 2.0)
+            .max(0.0);
+          scroll_area = scroll_area.vertical_scroll_offset(offset);
         }
+
+        scroll_area.show_rows(ui, row_height, shapes_count, |ui, row_range| {
+          for idx in row_range {
+            if let Some(shape) = self.shape_map.get(&layer_id).and_then(|s| s.get(idx)) {
+              let shape = shape.clone();
+              self.show_shape_ui(ui, &layer_id, idx, &shape);
+            }
+          }
+        });
       });
 
       let header_resp = header_response.header_response;
@@ -304,6 +588,7 @@ impl ShapeLayer {
           this
             .layer_visibility
             .insert(layer_id.clone(), !layer_visible);
+          this.invalidate_cache();
         });
 
         ui.separator();
@@ -314,6 +599,7 @@ impl ShapeLayer {
           self
             .geometry_visibility
             .retain(|(lid, _), _| lid != &layer_id);
+          self.invalidate_cache();
           ui.close();
         }
       });
@@ -346,6 +632,121 @@ impl ShapeLayer {
         }
       }
     }
+
+    // Handle nested collection label popups once per frame (not per row).
+    for (layer_id, shapes) in &self.shape_map {
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        if let Geometry::GeometryCollection(geometries, _) = shape {
+          Self::check_nested_popups_recursive(ui, layer_id, shape_idx, geometries, &mut Vec::new());
+        }
+      }
+    }
+
+    // Show color picker windows once per frame (not per row).
+    let mut color_picker_requests = Vec::new();
+    for (layer_id, shapes) in &self.shape_map {
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
+        if ui
+          .memory(|mem| mem.data.get_temp::<bool>(popup_id))
+          .unwrap_or(false)
+        {
+          let window_title = match shape {
+            Geometry::Polygon(_, _) => "Choose Colors",
+            _ => "Choose Color",
+          };
+          color_picker_requests.push((layer_id.clone(), shape_idx, window_title, popup_id));
+        }
+      }
+    }
+
+    for (layer_id, shape_idx, window_title, popup_id) in color_picker_requests {
+      let mut is_open = true;
+      egui::Window::new(window_title)
+        .id(popup_id)
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_width(250.0)
+        .show(ui.ctx(), |ui| {
+          if let Some(shapes) = self.shape_map.get_mut(&layer_id)
+            && let Some(shape) = shapes.get_mut(shape_idx)
+          {
+            let metadata = match shape {
+              Geometry::Point(_, metadata)
+              | Geometry::LineString(_, metadata)
+              | Geometry::Polygon(_, metadata)
+              | Geometry::GeometryCollection(_, metadata) => metadata,
+            };
+
+            if metadata.style.is_none() {
+              metadata.style = Some(crate::map::geometry_collection::Style::default());
+            }
+
+            if let Some(style) = &metadata.style {
+              let mut stroke_color = style.color();
+              let mut fill_color = style.fill_color();
+              let is_polygon = matches!(shape, Geometry::Polygon(_, _));
+
+              if is_polygon {
+                ui.label("Stroke Color:");
+                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                  self.update_shape_stroke_color(&layer_id, shape_idx, stroke_color);
+                }
+
+                let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut stroke_hsva,
+                  egui::widgets::color_picker::Alpha::Opaque,
+                );
+                let new_stroke_color = egui::Color32::from(stroke_hsva);
+                if new_stroke_color != stroke_color {
+                  self.update_shape_stroke_color(&layer_id, shape_idx, new_stroke_color);
+                }
+
+                ui.separator();
+                ui.label("Fill Color:");
+                if ui.color_edit_button_srgba(&mut fill_color).changed() {
+                  self.update_shape_fill_color(&layer_id, shape_idx, fill_color);
+                }
+
+                let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut fill_hsva,
+                  egui::widgets::color_picker::Alpha::BlendOrAdditive,
+                );
+                let new_fill_color = egui::Color32::from(fill_hsva);
+                if new_fill_color != fill_color {
+                  self.update_shape_fill_color(&layer_id, shape_idx, new_fill_color);
+                }
+              } else {
+                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
+                  self.update_shape_color(&layer_id, shape_idx, stroke_color);
+                }
+
+                ui.separator();
+                let mut hsva = egui::ecolor::Hsva::from(stroke_color);
+                egui::widgets::color_picker::color_picker_hsva_2d(
+                  ui,
+                  &mut hsva,
+                  egui::widgets::color_picker::Alpha::Opaque,
+                );
+                let new_color = egui::Color32::from(hsva);
+                if new_color != stroke_color {
+                  self.update_shape_color(&layer_id, shape_idx, new_color);
+                }
+              }
+            }
+          }
+        });
+
+      if !is_open {
+        ui.memory_mut(|mem| mem.data.remove::<bool>(popup_id));
+      }
+    }
   }
 
   fn show_shape_ui(
@@ -370,11 +771,6 @@ impl ShapeLayer {
       None
     };
 
-    let is_scroll_target = self
-      .just_double_clicked
-      .as_ref()
-      .is_some_and(|(l, idx, _)| l == layer_id && *idx == shape_idx);
-
     let frame = if let Some(color) = bg_color {
       egui::Frame::default()
         .fill(color)
@@ -384,7 +780,7 @@ impl ShapeLayer {
       egui::Frame::default()
     };
 
-    let frame_response = frame.show(ui, |ui| {
+    frame.show(ui, |ui| {
       // Handle collections differently - they get their own CollapsingHeader without eye icon
       if let Geometry::GeometryCollection(geometries, metadata) = shape {
         self.show_geometry_collection_inline(ui, layer_id, shape_idx, geometries, metadata);
@@ -410,11 +806,13 @@ impl ShapeLayer {
                   if is_solo { true } else { i == shape_idx },
                 );
               }
+              self.invalidate_cache();
             }
           } else if eye_response.clicked() {
             self
               .geometry_visibility
               .insert(geometry_key.clone(), !geometry_visible);
+            self.invalidate_cache();
           }
 
           let content_response = ui
@@ -443,20 +841,7 @@ impl ShapeLayer {
       }
     });
 
-    if is_scroll_target {
-      frame_response
-        .response
-        .scroll_to_me(Some(egui::Align::Center));
-    }
 
-    // Handle nested collection label popups (recursive for deeply nested structures)
-    for (layer_id, shapes) in &self.shape_map {
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        if let Geometry::GeometryCollection(geometries, _) = shape {
-          Self::check_nested_popups_recursive(ui, layer_id, shape_idx, geometries, &mut Vec::new());
-        }
-      }
-    }
   }
 
   #[allow(clippy::too_many_lines)]
@@ -649,110 +1034,6 @@ impl ShapeLayer {
       }
     }
 
-    let mut color_picker_requests = Vec::new();
-    for (layer_id, shapes) in &self.shape_map {
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        let popup_id = egui::Id::new(format!("color_picker_{layer_id}_{shape_idx}"));
-        if ui
-          .memory(|mem| mem.data.get_temp::<bool>(popup_id))
-          .unwrap_or(false)
-        {
-          let window_title = match shape {
-            Geometry::Polygon(_, _) => "Choose Colors",
-            _ => "Choose Color",
-          };
-          color_picker_requests.push((layer_id.clone(), shape_idx, window_title, popup_id));
-        }
-      }
-    }
-
-    for (layer_id, shape_idx, window_title, popup_id) in color_picker_requests {
-      let mut is_open = true;
-      egui::Window::new(window_title)
-        .id(popup_id)
-        .open(&mut is_open)
-        .collapsible(false)
-        .resizable(false)
-        .movable(true)
-        .default_width(250.0)
-        .show(ui.ctx(), |ui| {
-          if let Some(shapes) = self.shape_map.get_mut(&layer_id)
-            && let Some(shape) = shapes.get_mut(shape_idx)
-          {
-            let metadata = match shape {
-              Geometry::Point(_, metadata)
-              | Geometry::LineString(_, metadata)
-              | Geometry::Polygon(_, metadata)
-              | Geometry::GeometryCollection(_, metadata) => metadata,
-            };
-
-            if metadata.style.is_none() {
-              metadata.style = Some(crate::map::geometry_collection::Style::default());
-            }
-
-            if let Some(style) = &metadata.style {
-              let mut stroke_color = style.color();
-              let mut fill_color = style.fill_color();
-              let is_polygon = matches!(shape, Geometry::Polygon(_, _));
-
-              if is_polygon {
-                ui.label("Stroke Color:");
-                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-                  self.update_shape_stroke_color(&layer_id, shape_idx, stroke_color);
-                }
-
-                let mut stroke_hsva = egui::ecolor::Hsva::from(stroke_color);
-                egui::widgets::color_picker::color_picker_hsva_2d(
-                  ui,
-                  &mut stroke_hsva,
-                  egui::widgets::color_picker::Alpha::Opaque,
-                );
-                let new_stroke_color = egui::Color32::from(stroke_hsva);
-                if new_stroke_color != stroke_color {
-                  self.update_shape_stroke_color(&layer_id, shape_idx, new_stroke_color);
-                }
-
-                ui.separator();
-                ui.label("Fill Color:");
-                if ui.color_edit_button_srgba(&mut fill_color).changed() {
-                  self.update_shape_fill_color(&layer_id, shape_idx, fill_color);
-                }
-
-                let mut fill_hsva = egui::ecolor::Hsva::from(fill_color);
-                egui::widgets::color_picker::color_picker_hsva_2d(
-                  ui,
-                  &mut fill_hsva,
-                  egui::widgets::color_picker::Alpha::BlendOrAdditive,
-                );
-                let new_fill_color = egui::Color32::from(fill_hsva);
-                if new_fill_color != fill_color {
-                  self.update_shape_fill_color(&layer_id, shape_idx, new_fill_color);
-                }
-              } else {
-                if ui.color_edit_button_srgba(&mut stroke_color).changed() {
-                  self.update_shape_color(&layer_id, shape_idx, stroke_color);
-                }
-
-                ui.separator();
-                let mut hsva = egui::ecolor::Hsva::from(stroke_color);
-                egui::widgets::color_picker::color_picker_hsva_2d(
-                  ui,
-                  &mut hsva,
-                  egui::widgets::color_picker::Alpha::Opaque,
-                );
-                let new_color = egui::Color32::from(hsva);
-                if new_color != stroke_color {
-                  self.update_shape_color(&layer_id, shape_idx, new_color);
-                }
-              }
-            }
-          }
-        });
-
-      if !is_open {
-        ui.memory_mut(|mem| mem.data.remove::<bool>(popup_id));
-      }
-    }
   }
 
   fn show_geometry_collection_inline(
@@ -969,6 +1250,7 @@ impl ShapeLayer {
               if is_solo { true } else { i == current_idx },
             );
           }
+          self.invalidate_cache();
         } else if eye_response.clicked() {
           toggle_visibility = true;
         }
@@ -1049,6 +1331,7 @@ impl ShapeLayer {
         self
           .nested_geometry_visibility
           .insert(nested_key.clone(), !nested_visible);
+        self.invalidate_cache();
       }
 
       // Handle double-click to show popup (TODO: implement popup)
@@ -1062,6 +1345,7 @@ impl ShapeLayer {
           this
             .nested_geometry_visibility
             .insert(nested_key, !nested_visible);
+          this.invalidate_cache();
         });
       });
     }
@@ -1181,62 +1465,6 @@ impl ShapeLayer {
     }
   }
 
-  fn draw_geometry_with_visibility(
-    &self,
-    painter: &egui::Painter,
-    transform: &Transform,
-    layer_id: &str,
-    shape_idx: usize,
-    nested_path: &[usize],
-    geometry: &Geometry<PixelCoordinate>,
-  ) {
-    let nested_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-    let is_visible = self
-      .nested_geometry_visibility
-      .get(&nested_key)
-      .unwrap_or(&true);
-
-    if !is_visible {
-      return;
-    }
-
-    if let Geometry::GeometryCollection(geometries, _) = geometry {
-      for (nested_idx, nested_geometry) in geometries.iter().enumerate() {
-        let mut new_path = nested_path.to_vec();
-        new_path.push(nested_idx);
-        self.draw_geometry_with_visibility(
-          painter,
-          transform,
-          layer_id,
-          shape_idx,
-          &new_path,
-          nested_geometry,
-        );
-      }
-    } else {
-      // Apply temporal filtering to individual nested geometries
-      if let Some(current_time) = self.temporal_current_time
-        && !self.is_individual_geometry_visible_at_time(geometry, current_time)
-      {
-        return;
-      }
-      // Check if this specific nested geometry is highlighted by ID
-      let geometry_key = (layer_id.to_string(), shape_idx, nested_path.to_vec());
-      let is_highlighted =
-        self
-          .geometry_highlighter
-          .is_highlighted(&geometry_key.0, geometry_key.1, &geometry_key.2);
-
-      if is_highlighted {
-        // Draw only the highlight (solid/filled) - don't draw transparent version on top
-        Self::draw_highlighted_geometry(geometry, painter, transform, false);
-      } else {
-        // Draw normal transparent geometry
-        geometry.draw_with_style(painter, transform, self.config.heading_style);
-      }
-    }
-  }
-
   /// Check for nested collection popups at any depth
   fn check_nested_popups_recursive(
     ui: &mut egui::Ui,
@@ -1353,6 +1581,7 @@ impl ShapeLayer {
             self.geometry_visibility.insert((lid, idx - 1), visible);
           }
         }
+        self.invalidate_cache();
       }
       ui.close();
     }
@@ -1437,6 +1666,7 @@ impl ShapeLayer {
             self.geometry_visibility.insert((lid, idx - 1), visible);
           }
         }
+        self.invalidate_cache();
       }
       ui.close();
     }
@@ -1643,11 +1873,13 @@ impl ShapeLayer {
     };
 
     self.filter_pattern = Some(filter_pattern);
+    self.invalidate_cache();
   }
 
   /// Clear filter and show all geometries
   pub fn clear_filter(&mut self) {
     self.filter_pattern = None;
+    self.invalidate_cache();
   }
 
   /// Check if a geometry matches the current filter
@@ -1783,8 +2015,12 @@ impl Layer for ShapeLayer {
     for _event in self.recv.try_iter() {}
   }
 
+  fn set_headless(&mut self) {
+    self.headless = true;
+  }
+
   #[allow(clippy::too_many_lines)]
-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
+  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
     profile_scope!("ShapeLayer::draw");
 
     // Store current transform for popup positioning
@@ -1801,47 +2037,99 @@ impl Layer for ShapeLayer {
       self.update_hover_highlighting(mouse_pos, transform);
     }
 
-    for (layer_id, shapes) in &self.shape_map {
-      if *self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        profile_scope!("ShapeLayer::draw_layer", layer_id);
-        for (shape_idx, shape) in shapes.iter().enumerate() {
-          let geometry_key = (layer_id.clone(), shape_idx);
-          if *self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-            // Apply temporal filtering
-            if let Some(current_time) = self.temporal_current_time
-              && !self.is_geometry_visible_at_time(shape, current_time)
-            {
-              continue; // Skip this geometry if it's not visible at current time
-            }
+    // Receive any tiles that finished rendering on background threads.
+    self.collect_new_geo_tile_data(ui);
 
-            // Apply filter (only show geometries that match filter pattern)
-            if !self.geometry_matches_filter(shape) {
-              continue; // Skip this geometry if it doesn't match the filter
-            }
+    // Rebuild spatial index and clear stale tile textures when data/visibility changed.
+    if self.cache_version != self.version {
+      self.tile_cache.clear();
+      self.in_flight_geo_tiles.lock().unwrap().clear();
+      self.rebuild_spatial_index();
+      self.cache_version = self.version;
+    }
 
-            // Check if this top-level geometry is highlighted by ID
-            let geometry_key = (layer_id.clone(), shape_idx, Vec::new());
-            let is_highlighted = self.geometry_highlighter.is_highlighted(
-              &geometry_key.0,
-              geometry_key.1,
-              &geometry_key.2,
-            );
-
-            if is_highlighted {
-              // Draw only the highlight (solid/filled) - don't draw transparent version on top
-              Self::draw_highlighted_geometry(shape, ui.painter(), transform, false);
+    // Paint visible tiles (spawn background render if not yet cached).
+    let total_geometries: usize = self.shape_map.values().map(Vec::len).sum();
+    let use_sync_render = self.headless || total_geometries <= 10_000;
+    let painter = ui.painter_at(rect);
+    for tile in Self::compute_visible_geo_tiles(transform, rect) {
+      // Quick reject: check if the R-tree has any geometry overlapping this tile.
+      let (nw, se) = tile.position();
+      let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
+      if self
+        .spatial_index
+        .locate_in_envelope_intersecting(&tile_envelope)
+        .next()
+        .is_none()
+      {
+        continue;
+      }
+      if !self.tile_cache.contains_key(&tile) {
+        let already_in_flight = self.in_flight_geo_tiles.lock().unwrap().contains(&tile);
+        if !already_in_flight {
+          let geometries = self.collect_tile_geometries(tile);
+          if !geometries.is_empty() {
+            if use_sync_render {
+              // Render synchronously: small datasets (≤10k) or headless mode.
+              if let Some(image) = rasterize_geo_tile_to_image(geometries, tile, self.config.heading_style) {
+                let handle = ui.ctx().load_texture(
+                  format!("geo_tile_{}_{}_{}", tile.zoom, tile.x, tile.y),
+                  image,
+                  egui::TextureOptions::LINEAR,
+                );
+                self.tile_cache.insert(tile, handle);
+              }
             } else {
-              // Draw normal transparent geometry
-              self.draw_geometry_with_visibility(
-                ui.painter(),
-                transform,
-                layer_id,
-                shape_idx,
-                &[],
-                shape,
-              );
+              self.in_flight_geo_tiles.lock().unwrap().insert(tile);
+              let sender = self.geo_tile_sender.clone();
+              let ctx = self.ctx.clone();
+              let in_flight = self.in_flight_geo_tiles.clone();
+              let heading_style = self.config.heading_style;
+              let semaphore = self.render_semaphore.clone();
+              tokio::spawn(async move {
+                let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
+                let _guard = TaskGuard::new(task_name, TaskCategory::GeoRender);
+                let _permit = semaphore.acquire().await.unwrap();
+                let result = tokio::task::spawn_blocking(move || {
+                  rasterize_geo_tile_to_image(geometries, tile, heading_style)
+                })
+                .await;
+                match result {
+                  Ok(Some(image)) => {
+                    let _ = sender.send((tile, image));
+                  }
+                  _ => {
+                    in_flight.lock().unwrap().remove(&tile);
+                  }
+                }
+                ctx.request_repaint();
+              });
             }
           }
+        }
+      }
+      if let Some(handle) = self.tile_cache.get(&tile) {
+        Self::paint_geo_tile(&painter, handle, tile, transform);
+      }
+    }
+
+    // Draw highlighted geometries on top using egui shapes (per-frame, follows mouse).
+    for (layer_id, shapes) in &self.shape_map {
+      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
+        continue;
+      }
+      for (shape_idx, shape) in shapes.iter().enumerate() {
+        let geometry_key = (layer_id.clone(), shape_idx);
+        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
+          continue;
+        }
+        let highlight_key = (layer_id.clone(), shape_idx, Vec::new());
+        if self.geometry_highlighter.is_highlighted(
+          &highlight_key.0,
+          highlight_key.1,
+          &highlight_key.2,
+        ) {
+          Self::draw_highlighted_geometry(shape, ui.painter(), transform, false);
         }
       }
     }
@@ -1952,6 +2240,9 @@ impl Layer for ShapeLayer {
     self.geometry_visibility.clear();
     self.collection_expansion.clear();
     self.nested_geometry_visibility.clear();
+    self.tile_cache.clear();
+    self.spatial_index = RTree::new();
+    self.invalidate_cache();
   }
 
   fn name(&self) -> &str {
@@ -2048,40 +2339,55 @@ impl Layer for ShapeLayer {
   }
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
-    // Find the closest geometry to the click position
+    let world_pos = transform.invert().apply(pos.into());
+    #[allow(clippy::cast_possible_truncation)]
+    let world_radius = HIGLIGHT_PIXEL_DISTANCE as f32 / transform.zoom;
+    let query = AABB::from_corners(
+      [world_pos.x - world_radius, world_pos.y - world_radius],
+      [world_pos.x + world_radius, world_pos.y + world_radius],
+    );
+    let candidates: Vec<(String, usize)> = self
+      .spatial_index
+      .locate_in_envelope_intersecting(&query)
+      .map(|e| (e.layer_id.clone(), e.shape_idx))
+      .collect();
+
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
-    for (layer_id, shapes) in &self.shape_map {
-      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        continue; // Skip hidden layers
+    for (layer_id, shape_idx) in candidates {
+      if !*self.layer_visibility.get(&layer_id).unwrap_or(&true) {
+        continue;
       }
-
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        let geometry_key = (layer_id.clone(), shape_idx);
-        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-          continue; // Skip hidden geometries
-        }
-
-        // Apply temporal filtering
-        if let Some(current_time) = self.temporal_current_time
-          && !self.is_geometry_visible_at_time(shape, current_time)
-        {
-          continue; // Skip temporally filtered geometries
-        }
-
-        // Check distance to this geometry (recursively for collections)
-        self.find_closest_in_geometry(
-          layer_id,
-          shape_idx,
-          &Vec::new(),
-          shape,
-          pos,
-          transform,
-          &mut closest_distance,
-          &mut closest_geometry,
-        );
+      if !*self
+        .geometry_visibility
+        .get(&(layer_id.clone(), shape_idx))
+        .unwrap_or(&true)
+      {
+        continue;
       }
+      let Some(shape) = self
+        .shape_map
+        .get(&layer_id)
+        .and_then(|s| s.get(shape_idx))
+      else {
+        continue;
+      };
+      if let Some(current_time) = self.temporal_current_time
+        && !self.is_geometry_visible_at_time(shape, current_time)
+      {
+        continue;
+      }
+      self.find_closest_in_geometry(
+        &layer_id,
+        shape_idx,
+        &[],
+        shape,
+        pos,
+        transform,
+        &mut closest_distance,
+        &mut closest_geometry,
+      );
     }
 
     // If we found a closest geometry within tolerance, show popup (hover highlighting handled separately)
@@ -2132,6 +2438,9 @@ impl Layer for ShapeLayer {
   }
 
   fn update_config(&mut self, config: &crate::config::Config) {
+    if self.config.heading_style != config.heading_style {
+      self.invalidate_cache();
+    }
     self.config = config.clone();
   }
 
@@ -2140,6 +2449,9 @@ impl Layer for ShapeLayer {
     current_time: Option<DateTime<Utc>>,
     time_window: Option<Duration>,
   ) {
+    if self.temporal_current_time != current_time || self.temporal_time_window != time_window {
+      self.invalidate_cache();
+    }
     self.temporal_current_time = current_time;
     self.temporal_time_window = time_window;
   }
@@ -2615,6 +2927,22 @@ mod tests {
         search_results: Vec::new(),
         filter_pattern: None,
         just_double_clicked: None,
+        tile_cache: HashMap::new(),
+        spatial_index: RTree::new(),
+        cache_version: 0,
+        version: 0,
+        geo_tile_sender: {
+          let (s, _) = mpsc::channel();
+          s
+        },
+        geo_tile_receiver: {
+          let (_, r) = mpsc::channel();
+          r
+        },
+        in_flight_geo_tiles: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        render_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
+        ctx: egui::Context::default(),
+        headless: false,
       }
     }
   }
