@@ -95,6 +95,9 @@ pub struct TileLayer {
   last_visible_tiles: Vec<Tile>,
   // Abort handles for in-flight render tasks (to cancel on style change)
   render_abort_handles: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+  /// Scheduler handles for queued (not yet executing) render tasks, keyed by tile.
+  /// Allows bumping a preloaded tile to Current priority when it becomes visible.
+  render_task_handles: Arc<Mutex<HashMap<Tile, crate::render_scheduler::TaskHandle>>>,
   // Whether to preload adjacent and zoom-level tiles (disabled in headless mode)
   preload_enabled: bool,
 }
@@ -107,7 +110,7 @@ impl TileLayer {
     let all_tile_loader = CachedTileLoader::from_config(config)
       .map(Arc::new)
       .collect();
-    let layer = TileLayer {
+    TileLayer {
       receiver,
       sender,
       tile_loader_index: 0,
@@ -127,10 +130,9 @@ impl TileLayer {
       last_style_version: style_version(),
       last_visible_tiles: Vec::new(),
       render_abort_handles: Arc::new(Mutex::new(Vec::new())),
+      render_task_handles: Arc::new(Mutex::new(HashMap::new())),
       preload_enabled: true,
-    };
-
-    layer
+    }
   }
 
   fn draw_tile(&self, ui: &mut Ui, rect: Rect, tile: &Tile, transform: &Transform) -> bool {
@@ -491,6 +493,7 @@ impl TileLayer {
     let renderer = self.renderer_for_tile_type(tile_type);
     let in_flight_tiles = self.in_flight_tiles.clone();
     let abort_handles = self.render_abort_handles.clone();
+    let render_task_handles = self.render_task_handles.clone();
 
     log::debug!(
       "Loading tile {tile:?} with {} renderer (tile_type: {tile_type:?})",
@@ -512,14 +515,18 @@ impl TileLayer {
       if let Ok(tile_data) = tile_data {
         log::info!("Tile {tile:?} data received: {} bytes", tile_data.len());
 
-        // Render phase (CPU-bound - use dedicated render pool)
+        // Render phase (CPU-bound - use priority scheduler)
         let render_start = std::time::Instant::now();
-        let render_rx = crate::render_pool::submit(move || {
-          log::info!("INSIDE render pool: Starting render for tile {tile:?}");
-          let result = renderer.render(&tile, &tile_data);
-          log::info!("INSIDE render pool: Finished render for tile {tile:?}");
-          result
-        });
+        let (render_rx, sched_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
+          priority,
+          move || {
+            log::info!("INSIDE render pool: Starting render for tile {tile:?}");
+            let result = renderer.render(&tile, &tile_data);
+            log::info!("INSIDE render pool: Finished render for tile {tile:?}");
+            result
+          },
+        );
+        render_task_handles.lock().unwrap().insert(tile, sched_handle);
 
         // Add timeout to detect hanging renders
         let render_result =
@@ -564,8 +571,9 @@ impl TileLayer {
           return;
         }
 
-        // Successfully completed - remove from in-flight
+        // Successfully completed - remove from in-flight and scheduler handle
         log::info!("Tile {tile:?} successfully sent, removing from in-flight");
+        render_task_handles.lock().unwrap().remove(&tile);
         let removed = in_flight_tiles.lock().unwrap().remove(&tile);
         log::info!(
           "Tile {tile:?} removed from in-flight after success: {removed}, remaining in-flight: {}",
@@ -631,6 +639,7 @@ impl TileLayer {
       );
       self.loaded_tiles.clear();
       self.in_flight_tiles.lock().unwrap().clear();
+      self.render_task_handles.lock().unwrap().clear();
 
       let mut handles = self.render_abort_handles.lock().unwrap();
       let abort_count = handles.len();
@@ -669,6 +678,7 @@ impl Layer for TileLayer {
       );
       self.loaded_tiles.clear();
       self.in_flight_tiles.lock().unwrap().clear();
+      self.render_task_handles.lock().unwrap().clear();
       self.tile_loader_old_index = self.tile_loader_index;
     }
 
@@ -717,9 +727,12 @@ impl Layer for TileLayer {
     // Store visible tiles for immediate re-request on style change
     self.last_visible_tiles.clone_from(&visible_tiles);
 
-    // Load current visible tiles with highest priority
+    // Load current visible tiles with highest priority; bump render tasks that were preloaded.
     for tile in &visible_tiles {
       if !self.loaded_tiles.contains_key(tile) {
+        if let Some(handle) = self.render_task_handles.lock().unwrap().get(tile) {
+          handle.bump(TilePriority::Current);
+        }
         self.get_tile(*tile);
       }
     }

@@ -16,6 +16,8 @@ pub mod profiling;
 pub mod remote;
 /// Rayon thread pool for CPU-bound tile rendering.
 pub mod render_pool;
+/// Priority-aware scheduler for render tasks.
+pub mod render_scheduler;
 /// Location search functionality with multiple providers.
 pub mod search;
 /// Task tracking for UI display.
