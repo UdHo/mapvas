@@ -89,7 +89,6 @@ pub struct ShapeLayer {
   geo_tile_sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
   geo_tile_receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
   in_flight_geo_tiles: Arc<Mutex<HashSet<Tile>>>,
-  render_semaphore: Arc<tokio::sync::Semaphore>,
   ctx: egui::Context,
   /// When true, render geo tiles synchronously (used in headless/test mode).
   headless: bool,
@@ -258,7 +257,6 @@ impl ShapeLayer {
       geo_tile_sender,
       geo_tile_receiver,
       in_flight_geo_tiles: Arc::new(Mutex::new(HashSet::new())),
-      render_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
       ctx,
       headless: false,
     }
@@ -2085,16 +2083,14 @@ impl Layer for ShapeLayer {
               let ctx = self.ctx.clone();
               let in_flight = self.in_flight_geo_tiles.clone();
               let heading_style = self.config.heading_style;
-              let semaphore = self.render_semaphore.clone();
               tokio::spawn(async move {
                 let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
                 let _guard = TaskGuard::new(task_name, TaskCategory::GeoRender);
-                let _permit = semaphore.acquire().await.unwrap();
-                let result = tokio::task::spawn_blocking(move || {
+                match crate::render_pool::submit(move || {
                   rasterize_geo_tile_to_image(geometries, tile, heading_style)
                 })
-                .await;
-                match result {
+                .await
+                {
                   Ok(Some(image)) => {
                     let _ = sender.send((tile, image));
                   }
@@ -2110,6 +2106,59 @@ impl Layer for ShapeLayer {
       }
       if let Some(handle) = self.tile_cache.get(&tile) {
         Self::paint_geo_tile(&painter, handle, tile, transform);
+      }
+    }
+
+    // Pre-render tiles one zoom level deeper so they are ready when the user zooms in.
+    // Only in async mode — sync mode renders instantly on demand anyway.
+    if !use_sync_render {
+      for tile in Self::compute_visible_geo_tiles(transform, rect)
+        .into_iter()
+        .flat_map(|t| t.children())
+      {
+        if self.tile_cache.contains_key(&tile) {
+          continue;
+        }
+        let already_in_flight = self.in_flight_geo_tiles.lock().unwrap().contains(&tile);
+        if already_in_flight {
+          continue;
+        }
+        let (nw, se) = tile.position();
+        let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
+        if self
+          .spatial_index
+          .locate_in_envelope_intersecting(&tile_envelope)
+          .next()
+          .is_none()
+        {
+          continue;
+        }
+        let geometries = self.collect_tile_geometries(tile);
+        if geometries.is_empty() {
+          continue;
+        }
+        self.in_flight_geo_tiles.lock().unwrap().insert(tile);
+        let sender = self.geo_tile_sender.clone();
+        let ctx = self.ctx.clone();
+        let in_flight = self.in_flight_geo_tiles.clone();
+        let heading_style = self.config.heading_style;
+        tokio::spawn(async move {
+          let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
+          let _guard = TaskGuard::new(task_name, TaskCategory::GeoRender);
+          match crate::render_pool::submit(move || {
+            rasterize_geo_tile_to_image(geometries, tile, heading_style)
+          })
+          .await
+          {
+            Ok(Some(image)) => {
+              let _ = sender.send((tile, image));
+            }
+            _ => {
+              in_flight.lock().unwrap().remove(&tile);
+            }
+          }
+          ctx.request_repaint();
+        });
       }
     }
 
@@ -2940,7 +2989,6 @@ mod tests {
           r
         },
         in_flight_geo_tiles: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-        render_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
         ctx: egui::Context::default(),
         headless: false,
       }
