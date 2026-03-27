@@ -25,7 +25,7 @@ static HEX_COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"#([0-9a-fA-F]{3,8})\b").expect("Hex color regex must compile")
 });
 static FILL_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
-  RegexBuilder::new(r"(solid|transparent|nofill)")
+  RegexBuilder::new(r"\b(solid|transparent|nofill)\b")
     .case_insensitive(true)
     .build()
     .expect("Fill regex must compile")
@@ -429,6 +429,41 @@ mod tests {
   fn parse_label_no_match() {
     let p = parser().with_label_pattern(r"name: (\w+)");
     assert!(p.parse_label("no match here").is_none());
+  }
+
+  #[test]
+  fn fill_keyword_embedded_in_word_does_not_change_fill_state() {
+    // "solid" inside a longer token (e.g. a segment ID) must not trigger fill.
+    let mut p = parser();
+    let _ = p.parse_line("KarkOtIKy1SOlIDvpSdUag 52.0, 13.0 53.0, 14.0 54.0, 15.0");
+    assert_eq!(p.fill, FillStyle::NoFill);
+  }
+
+  #[test]
+  fn fill_keyword_standalone_on_coordinate_line_sets_fill() {
+    // "solid" as a standalone word alongside coordinates still sets fill.
+    let mut p = parser();
+    let event = p.parse_line("solid 52.0, 13.0 53.0, 14.0 54.0, 15.0");
+    assert_eq!(p.fill, FillStyle::Solid);
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert!(matches!(layer.geometries[0], Geometry::Polygon(_, _)));
+  }
+
+  #[test]
+  fn fill_keyword_on_dedicated_line_is_sticky() {
+    // A dedicated settings line with no coordinates DOES update fill state.
+    let mut p = parser();
+    let result = p.parse_line("solid");
+    assert!(result.is_none()); // no geometry
+    assert_eq!(p.fill, FillStyle::Solid);
+    // Next coordinate line with 3+ points becomes a Polygon
+    let event = p.parse_line("52.0, 13.0 53.0, 14.0 54.0, 15.0");
+    let MapEvent::Layer(layer) = event.unwrap() else {
+      panic!("Expected Layer event");
+    };
+    assert!(matches!(layer.geometries[0], Geometry::Polygon(_, _)));
   }
 
   #[test]
