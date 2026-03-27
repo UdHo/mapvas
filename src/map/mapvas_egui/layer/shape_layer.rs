@@ -89,6 +89,9 @@ pub struct ShapeLayer {
   geo_tile_sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
   geo_tile_receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
   in_flight_geo_tiles: Arc<Mutex<HashSet<Tile>>>,
+  /// Scheduler task handles for queued (not yet executing) geo tile renders.
+  /// Used to bump prefetch tiles to Current priority when they become visible.
+  geo_tile_handles: HashMap<Tile, crate::render_scheduler::TaskHandle>,
   ctx: egui::Context,
   /// When true, render geo tiles synchronously (used in headless/test mode).
   headless: bool,
@@ -257,6 +260,7 @@ impl ShapeLayer {
       geo_tile_sender,
       geo_tile_receiver,
       in_flight_geo_tiles: Arc::new(Mutex::new(HashSet::new())),
+      geo_tile_handles: HashMap::new(),
       ctx,
       headless: false,
     }
@@ -356,6 +360,7 @@ impl ShapeLayer {
       );
       self.tile_cache.insert(tile, handle);
       self.in_flight_geo_tiles.lock().unwrap().remove(&tile);
+      self.geo_tile_handles.remove(&tile);
     }
   }
 
@@ -2042,6 +2047,7 @@ impl Layer for ShapeLayer {
     if self.cache_version != self.version {
       self.tile_cache.clear();
       self.in_flight_geo_tiles.lock().unwrap().clear();
+      self.geo_tile_handles.clear();
       self.rebuild_spatial_index();
       self.cache_version = self.version;
     }
@@ -2064,7 +2070,12 @@ impl Layer for ShapeLayer {
       }
       if !self.tile_cache.contains_key(&tile) {
         let already_in_flight = self.in_flight_geo_tiles.lock().unwrap().contains(&tile);
-        if !already_in_flight {
+        if already_in_flight {
+          // Tile was preloaded at lower priority — promote it now that it is visible.
+          if let Some(handle) = self.geo_tile_handles.get(&tile) {
+            handle.bump(crate::map::coordinates::TilePriority::Current);
+          }
+        } else {
           let geometries = self.collect_tile_geometries(tile);
           if !geometries.is_empty() {
             if use_sync_render {
@@ -2083,14 +2094,15 @@ impl Layer for ShapeLayer {
               let ctx = self.ctx.clone();
               let in_flight = self.in_flight_geo_tiles.clone();
               let heading_style = self.config.heading_style;
+              let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
+                crate::map::coordinates::TilePriority::Current,
+                move || rasterize_geo_tile_to_image(geometries, tile, heading_style),
+              );
+              self.geo_tile_handles.insert(tile, task_handle);
               tokio::spawn(async move {
                 let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
                 let _guard = TaskGuard::new(task_name, TaskCategory::GeoRender);
-                match crate::render_pool::submit(move || {
-                  rasterize_geo_tile_to_image(geometries, tile, heading_style)
-                })
-                .await
-                {
+                match rx.await {
                   Ok(Some(image)) => {
                     let _ = sender.send((tile, image));
                   }
@@ -2142,14 +2154,15 @@ impl Layer for ShapeLayer {
         let ctx = self.ctx.clone();
         let in_flight = self.in_flight_geo_tiles.clone();
         let heading_style = self.config.heading_style;
+        let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
+          crate::map::coordinates::TilePriority::ZoomLevel,
+          move || rasterize_geo_tile_to_image(geometries, tile, heading_style),
+        );
+        self.geo_tile_handles.insert(tile, task_handle);
         tokio::spawn(async move {
           let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
           let _guard = TaskGuard::new(task_name, TaskCategory::GeoRender);
-          match crate::render_pool::submit(move || {
-            rasterize_geo_tile_to_image(geometries, tile, heading_style)
-          })
-          .await
-          {
+          match rx.await {
             Ok(Some(image)) => {
               let _ = sender.send((tile, image));
             }
@@ -2989,6 +3002,7 @@ mod tests {
           r
         },
         in_flight_geo_tiles: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        geo_tile_handles: HashMap::new(),
         ctx: egui::Context::default(),
         headless: false,
       }
