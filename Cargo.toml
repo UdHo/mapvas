@@ -33,8 +33,8 @@ clap = {version ="4.6.0", features=["derive"]}
 arboard = "3.6.1"
 surf-governor = "0.2.0"
 chrono = { version = "0.4.44", features = ["serde"] }
-egui ={version =  "0.33.3", features = ["serde","bytemuck"]}
-eframe = "0.33.3"
+egui ={version =  "0.34.1", features = ["serde","bytemuck"]}
+eframe = "0.34.1"
 egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }
@@ -57,7 +57,7 @@ mvt-reader = "2.0"
 tiny-skia = "0.12"
 fontdue = "0.9"
 json5 = "1.3.0"
-egui_kittest = { version = "0.33.3", features = ["snapshot", "wgpu"] }
+egui_kittest = { version = "0.34.1", features = ["snapshot", "wgpu"] }
 wgpu = "28.0.0"
 
 [features]
