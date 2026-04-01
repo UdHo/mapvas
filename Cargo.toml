@@ -35,7 +35,7 @@ surf-governor = "0.2.0"
 chrono = { version = "0.4.44", features = ["serde"] }
 egui ={version =  "0.34.1", features = ["serde","bytemuck"]}
 eframe = "0.34.1"
-egui_extras = { version = "0.33.3", features = ["all_loaders"] }
+egui_extras = { version = "0.34.1", features = ["all_loaders"] }
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }
 puffin_http = { version = "0.17", optional = true }

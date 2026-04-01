@@ -38,10 +38,10 @@ fn create_test_app_with_popup_kml() -> MapApp {
 async fn test_popup_initial_state() {
   let app = create_test_app_with_popup_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -65,10 +65,10 @@ async fn test_popup_initial_state() {
 async fn test_multigeometry_popup_functionality() {
   let app = create_test_app_with_popup_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );

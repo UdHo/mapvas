@@ -62,10 +62,10 @@ fn create_test_app_with_unix_epoch_kml() -> MapApp {
 async fn temporal_visualization_initial_state() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -106,10 +106,10 @@ async fn temporal_visualization_initial_state() {
 async fn temporal_visualization_morning_time() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -139,10 +139,10 @@ async fn temporal_visualization_morning_time() {
 async fn temporal_visualization_with_geometries() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -176,10 +176,10 @@ async fn temporal_visualization_with_geometries() {
 async fn temporal_visualization_timeline_expanded() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -216,10 +216,10 @@ async fn temporal_visualization_timeline_expanded() {
 async fn temporal_visualization_workflow() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -262,10 +262,10 @@ async fn temporal_visualization_workflow() {
 async fn temporal_filtering_demonstration() {
   let app = create_test_app_with_temporal_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -316,10 +316,10 @@ async fn temporal_filtering_demonstration() {
 async fn unix_epoch_timeline_detection() {
   let app = create_test_app_with_unix_epoch_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -352,10 +352,10 @@ async fn unix_epoch_timeline_detection() {
 async fn unix_epoch_temporal_filtering() {
   let app = create_test_app_with_unix_epoch_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -437,10 +437,10 @@ fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
 async fn unix_epoch_no_timezone_parsing() {
   let app = create_test_app_with_unix_epoch_no_tz_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -471,10 +471,10 @@ async fn unix_epoch_no_timezone_parsing() {
 async fn debug_range_timeline_fix() {
   let app = create_test_app_with_debug_range_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -538,10 +538,10 @@ async fn large_file_temporal_parsing() {
 
   let app = MapApp::new(map, remote, data_holder, config, None);
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );

@@ -78,10 +78,10 @@ impl HeadlessRenderer {
       .with_step_dt(0.1)
       // Upper bound on frames to prevent infinite loops
       .with_max_steps(200)
-      .build_state(
-        |ctx, app: &mut MapApp| {
+      .build_ui_state(
+        |ui, app: &mut MapApp| {
           let mut frame = eframe::Frame::_new_kittest();
-          app.update(ctx, &mut frame);
+          app.ui(ui, &mut frame);
         },
         app,
       );
