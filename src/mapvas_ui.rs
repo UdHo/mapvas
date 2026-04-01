@@ -116,7 +116,9 @@ impl MapApp {
 
 impl eframe::App for MapApp {
   #[allow(clippy::too_many_lines)]
-  fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+  fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    let ctx_owned = ui.ctx().clone();
+    let ctx = &ctx_owned;
     profile_scope!("MapApp::update");
     // Mark frame for profiling
     crate::profiling::new_frame();
@@ -266,11 +268,11 @@ impl eframe::App for MapApp {
 
     if effective_width > 1.0 {
       profile_scope!("MapApp::sidebar");
-      egui::SidePanel::left("sidebar")
-        .default_width(self.sidebar.width)
-        .width_range(200.0..=600.0)
+      egui::Panel::left("sidebar")
+        .default_size(self.sidebar.width)
+        .size_range(200.0..=600.0)
         .resizable(true) // Use egui's built-in resize handle
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
@@ -298,7 +300,7 @@ impl eframe::App for MapApp {
 
     egui::CentralPanel::default()
       .frame(egui::Frame::NONE)
-      .show(ctx, |ui| {
+      .show_inside(ui, |ui| {
         profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
       });

@@ -68,10 +68,10 @@ fn create_test_app_with_nested_kml() -> MapApp {
 async fn test_double_click_popup_nested_kml() {
   let app = create_test_app_with_nested_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -110,10 +110,10 @@ async fn test_double_click_popup_nested_kml() {
 async fn test_popup_data_generation_functionality() {
   let app = create_test_app_with_nested_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -147,10 +147,10 @@ async fn test_popup_data_generation_functionality() {
 async fn test_popup_memory_management() {
   let app = create_test_app_with_nested_kml();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );

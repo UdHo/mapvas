@@ -42,10 +42,10 @@ fn create_test_app_grid_mode() -> MapApp {
 async fn grid_mode_basic_functionality() {
   let app = create_test_app_grid_mode();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -86,10 +86,10 @@ async fn grid_mode_with_geojson_data() {
 
   let app = create_test_app_with_geojson_grid_mode(geojson_content);
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -132,10 +132,10 @@ async fn grid_mode_coordinate_display_comparison() {
 
   let app = create_test_app_with_geojson_grid_mode(geojson_content);
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -168,10 +168,10 @@ async fn grid_mode_empty_state() {
   // Test grid mode with no geometries loaded - pure grid visualization
   let app = create_test_app_grid_mode();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -211,10 +211,10 @@ async fn grid_mode_ui_workflow() {
 
   let app = create_test_app_with_geojson_grid_mode(geojson_content);
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -252,10 +252,10 @@ async fn grid_mode_sidebar_interactions() {
   // Test grid mode with various sidebar interactions
   let app = create_test_app_grid_mode();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );

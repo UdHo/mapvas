@@ -15,10 +15,10 @@ fn create_test_app() -> MapApp {
 async fn sidebar_toggle_functionality() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -39,10 +39,10 @@ async fn sidebar_toggle_functionality() {
 async fn sidebar_close_button_functionality() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -57,10 +57,10 @@ async fn sidebar_close_button_functionality() {
 async fn map_layers_display() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -78,10 +78,10 @@ async fn map_layers_display() {
 async fn location_search_section() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -96,10 +96,10 @@ async fn location_search_section() {
 async fn tile_layer_settings() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -122,10 +122,10 @@ async fn tile_layer_settings() {
 async fn empty_shape_layer() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -143,10 +143,10 @@ async fn empty_shape_layer() {
 async fn settings_dialog_button() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
@@ -169,10 +169,10 @@ mod pagination_tests {
     // For now, just test the basic UI without data
     let app = create_test_app();
 
-    let mut harness = Harness::new_state(
-      |ctx, app: &mut MapApp| {
+    let mut harness = Harness::new_ui_state(
+      |ui, app: &mut MapApp| {
         let mut frame = eframe::Frame::_new_kittest();
-        app.update(ctx, &mut frame);
+        app.ui(ui, &mut frame);
       },
       app,
     );
@@ -189,10 +189,10 @@ mod pagination_tests {
 async fn full_ui_integration_test() {
   let app = create_test_app();
 
-  let mut harness = Harness::new_state(
-    |ctx, app: &mut MapApp| {
+  let mut harness = Harness::new_ui_state(
+    |ui, app: &mut MapApp| {
       let mut frame = eframe::Frame::_new_kittest();
-      app.update(ctx, &mut frame);
+      app.ui(ui, &mut frame);
     },
     app,
   );
