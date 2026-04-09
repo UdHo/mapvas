@@ -39,10 +39,8 @@ static CLEAR_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
 static FLEXPOLY_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"^(B[A-Za-z0-9_\-]{4,})$").expect("Flexpolyline regex must compile")
 });
-static GOOGLEPOLY_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^([A-Za-z0-9_\^\|\~\@\?><\:\.\,\;\-\\\!\(\)]{4,})$")
-    .expect("Google polyline regex must compile")
-});
+static GOOGLEPOLY_RE: std::sync::LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"^([?-~]{4,})$").expect("Google polyline regex must compile"));
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -234,17 +232,26 @@ impl GrepParser {
   fn parse_googlepolyline(line: &str) -> impl Iterator<Item = Vec<WGS84Coordinate>> {
     let mut v = Vec::new();
     for (_, [poly]) in GOOGLEPOLY_RE.captures_iter(line).map(|c| c.extract()) {
-      let decoded = polyline::decode_polyline(poly, 5)
-        .inspect_err(|e| info!("Could not parse possible googlepolyline {e:?}"));
-      if let Ok(ls) = decoded {
-        v.push(
-          ls.into_iter()
-            .map(|c| WGS84Coordinate {
-              lat: c.y as f32,
-              lon: c.x as f32,
-            })
-            .collect(),
-        );
+      let unescaped = poly.replace("\\\\", "\\");
+      let candidates: [&str; 2] = if unescaped.len() < poly.len() {
+        [&unescaped, poly]
+      } else {
+        [poly, &unescaped]
+      };
+      for candidate in candidates {
+        let decoded = polyline::decode_polyline(candidate, 5)
+          .inspect_err(|e| info!("Could not parse possible googlepolyline {e:?}"));
+        if let Ok(ls) = decoded {
+          v.push(
+            ls.into_iter()
+              .map(|c| WGS84Coordinate {
+                lat: c.y as f32,
+                lon: c.x as f32,
+              })
+              .collect(),
+          );
+          break;
+        }
       }
     }
     v.into_iter()
@@ -445,5 +452,49 @@ mod tests {
   fn clear_line_returns_clear_event() {
     let mut p = parser();
     assert_eq!(p.parse_line("clear"), Some(MapEvent::Clear));
+  }
+
+  use rstest::rstest;
+
+  // --- Google polyline regex tests ---
+
+  #[rstest]
+  // valid: minimal 4-char alphanumeric
+  #[case("AAAA", true)]
+  // valid: classic Google docs example — [(38.5,-120.2),(40.7,-120.95),(43.252,-126.453)]
+  #[case(r"_p~iF~ps|U_ulLnnqC_mqNvxq`E", true)]
+  // valid: (0,0)->(1,1), no special chars
+  #[case("??_ibE_ibE", true)]
+  // valid: contains single backslash — (0,0)->(0,-0.00015)->(0,-0.00030)
+  #[case(r"???\?\", true)]
+  // valid: same route, backslashes doubled as in CSV-escaped form
+  #[case(r"???\\?\\", true)]
+  // invalid: too short
+  #[case("abc", false)]
+  // invalid: empty
+  #[case("", false)]
+  // invalid: space (ASCII 32, below 63)
+  #[case("ab cd ef", false)]
+  // invalid: # (ASCII 35, below 63)
+  #[case("abc#xyz>?@", false)]
+  fn googlepoly_re_matches(#[case] input: &str, #[case] expected: bool) {
+    assert_eq!(GOOGLEPOLY_RE.is_match(input), expected);
+  }
+
+  // --- Google polyline decode tests ---
+
+  #[rstest]
+  // classic Google docs example — [(38.5,-120.2),(40.7,-120.95),(43.252,-126.453)]
+  #[case(r"_p~iF~ps|U_ulLnnqC_mqNvxq`E")]
+  // (0,0)->(1,1)
+  #[case("??_ibE_ibE")]
+  // (0,0)->(0,-0.00015)->(0,-0.00030) with single backslash — decoded directly
+  #[case(r"???\?\")]
+  // same route with doubled backslashes — unescaped first then decoded
+  #[case(r"???\\?\\")]
+  fn parse_googlepolyline_decodes(#[case] poly: &str) {
+    let coords: Vec<_> = GrepParser::parse_googlepolyline(poly).collect();
+    assert_eq!(coords.len(), 1, "expected polyline to decode: {poly}");
+    assert!(!coords[0].is_empty());
   }
 }
