@@ -517,16 +517,17 @@ impl TileLayer {
 
         // Render phase (CPU-bound - use priority scheduler)
         let render_start = std::time::Instant::now();
-        let (render_rx, sched_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
-          priority,
-          move || {
+        let (render_rx, sched_handle) =
+          crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
             log::info!("INSIDE render pool: Starting render for tile {tile:?}");
             let result = renderer.render(&tile, &tile_data);
             log::info!("INSIDE render pool: Finished render for tile {tile:?}");
             result
-          },
-        );
-        render_task_handles.lock().unwrap().insert(tile, sched_handle);
+          });
+        render_task_handles
+          .lock()
+          .unwrap()
+          .insert(tile, sched_handle);
 
         // Add timeout to detect hanging renders
         let render_result =

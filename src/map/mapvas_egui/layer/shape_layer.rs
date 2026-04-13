@@ -1,6 +1,6 @@
 use super::{
-  Layer, LayerProperties, geometry_highlighting::GeometryHighlighter,
-  geometry_rasterizer, geometry_selection,
+  Layer, LayerProperties, geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
+  geometry_selection,
 };
 use rstar::{AABB, RTree, RTreeObject};
 
@@ -8,7 +8,7 @@ use crate::{
   config::{Config, HeadingStyle},
   map::{
     coordinates::{
-      BoundingBox, Coordinate, PixelCoordinate, PixelPosition, Tile, TileCoordinate, TILE_SIZE,
+      BoundingBox, Coordinate, PixelCoordinate, PixelPosition, TILE_SIZE, Tile, TileCoordinate,
       Transform, WGS84Coordinate, tiles_in_box,
     },
     geometry_collection::{Geometry, Metadata, Style},
@@ -214,13 +214,29 @@ fn rasterize_geo_tile_to_image(
     if a == 0 {
       straight.extend_from_slice(&[0, 0, 0, 0]);
     } else {
-      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless
+      )]
       let inv = 255.0_f32 / f32::from(a);
-      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless
+      )]
       straight.push((f32::from(p[0]) * inv).min(255.0) as u8);
-      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless
+      )]
       straight.push((f32::from(p[1]) * inv).min(255.0) as u8);
-      #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_lossless)]
+      #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless
+      )]
       straight.push((f32::from(p[2]) * inv).min(255.0) as u8);
       straight.push(a);
     }
@@ -420,10 +436,7 @@ impl ShapeLayer {
         {
           return None;
         }
-        let shape = self
-          .shape_map
-          .get(&entry.layer_id)?
-          .get(entry.shape_idx)?;
+        let shape = self.shape_map.get(&entry.layer_id)?.get(entry.shape_idx)?;
         if let Some(t) = self.temporal_current_time
           && !self.is_geometry_visible_at_time(shape, t)
         {
@@ -843,8 +856,6 @@ impl ShapeLayer {
         });
       }
     });
-
-
   }
 
   #[allow(clippy::too_many_lines)]
@@ -1036,7 +1047,6 @@ impl ShapeLayer {
         }
       }
     }
-
   }
 
   fn show_geometry_collection_inline(
@@ -2080,7 +2090,9 @@ impl Layer for ShapeLayer {
           if !geometries.is_empty() {
             if use_sync_render {
               // Render synchronously: small datasets (≤10k) or headless mode.
-              if let Some(image) = rasterize_geo_tile_to_image(geometries, tile, self.config.heading_style) {
+              if let Some(image) =
+                rasterize_geo_tile_to_image(geometries, tile, self.config.heading_style)
+              {
                 let handle = ui.ctx().load_texture(
                   format!("geo_tile_{}_{}_{}", tile.zoom, tile.x, tile.y),
                   image,
@@ -2094,10 +2106,10 @@ impl Layer for ShapeLayer {
               let ctx = self.ctx.clone();
               let in_flight = self.in_flight_geo_tiles.clone();
               let heading_style = self.config.heading_style;
-              let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
-                crate::map::coordinates::TilePriority::Current,
-                move || rasterize_geo_tile_to_image(geometries, tile, heading_style),
-              );
+              let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER
+                .submit(crate::map::coordinates::TilePriority::Current, move || {
+                  rasterize_geo_tile_to_image(geometries, tile, heading_style)
+                });
               self.geo_tile_handles.insert(tile, task_handle);
               tokio::spawn(async move {
                 let task_name = format!("geo-render-{}-{}-{}", tile.zoom, tile.x, tile.y);
@@ -2428,11 +2440,7 @@ impl Layer for ShapeLayer {
       {
         continue;
       }
-      let Some(shape) = self
-        .shape_map
-        .get(&layer_id)
-        .and_then(|s| s.get(shape_idx))
-      else {
+      let Some(shape) = self.shape_map.get(&layer_id).and_then(|s| s.get(shape_idx)) else {
         continue;
       };
       if let Some(current_time) = self.temporal_current_time

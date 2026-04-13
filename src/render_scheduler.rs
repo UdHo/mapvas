@@ -5,9 +5,8 @@ use std::{
 
 use crate::map::coordinates::TilePriority;
 
-pub static RENDER_SCHEDULER: LazyLock<RenderScheduler> = LazyLock::new(|| {
-  RenderScheduler::new(crate::render_pool::RENDER_POOL.current_num_threads())
-});
+pub static RENDER_SCHEDULER: LazyLock<RenderScheduler> =
+  LazyLock::new(|| RenderScheduler::new(crate::render_pool::RENDER_POOL.current_num_threads()));
 
 /// Priority-aware scheduler that feeds CPU-bound render tasks into `RENDER_POOL`.
 ///
@@ -78,7 +77,13 @@ impl RenderScheduler {
     };
     dispatch_pending(&self.inner);
 
-    (rx, TaskHandle { id, inner: Arc::clone(&self.inner) })
+    (
+      rx,
+      TaskHandle {
+        id,
+        inner: Arc::clone(&self.inner),
+      },
+    )
   }
 }
 

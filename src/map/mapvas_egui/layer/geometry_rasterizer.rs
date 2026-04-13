@@ -225,7 +225,10 @@ fn draw_heading_arrow(pixmap: &mut Pixmap, cx: f32, cy: f32, heading_rad: f32, c
 
 fn draw_heading_line(pixmap: &mut Pixmap, cx: f32, cy: f32, heading_rad: f32, color: Color32) {
   let length = DEFAULT_POINT_RADIUS + 6.0;
-  let end = (cx + length * heading_rad.cos(), cy + length * heading_rad.sin());
+  let end = (
+    cx + length * heading_rad.cos(),
+    cy + length * heading_rad.sin(),
+  );
 
   let mut pb = PathBuilder::new();
   pb.move_to(cx, cy);
@@ -314,13 +317,7 @@ fn draw_heading_sector(pixmap: &mut Pixmap, cx: f32, cy: f32, heading_rad: f32, 
   draw_path(pixmap, &points, true, fill, color);
 }
 
-fn draw_heading_rectangle(
-  pixmap: &mut Pixmap,
-  cx: f32,
-  cy: f32,
-  heading_rad: f32,
-  color: Color32,
-) {
+fn draw_heading_rectangle(pixmap: &mut Pixmap, cx: f32, cy: f32, heading_rad: f32, color: Color32) {
   let length = DEFAULT_POINT_RADIUS + 6.0;
   let width = 3.0;
 

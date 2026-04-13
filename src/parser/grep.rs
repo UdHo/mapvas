@@ -5,7 +5,7 @@ use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
-use super::{style::StyleParser, Parser};
+use super::{Parser, style::StyleParser};
 use crate::{
   map::{
     coordinates::WGS84Coordinate,
@@ -21,9 +21,8 @@ static COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
         .build()
         .expect("Color regex must compile")
 });
-static HEX_COLOR_RE: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"#([0-9a-fA-F]{3,8})\b").expect("Hex color regex must compile")
-});
+static HEX_COLOR_RE: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"#([0-9a-fA-F]{3,8})\b").expect("Hex color regex must compile"));
 static FILL_RE: std::sync::LazyLock<Regex> = LazyLock::new(|| {
   RegexBuilder::new(r"\b(solid|transparent|nofill)\b")
     .case_insensitive(true)
