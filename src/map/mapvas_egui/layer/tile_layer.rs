@@ -85,7 +85,6 @@ pub struct TileLayer {
   coordinate_display_mode: CoordinateDisplayMode,
   raster_renderer: Arc<dyn TileRenderer>,
   vector_renderer: Arc<dyn TileRenderer>,
-  render_semaphore: Arc<tokio::sync::Semaphore>,
   // Statistics
   current_ideal_zoom: u8,
   current_request_zoom: u8,
@@ -96,6 +95,9 @@ pub struct TileLayer {
   last_visible_tiles: Vec<Tile>,
   // Abort handles for in-flight render tasks (to cancel on style change)
   render_abort_handles: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+  /// Scheduler handles for queued (not yet executing) render tasks, keyed by tile.
+  /// Allows bumping a preloaded tile to Current priority when it becomes visible.
+  render_task_handles: Arc<Mutex<HashMap<Tile, crate::render_scheduler::TaskHandle>>>,
   // Whether to preload adjacent and zoom-level tiles (disabled in headless mode)
   preload_enabled: bool,
 }
@@ -108,7 +110,7 @@ impl TileLayer {
     let all_tile_loader = CachedTileLoader::from_config(config)
       .map(Arc::new)
       .collect();
-    let layer = TileLayer {
+    TileLayer {
       receiver,
       sender,
       tile_loader_index: 0,
@@ -122,37 +124,15 @@ impl TileLayer {
       coordinate_display_mode: CoordinateDisplayMode::Off,
       raster_renderer: Arc::new(RasterTileRenderer::new()),
       vector_renderer: Arc::new(VectorTileRenderer::new()),
-      render_semaphore: Arc::new(tokio::sync::Semaphore::new(24)),
       current_ideal_zoom: 0,
       current_request_zoom: 0,
       current_max_zoom: 0,
       last_style_version: style_version(),
       last_visible_tiles: Vec::new(),
       render_abort_handles: Arc::new(Mutex::new(Vec::new())),
+      render_task_handles: Arc::new(Mutex::new(HashMap::new())),
       preload_enabled: true,
-    };
-
-    // Spawn diagnostic task to monitor in-flight tiles
-    let in_flight_diagnostic = layer.in_flight_tiles.clone();
-    let semaphore_diagnostic = layer.render_semaphore.clone();
-    tokio::spawn(async move {
-      loop {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let in_flight = in_flight_diagnostic.lock().unwrap();
-        let in_flight_count = in_flight.len();
-        let available_permits = semaphore_diagnostic.available_permits();
-        if in_flight_count > 0 {
-          log::warn!(
-            "DIAGNOSTIC: {} tiles in-flight, {} semaphore permits available. In-flight tiles: {:?}",
-            in_flight_count,
-            available_permits,
-            in_flight.iter().take(5).collect::<Vec<_>>()
-          );
-        }
-      }
-    });
-
-    layer
+    }
   }
 
   fn draw_tile(&self, ui: &mut Ui, rect: Rect, tile: &Tile, transform: &Transform) -> bool {
@@ -350,7 +330,6 @@ impl TileLayer {
     let tile_source = self.tile_source;
     let renderer = self.vector_renderer.clone();
     let in_flight_tiles = self.in_flight_tiles.clone();
-    let render_semaphore = self.render_semaphore.clone();
 
     log::info!(
       "Super-resolution: loading parent tile {parent_tile:?} at zoom {}, will generate {grid_size}x{grid_size} tiles at zoom {}",
@@ -386,13 +365,9 @@ impl TileLayer {
       }
 
       if let Ok(tile_data) = tile_data {
-        // Acquire render permit
-        let _permit = render_semaphore.acquire().await.unwrap();
-        log::info!("Super-resolution: acquired render permit for {parent_tile:?}");
-
         // Render parent tile at scale (e.g., 2x, 4x, 8x, or 16x)
         let render_start = std::time::Instant::now();
-        let blocking_task = tokio::task::spawn_blocking(move || {
+        let render_rx = crate::render_pool::submit(move || {
           log::info!("Super-resolution: rendering parent {parent_tile:?} at {scale}x scale");
           let result = renderer.render_scaled(&parent_tile, &tile_data, scale);
           log::info!("Super-resolution: finished rendering parent {parent_tile:?}");
@@ -400,7 +375,7 @@ impl TileLayer {
         });
 
         let render_result =
-          tokio::time::timeout(std::time::Duration::from_secs(60), blocking_task).await;
+          tokio::time::timeout(std::time::Duration::from_secs(60), render_rx).await;
 
         let render_duration = render_start.elapsed();
 
@@ -517,13 +492,12 @@ impl TileLayer {
     let tile_type = tile_loader.tile_type();
     let renderer = self.renderer_for_tile_type(tile_type);
     let in_flight_tiles = self.in_flight_tiles.clone();
-    let render_semaphore = self.render_semaphore.clone();
     let abort_handles = self.render_abort_handles.clone();
+    let render_task_handles = self.render_task_handles.clone();
 
     log::debug!(
-      "Loading tile {tile:?} with {} renderer (tile_type: {tile_type:?}), available render permits: {}",
+      "Loading tile {tile:?} with {} renderer (tile_type: {tile_type:?})",
       renderer.name(),
-      render_semaphore.available_permits()
     );
 
     let task_handle = tokio::spawn(async move {
@@ -540,33 +514,24 @@ impl TileLayer {
       }
       if let Ok(tile_data) = tile_data {
         log::info!("Tile {tile:?} data received: {} bytes", tile_data.len());
-        // Acquire permit before rendering (limits concurrent renders to 24)
-        let in_flight_count = in_flight_tiles.lock().unwrap().len();
-        log::debug!(
-          "Tile {tile:?} waiting for render permit, available: {}, in-flight: {}",
-          render_semaphore.available_permits(),
-          in_flight_count
-        );
-        let _permit = render_semaphore.acquire().await.unwrap();
-        log::info!(
-          "Tile {tile:?} acquired render permit, available: {}, in-flight: {}",
-          render_semaphore.available_permits(),
-          in_flight_count
-        );
 
-        // Render phase (CPU-bound - move to blocking thread)
-        log::debug!("Tile {tile:?} spawning blocking task");
+        // Render phase (CPU-bound - use priority scheduler)
         let render_start = std::time::Instant::now();
-        let blocking_task = tokio::task::spawn_blocking(move || {
-          log::info!("INSIDE blocking task: Starting render for tile {tile:?}");
-          let result = renderer.render(&tile, &tile_data);
-          log::info!("INSIDE blocking task: Finished render for tile {tile:?}");
-          result
-        });
+        let (render_rx, sched_handle) =
+          crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
+            log::info!("INSIDE render pool: Starting render for tile {tile:?}");
+            let result = renderer.render(&tile, &tile_data);
+            log::info!("INSIDE render pool: Finished render for tile {tile:?}");
+            result
+          });
+        render_task_handles
+          .lock()
+          .unwrap()
+          .insert(tile, sched_handle);
 
         // Add timeout to detect hanging renders
         let render_result =
-          tokio::time::timeout(std::time::Duration::from_secs(30), blocking_task).await;
+          tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
 
         let render_duration = render_start.elapsed();
 
@@ -583,8 +548,7 @@ impl TileLayer {
           }
         };
 
-        // Permit automatically released when _permit drops
-        log::info!("Tile {tile:?} render completed in {render_duration:?}, releasing permit");
+        log::info!("Tile {tile:?} render completed in {render_duration:?}");
 
         let egui_image = match render_result {
           Ok(Ok(image)) => image,
@@ -594,11 +558,9 @@ impl TileLayer {
             return;
           }
           Err(e) => {
-            error!(
-              "Render task panicked for tile {tile:?}: {e}, releasing permit and removing from in-flight"
-            );
+            error!("Render task failed for tile {tile:?}: {e}, removing from in-flight");
             let removed = in_flight_tiles.lock().unwrap().remove(&tile);
-            log::info!("Tile {tile:?} removed from in-flight after panic: {removed}");
+            log::info!("Tile {tile:?} removed from in-flight after failure: {removed}");
             return;
           }
         };
@@ -610,8 +572,9 @@ impl TileLayer {
           return;
         }
 
-        // Successfully completed - remove from in-flight
+        // Successfully completed - remove from in-flight and scheduler handle
         log::info!("Tile {tile:?} successfully sent, removing from in-flight");
+        render_task_handles.lock().unwrap().remove(&tile);
         let removed = in_flight_tiles.lock().unwrap().remove(&tile);
         log::info!(
           "Tile {tile:?} removed from in-flight after success: {removed}, remaining in-flight: {}",
@@ -677,6 +640,7 @@ impl TileLayer {
       );
       self.loaded_tiles.clear();
       self.in_flight_tiles.lock().unwrap().clear();
+      self.render_task_handles.lock().unwrap().clear();
 
       let mut handles = self.render_abort_handles.lock().unwrap();
       let abort_count = handles.len();
@@ -715,6 +679,7 @@ impl Layer for TileLayer {
       );
       self.loaded_tiles.clear();
       self.in_flight_tiles.lock().unwrap().clear();
+      self.render_task_handles.lock().unwrap().clear();
       self.tile_loader_old_index = self.tile_loader_index;
     }
 
@@ -763,9 +728,12 @@ impl Layer for TileLayer {
     // Store visible tiles for immediate re-request on style change
     self.last_visible_tiles.clone_from(&visible_tiles);
 
-    // Load current visible tiles with highest priority
+    // Load current visible tiles with highest priority; bump render tasks that were preloaded.
     for tile in &visible_tiles {
       if !self.loaded_tiles.contains_key(tile) {
+        if let Some(handle) = self.render_task_handles.lock().unwrap().get(tile) {
+          handle.bump(TilePriority::Current);
+        }
         self.get_tile(*tile);
       }
     }

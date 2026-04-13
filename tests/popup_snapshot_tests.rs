@@ -13,7 +13,8 @@ use std::io::Cursor;
 fn create_test_app_with_popup_kml() -> MapApp {
   let config = Config::new();
   let ctx = egui::Context::default();
-  let (map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx);
+  map.set_headless();
 
   // Read and parse the test KML file with MultiGeometry
   let kml_content = fs::read_to_string("tests/resources/popup_test.kml")

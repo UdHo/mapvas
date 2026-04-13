@@ -791,6 +791,7 @@ impl Sidebar {
       TaskCategory::Server,
       TaskCategory::TileLoad,
       TaskCategory::TileSuperRes,
+      TaskCategory::GeoRender,
       TaskCategory::Search,
       TaskCategory::External,
       TaskCategory::Other,
@@ -804,6 +805,7 @@ impl Sidebar {
         let category_name = match category {
           TaskCategory::TileLoad => "🗺 Tile Loading",
           TaskCategory::TileSuperRes => "🔍 Super Resolution",
+          TaskCategory::GeoRender => "🖊 Geometry Rendering",
           TaskCategory::Server => "🌐 Server",
           TaskCategory::Search => "🔍 Search",
           TaskCategory::External => "⚙ External",
