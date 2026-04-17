@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.10] - 2026-04-18
+
 - Headless rendering: `mapcat -o file.png` renders maps directly to PNG (file or stdin input, configurable dimensions, auto-detects format).
 - Parse escaped Google Polylines.
 - Rendering speedups: pre-rendering shapes to images and priority-based render scheduling.
