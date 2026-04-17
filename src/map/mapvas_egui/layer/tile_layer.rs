@@ -367,7 +367,7 @@ impl TileLayer {
       if let Ok(tile_data) = tile_data {
         // Render parent tile at scale (e.g., 2x, 4x, 8x, or 16x)
         let render_start = std::time::Instant::now();
-        let render_rx = crate::render_pool::submit(move || {
+        let (render_rx, _) = crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
           log::info!("Super-resolution: rendering parent {parent_tile:?} at {scale}x scale");
           let result = renderer.render_scaled(&parent_tile, &tile_data, scale);
           log::info!("Super-resolution: finished rendering parent {parent_tile:?}");
