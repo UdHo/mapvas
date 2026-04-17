@@ -1,6 +1,6 @@
 use super::{
-  Layer, LayerProperties, geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
-  geometry_selection,
+  Layer, LayerProperties, SubLayerInfo, geometry_highlighting::GeometryHighlighter,
+  geometry_rasterizer, geometry_selection,
 };
 use rstar::{AABB, RTree, RTreeObject};
 
@@ -95,6 +95,17 @@ pub struct ShapeLayer {
   ctx: egui::Context,
   /// When true, render geo tiles synchronously (used in headless/test mode).
   headless: bool,
+  /// Receives sub-layer visibility toggle commands from the HTTP server.
+  vis_receiver: Receiver<(String, bool)>,
+  /// Sender half exposed to `Remote` for sub-layer visibility toggles.
+  vis_sender: Sender<(String, bool)>,
+  /// Receives individual shape visibility toggle commands from the HTTP server.
+  shape_vis_receiver: Receiver<(String, usize, bool)>,
+  /// Sender half exposed to `Remote` for shape visibility toggles.
+  shape_vis_sender: Sender<(String, usize, bool)>,
+  /// Shared shape info cache that the HTTP endpoint reads directly.
+  shape_info:
+    Arc<std::sync::RwLock<std::collections::HashMap<String, Vec<crate::remote::ShapeInfo>>>>,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -247,9 +258,17 @@ fn rasterize_geo_tile_to_image(
 
 impl ShapeLayer {
   #[must_use]
-  pub fn new(config: Config, ctx: egui::Context) -> Self {
+  pub fn new(
+    config: Config,
+    ctx: egui::Context,
+    shape_info: Arc<
+      std::sync::RwLock<std::collections::HashMap<String, Vec<crate::remote::ShapeInfo>>>,
+    >,
+  ) -> Self {
     let (send, recv) = std::sync::mpsc::channel();
     let (geo_tile_sender, geo_tile_receiver) = std::sync::mpsc::channel();
+    let (vis_sender, vis_receiver) = std::sync::mpsc::channel();
+    let (shape_vis_sender, shape_vis_receiver) = std::sync::mpsc::channel();
 
     Self {
       shape_map: HashMap::new(),
@@ -279,7 +298,24 @@ impl ShapeLayer {
       geo_tile_handles: HashMap::new(),
       ctx,
       headless: false,
+      vis_receiver,
+      vis_sender,
+      shape_vis_receiver,
+      shape_vis_sender,
+      shape_info,
     }
+  }
+
+  /// Return the sender half so `Remote` can toggle sub-layer visibility.
+  #[must_use]
+  pub fn get_vis_sender(&self) -> Sender<(String, bool)> {
+    self.vis_sender.clone()
+  }
+
+  /// Return the sender half so `Remote` can toggle individual shape visibility.
+  #[must_use]
+  pub fn get_shape_vis_sender(&self) -> Sender<(String, usize, bool)> {
+    self.shape_vis_sender.clone()
   }
 
   /// Update highlighting based on mouse hover position
@@ -357,8 +393,30 @@ impl ShapeLayer {
         }
       }
     }
+    for (id, visible) in self.vis_receiver.try_iter() {
+      self.layer_visibility.insert(id, visible);
+      received = true;
+    }
+    for (layer_id, shape_idx, visible) in self.shape_vis_receiver.try_iter() {
+      self
+        .geometry_visibility
+        .insert((layer_id, shape_idx), visible);
+      received = true;
+    }
     if received {
       self.version += 1;
+      self.update_shape_info_cache();
+    }
+  }
+
+  /// Update the shared shape info cache so the HTTP endpoint can read it directly.
+  fn update_shape_info_cache(&self) {
+    let Ok(mut cache) = self.shape_info.try_write() else {
+      return;
+    };
+    cache.clear();
+    for id in self.shape_map.keys() {
+      cache.insert(id.clone(), self.collect_shape_info(id));
     }
   }
 
@@ -515,6 +573,38 @@ impl ShapeLayer {
   #[must_use]
   pub fn get_sender(&self) -> Sender<MapEvent> {
     self.send.clone()
+  }
+
+  /// Collect shape info for a given layer ID (used by HTTP query handler).
+  fn collect_shape_info(&self, id: &str) -> Vec<crate::remote::ShapeInfo> {
+    let Some(shapes) = self.shape_map.get(id) else {
+      return vec![];
+    };
+    shapes
+      .iter()
+      .enumerate()
+      .map(|(idx, shape)| {
+        let (label, shape_type) = match shape {
+          Geometry::Point(_, meta) => (meta.label.as_ref().map(|l| l.name.clone()), "Point"),
+          Geometry::LineString(_, meta) => {
+            (meta.label.as_ref().map(|l| l.name.clone()), "LineString")
+          }
+          Geometry::Polygon(_, meta) => (meta.label.as_ref().map(|l| l.name.clone()), "Polygon"),
+          Geometry::GeometryCollection(_, meta) => {
+            (meta.label.as_ref().map(|l| l.name.clone()), "Collection")
+          }
+        };
+        crate::remote::ShapeInfo {
+          index: idx,
+          label,
+          shape_type,
+          visible: *self
+            .geometry_visibility
+            .get(&(id.to_owned(), idx))
+            .unwrap_or(&true),
+        }
+      })
+      .collect()
   }
 
   #[allow(clippy::too_many_lines)]
@@ -2526,6 +2616,49 @@ impl Layer for ShapeLayer {
     self.temporal_time_window = time_window;
   }
 
+  fn sub_layers(&self) -> Vec<SubLayerInfo> {
+    self
+      .shape_map
+      .iter()
+      .map(|(id, geometries)| SubLayerInfo {
+        id: id.clone(),
+        visible: *self.layer_visibility.get(id).unwrap_or(&true),
+        shape_count: geometries.len(),
+      })
+      .collect()
+  }
+
+  fn set_sub_layer_visible(&mut self, id: &str, visible: bool) {
+    self.layer_visibility.insert(id.to_owned(), visible);
+    self.version += 1;
+  }
+
+  fn shape_bounding_box(&self, layer_id: &str, shape_idx: usize) -> Option<BoundingBox> {
+    let bb = self.shape_map.get(layer_id)?.get(shape_idx)?.bounding_box();
+    bb.is_valid().then_some(bb)
+  }
+
+  fn sub_layer_shapes(&self, id: &str) -> Vec<crate::remote::ShapeInfo> {
+    self.collect_shape_info(id)
+  }
+
+  fn sub_layer_bounding_box(&self, id: &str) -> Option<BoundingBox> {
+    let bb = self
+      .shape_map
+      .get(id)?
+      .iter()
+      .enumerate()
+      .filter(|(shape_idx, _)| {
+        *self
+          .geometry_visibility
+          .get(&(id.to_owned(), *shape_idx))
+          .unwrap_or(&true)
+      })
+      .map(|(_, shape)| shape.bounding_box())
+      .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
+    bb.is_valid().then_some(bb)
+  }
+
   fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
     // This method is not used - double-click handling happens in closest_geometry_with_selection
     false
@@ -3013,6 +3146,23 @@ mod tests {
         geo_tile_handles: HashMap::new(),
         ctx: egui::Context::default(),
         headless: false,
+        vis_receiver: {
+          let (_, r) = mpsc::channel();
+          r
+        },
+        vis_sender: {
+          let (s, _) = mpsc::channel();
+          s
+        },
+        shape_vis_receiver: {
+          let (_, r) = mpsc::channel();
+          r
+        },
+        shape_vis_sender: {
+          let (s, _) = mpsc::channel();
+          s
+        },
+        shape_info: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
       }
     }
   }

@@ -1,16 +1,39 @@
 use axum::{
   Json, Router,
-  extract::{DefaultBodyLimit, State},
+  extract::{DefaultBodyLimit, Path, State},
   routing::{get, post},
 };
 use log::warn;
-use std::{net::SocketAddr, sync::mpsc::Sender};
+use std::{
+  net::SocketAddr,
+  sync::{Arc, RwLock, mpsc::Sender},
+};
 use tower_http::trace::{self, TraceLayer};
 
 use crate::{
   map::{map_event::MapEvent, mapvas_egui::ParameterUpdate},
   task_tracker::{TaskCategory, TaskGuard},
 };
+
+#[derive(serde::Serialize, Clone, Default)]
+pub struct MapState {
+  pub layers: Vec<LayerInfo>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct LayerInfo {
+  pub id: String,
+  pub visible: bool,
+  pub shape_count: usize,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ShapeInfo {
+  pub index: usize,
+  pub label: Option<String>,
+  pub shape_type: &'static str,
+  pub visible: bool,
+}
 
 pub const DEFAULT_PORT: u16 = 12345;
 
@@ -20,6 +43,64 @@ pub async fn mapvas_remote_handler(
 ) -> String {
   remote.handle_map_event(event);
   42.to_string()
+}
+
+async fn get_state_handler(State(remote): State<Remote>) -> Json<MapState> {
+  let state = remote
+    .state
+    .read()
+    .unwrap_or_else(std::sync::PoisonError::into_inner)
+    .clone();
+  Json(state)
+}
+
+async fn get_layer_shapes_handler(
+  State(remote): State<Remote>,
+  Path(id): Path<String>,
+) -> Json<Vec<ShapeInfo>> {
+  let shapes = remote
+    .shape_info
+    .read()
+    .unwrap_or_else(std::sync::PoisonError::into_inner)
+    .get(&id)
+    .cloned()
+    .unwrap_or_default();
+  Json(shapes)
+}
+
+async fn post_layer_handler(
+  State(remote): State<Remote>,
+  Json(body): Json<SetLayerVisible>,
+) -> String {
+  remote
+    .layer_vis
+    .send((body.id, body.visible))
+    .inspect_err(|e| warn!("Failed to send layer_vis: {e}"))
+    .ok();
+  let ctx = remote.update.clone();
+  std::thread::spawn(move || {
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    ctx.request_repaint();
+  });
+  "ok".to_string()
+}
+
+async fn post_shape_handler(
+  State(remote): State<Remote>,
+  Path((layer_id, shape_idx)): Path<(String, usize)>,
+  Json(body): Json<SetShapeVisible>,
+) -> String {
+  remote
+    .shape_vis
+    .send((layer_id, shape_idx, body.visible))
+    .inspect_err(|e| warn!("Failed to send shape_vis: {e}"))
+    .ok();
+  let ctx = remote.update.clone();
+  std::thread::spawn(move || {
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    ctx.request_repaint();
+  });
+  "ok".to_string()
 }
 
 pub fn spawn_remote_runner(runtime: tokio::runtime::Runtime, remote: Remote) {
@@ -37,6 +118,10 @@ pub async fn remote_runner(remote: Remote) {
   let app = Router::new()
     .route("/", post(mapvas_remote_handler))
     .route("/healthcheck", get(healthcheck))
+    .route("/state", get(get_state_handler))
+    .route("/layer", post(post_layer_handler))
+    .route("/layer/{id}/shapes", get(get_layer_shapes_handler))
+    .route("/layer/{id}/shape/{idx}", post(post_shape_handler))
     .with_state(remote)
     .layer(DefaultBodyLimit::max(10_000_000_000_000))
     .layer(
@@ -63,6 +148,17 @@ pub async fn remote_runner(remote: Remote) {
   }
 }
 
+#[derive(serde::Deserialize)]
+struct SetLayerVisible {
+  id: String,
+  visible: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct SetShapeVisible {
+  visible: bool,
+}
+
 #[derive(Clone)]
 pub struct Remote {
   pub layer: Sender<MapEvent>,
@@ -71,6 +167,10 @@ pub struct Remote {
   pub shutdown: Sender<MapEvent>,
   pub screenshot: Sender<MapEvent>,
   pub command: Sender<ParameterUpdate>,
+  pub layer_vis: Sender<(String, bool)>,
+  pub shape_vis: Sender<(String, usize, bool)>,
+  pub state: Arc<RwLock<MapState>>,
+  pub shape_info: Arc<RwLock<std::collections::HashMap<String, Vec<ShapeInfo>>>>,
   /// TODO: keep egui out of here.
   pub update: egui::Context,
 }
@@ -97,6 +197,20 @@ impl Remote {
           .focus
           .send(f)
           .inspect_err(|e| warn!("Failed to send focus_on event: {e}"))
+          .ok();
+      }
+      f @ MapEvent::FocusLayer { .. } => {
+        self
+          .focus
+          .send(f)
+          .inspect_err(|e| warn!("Failed to send focus_layer event: {e}"))
+          .ok();
+      }
+      f @ MapEvent::FocusShape { .. } => {
+        self
+          .focus
+          .send(f)
+          .inspect_err(|e| warn!("Failed to send focus_shape event: {e}"))
           .ok();
       }
       MapEvent::Clear => {
@@ -178,6 +292,8 @@ mod tests {
     let (shutdown_tx, shutdown_rx) = mpsc::channel();
     let (screenshot_tx, _screenshot_rx) = mpsc::channel();
     let (command_tx, _command_rx) = mpsc::channel();
+    let (layer_vis_tx, _layer_vis_rx) = mpsc::channel();
+    let (shape_vis_tx, _shape_vis_rx) = mpsc::channel();
     let remote = Remote {
       layer: layer_tx,
       focus: focus_tx,
@@ -185,6 +301,10 @@ mod tests {
       shutdown: shutdown_tx,
       screenshot: screenshot_tx,
       command: command_tx,
+      layer_vis: layer_vis_tx,
+      shape_vis: shape_vis_tx,
+      state: Arc::new(RwLock::new(MapState::default())),
+      shape_info: Arc::new(RwLock::new(std::collections::HashMap::new())),
       update: egui::Context::default(),
     };
     TestRemote {

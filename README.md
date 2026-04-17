@@ -77,6 +77,12 @@ mapcat -o map.png data.geojson --width 3200 --height 2400
 | **/**            | Search             |
 | **F1**           | Toggle sidebar     |
 
+## Neovim
+
+[mapvas.nvim](https://github.com/UdHo/mapvas.nvim) provides a Neovim plugin with commands to send
+buffers/selections to the map, coordinate highlighting, auto send-on-save, and a layer explorer
+sidebar.
+
 ## Documentation
 
 - [Usage Guide](docs/usage.md) - Full controls and features

@@ -58,8 +58,12 @@ impl Map {
     let cfg = crate::config::Config::new();
 
     let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
-    let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone());
+    let shape_info = std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+    let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone(), shape_info.clone());
     let shape_layer_sender = shape_layer.get_sender();
+    let shape_layer_vis_sender = shape_layer.get_vis_sender();
+    let shape_layer_shape_vis_sender = shape_layer.get_shape_vis_sender();
+    let map_state = std::sync::Arc::new(std::sync::RwLock::new(crate::remote::MapState::default()));
 
     let (command, command_sender) = layer::CommandLayer::new();
 
@@ -95,6 +99,10 @@ impl Map {
       screenshot: screenshot_layer_sender,
       update: ctx.clone(),
       command: command_sender,
+      layer_vis: shape_layer_vis_sender,
+      shape_vis: shape_layer_shape_vis_sender,
+      state: map_state.clone(),
+      shape_info,
     };
     (
       Self {
@@ -233,6 +241,39 @@ impl Map {
     }
   }
 
+  fn show_layer_bounding_box(&mut self, id: &str, rect: Rect) {
+    let Ok(layer_guard) = self.layers.try_lock() else {
+      warn!("Failed to lock layers for layer bounding box calculation");
+      return;
+    };
+    let mut bb = layer_guard
+      .iter()
+      .filter_map(|l| l.sub_layer_bounding_box(id))
+      .fold(BoundingBox::get_invalid(), |acc, b| acc.extend(&b));
+    if bb.is_valid() {
+      if !bb.is_box() {
+        bb.frame(0.02);
+      }
+      show_box(&mut self.transform, &bb, rect);
+    }
+  }
+
+  fn show_shape_bounding_box(&mut self, layer_id: &str, shape_idx: usize, rect: Rect) {
+    let Ok(layer_guard) = self.layers.try_lock() else {
+      return;
+    };
+    let Some(mut bb) = layer_guard
+      .iter()
+      .find_map(|l| l.shape_bounding_box(layer_id, shape_idx))
+    else {
+      return;
+    };
+    if !bb.is_box() {
+      bb.frame(0.02);
+    }
+    show_box(&mut self.transform, &bb, rect);
+  }
+
   fn focus_on_coordinate(
     &mut self,
     coordinate: WGS84Coordinate,
@@ -340,7 +381,12 @@ impl Map {
     }
 
     // Check if we have focus or screenshot events - process pending layer data before these
-    let has_focus_event = events.iter().any(|e| matches!(e, MapEvent::Focus));
+    let has_focus_event = events.iter().any(|e| {
+      matches!(
+        e,
+        MapEvent::Focus | MapEvent::FocusLayer { .. } | MapEvent::FocusShape { .. }
+      )
+    });
     let has_screenshot_event = events.iter().any(|e| matches!(e, MapEvent::Screenshot(_)));
 
     if has_focus_event || has_screenshot_event {
@@ -351,6 +397,13 @@ impl Map {
     for event in &events {
       match event {
         MapEvent::Focus => self.show_bounding_box(rect),
+        MapEvent::FocusLayer { id } => self.show_layer_bounding_box(id, rect),
+        MapEvent::FocusShape {
+          layer_id,
+          shape_idx,
+        } => {
+          self.show_shape_bounding_box(layer_id, *shape_idx, rect);
+        }
         MapEvent::FocusOn {
           coordinate,
           zoom_level,
@@ -585,6 +638,27 @@ impl Map {
       }
     }
     false
+  }
+
+  /// Refresh the shared `MapState` snapshot that the HTTP `/state` endpoint serves.
+  pub fn update_state_snapshot(&self) {
+    let Ok(layers) = self.layers.try_lock() else {
+      return;
+    };
+    let sub_layers: Vec<crate::remote::LayerInfo> = layers
+      .iter()
+      .flat_map(|l| l.sub_layers())
+      .map(|s| crate::remote::LayerInfo {
+        id: s.id,
+        visible: s.visible,
+        shape_count: s.shape_count,
+      })
+      .collect();
+    drop(layers);
+    let Ok(mut state) = self.remote.state.try_write() else {
+      return;
+    };
+    state.layers = sub_layers;
   }
 
   /// Update the config for the map and all its layers

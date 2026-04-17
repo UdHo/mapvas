@@ -106,6 +106,10 @@ pub enum MapEvent {
     coordinate: WGS84Coordinate,
     zoom_level: Option<u8>,
   },
+  /// Focus on a specific named sub-layer (as sent via `mapcat`).
+  FocusLayer { id: String },
+  /// Focus on a single shape within a sub-layer.
+  FocusShape { layer_id: String, shape_idx: usize },
   /// Create a screenshot and store it to the given path.
   Screenshot(PathBuf),
 }
