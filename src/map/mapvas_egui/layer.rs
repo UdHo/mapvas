@@ -26,6 +26,13 @@ pub use shape_layer::ShapeLayer;
 pub use tile_layer::TileLayer;
 pub use timeline_layer::TimelineLayer;
 
+/// Info about a named sub-layer within a layer (e.g. each id sent via `mapcat`).
+pub struct SubLayerInfo {
+  pub id: String,
+  pub visible: bool,
+  pub shape_count: usize,
+}
+
 /// A layer represents everything that can be summarized as a logical unit on the map.
 /// E.g. a layer to draw the map tiles and one to draw the shapes.
 pub trait Layer {
@@ -177,6 +184,29 @@ pub trait Layer {
 
   /// Configure this layer for headless rendering (disable preloading, etc.).
   fn set_headless(&mut self) {}
+
+  /// Return info about named sub-layers (e.g. each id sent via `mapcat`).
+  fn sub_layers(&self) -> Vec<SubLayerInfo> {
+    vec![]
+  }
+
+  /// Set visibility of a named sub-layer.
+  fn set_sub_layer_visible(&mut self, _id: &str, _visible: bool) {}
+
+  /// Return the bounding box of a single named sub-layer.
+  fn sub_layer_bounding_box(&self, _id: &str) -> Option<BoundingBox> {
+    None
+  }
+
+  /// Return shape-level info for a named sub-layer.
+  fn sub_layer_shapes(&self, _id: &str) -> Vec<crate::remote::ShapeInfo> {
+    vec![]
+  }
+
+  /// Return the bounding box of a single shape within a sub-layer.
+  fn shape_bounding_box(&self, _layer_id: &str, _shape_idx: usize) -> Option<BoundingBox> {
+    None
+  }
 }
 
 /// Common properties for all layers.

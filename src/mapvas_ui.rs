@@ -307,6 +307,8 @@ impl eframe::App for MapApp {
 
     // Show command line UI (must be after CentralPanel to appear on top)
     show_command_line_ui(&mut self.command_line, ctx);
+
+    self.map.update_state_snapshot();
   }
 }
 
