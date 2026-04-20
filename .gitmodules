@@ -1,0 +1,3 @@
+[submodule "mapvas.nvim"]
+	path = mapvas.nvim
+	url = https://github.com/UdHo/mapvas.nvim.git
