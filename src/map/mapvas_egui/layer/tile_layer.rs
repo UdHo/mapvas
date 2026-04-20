@@ -10,8 +10,8 @@ use crate::{
   config::TileType,
   map::{
     coordinates::{
-      TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
-      tiles_in_box,
+      CANVAS_SIZE, TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform,
+      generate_preload_tiles, tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
@@ -21,6 +21,19 @@ use crate::{
 };
 
 use super::{Layer, LayerProperties};
+
+/// Compute the pixel x-coordinate of the viewport's left edge in internal canvas coordinates.
+fn viewport_left_x(rect: Rect, transform: &Transform) -> f32 {
+  let inv = transform.invert();
+  inv.apply(egui::pos2(rect.min.x, 0.0).into()).x
+}
+
+/// Compute the offset that places a tile into the range `[left_x, left_x + CANVAS_SIZE)`.
+/// A small epsilon avoids floating-point edge cases where a tile exactly at the left
+/// edge gets pushed one full world to the right by `ceil`.
+fn tile_world_offset(tile_x: f32, left_x: f32) -> f32 {
+  ((left_x - tile_x) / CANVAS_SIZE - 1e-6).ceil() * CANVAS_SIZE
+}
 
 /// Splits a `ColorImage` into a grid of tiles for super-resolution rendering.
 ///
@@ -138,8 +151,8 @@ impl TileLayer {
   fn draw_tile(&self, ui: &mut Ui, rect: Rect, tile: &Tile, transform: &Transform) -> bool {
     if let Some(image_data) = self.loaded_tiles.get(tile) {
       let (nw, se) = tile.position();
-      let (nw, se) = (transform.apply(nw), transform.apply(se));
-      let tile_rect = Rect::from_min_max(nw.into(), se.into());
+      let left_x = viewport_left_x(rect, transform);
+      let dx = tile_world_offset(nw.x, left_x);
 
       let tint_color = if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
         let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
@@ -152,15 +165,32 @@ impl TileLayer {
         Color32::WHITE
       };
 
-      ui.painter_at(rect).image(
-        image_data.id(),
-        tile_rect,
-        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        tint_color,
-      );
+      // The viewport may be narrower or wider than CANVAS_SIZE. Try the primary
+      // offset and ±one world-copy so tiles fill viewports up to 2×CANVAS_SIZE wide.
+      for offset in [dx - CANVAS_SIZE, dx, dx + CANVAS_SIZE] {
+        let nw_shifted = crate::map::coordinates::PixelCoordinate {
+          x: nw.x + offset,
+          y: nw.y,
+        };
+        let se_shifted = crate::map::coordinates::PixelCoordinate {
+          x: se.x + offset,
+          y: se.y,
+        };
+        let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
 
-      if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
-        draw_coordinate_text_overlay(ui, rect, tile, &tile_rect);
+        if tile_rect.intersects(rect) {
+          ui.painter_at(rect).image(
+            image_data.id(),
+            tile_rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint_color,
+          );
+
+          if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
+            draw_coordinate_text_overlay(ui, rect, tile, &tile_rect);
+          }
+        }
       }
 
       return true;
@@ -180,26 +210,39 @@ impl TileLayer {
 
     let painter = ui.painter_at(clip_rect);
 
+    let left_x = viewport_left_x(clip_rect, transform);
     for tile in tiles_in_box(min_pos, max_pos) {
       let (nw, se) = tile.position();
-      let (nw, se) = (transform.apply(nw), transform.apply(se));
-      let tile_rect = Rect::from_min_max(nw.into(), se.into());
+      let dx = tile_world_offset(nw.x, left_x);
 
-      if !tile_rect.intersects(clip_rect) {
-        continue;
-      }
-
-      if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
-        let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
-        let bg_color = if is_even_tile {
-          Color32::from_rgba_unmultiplied(255, 240, 240, 120)
-        } else {
-          Color32::from_rgba_unmultiplied(240, 240, 255, 120)
+      for offset in [dx - CANVAS_SIZE, dx, dx + CANVAS_SIZE] {
+        let nw_shifted = crate::map::coordinates::PixelCoordinate {
+          x: nw.x + offset,
+          y: nw.y,
         };
-        painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
-      }
+        let se_shifted = crate::map::coordinates::PixelCoordinate {
+          x: se.x + offset,
+          y: se.y,
+        };
+        let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
 
-      self.draw_tile_info(ui, clip_rect, &tile, &tile_rect);
+        if !tile_rect.intersects(clip_rect) {
+          continue;
+        }
+
+        if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+          let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
+          let bg_color = if is_even_tile {
+            Color32::from_rgba_unmultiplied(255, 240, 240, 120)
+          } else {
+            Color32::from_rgba_unmultiplied(240, 240, 255, 120)
+          };
+          painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
+        }
+
+        self.draw_tile_info(ui, clip_rect, &tile, &tile_rect);
+      }
     }
   }
 
@@ -721,8 +764,26 @@ impl Layer for TileLayer {
     }
 
     let inv = transform.invert();
-    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), request_zoom);
-    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), request_zoom);
+    let vp_min = inv.apply(rect.min.into());
+    let vp_max = inv.apply(rect.max.into());
+    let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
+    let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
+
+    log::info!(
+      "viewport: pixel=[{:.1},{:.1}]-[{:.1},{:.1}] tile=[{:.2},{:.2}]-[{:.2},{:.2}] rect=[{:.0},{:.0}]-[{:.0},{:.0}]",
+      vp_min.x,
+      vp_min.y,
+      vp_max.x,
+      vp_max.y,
+      min_pos.x,
+      min_pos.y,
+      max_pos.x,
+      max_pos.y,
+      rect.min.x,
+      rect.min.y,
+      rect.max.x,
+      rect.max.y,
+    );
 
     let visible_tiles: Vec<Tile> = tiles_in_box(min_pos, max_pos).collect();
 
