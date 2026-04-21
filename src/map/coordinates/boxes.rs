@@ -77,30 +77,28 @@ impl Tile {
   }
 
   /// Get surrounding tiles (8 adjacent tiles around this one).
+  /// Wraps horizontally across the antimeridian.
   #[must_use]
   #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
   pub fn surrounding_tiles(&self) -> Vec<Self> {
     let mut tiles = Vec::with_capacity(8);
+    let num_tiles = 2i32.pow(self.zoom.into());
 
     for dx in -1_i32..=1_i32 {
       for dy in -1_i32..=1_i32 {
         if dx == 0 && dy == 0 {
-          continue; // Skip the center tile (self)
+          continue;
         }
 
-        let new_x = (self.x as i32).saturating_add(dx);
-        let new_y = (self.y as i32).saturating_add(dy);
+        let new_x = (self.x as i32 + dx).rem_euclid(num_tiles);
+        let new_y = self.y as i32 + dy;
 
-        if new_x >= 0 && new_y >= 0 {
-          let tile = Self {
+        if new_y >= 0 && new_y < num_tiles {
+          tiles.push(Self {
             x: new_x as u32,
             y: new_y as u32,
             zoom: self.zoom,
-          };
-
-          if tile.exists() {
-            tiles.push(tile);
-          }
+          });
         }
       }
     }
@@ -134,11 +132,14 @@ impl From<TileCoordinate> for Tile {
   #[allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
   )]
   fn from(tile_coord: TileCoordinate) -> Self {
+    let num_tiles = 2u32.pow(tile_coord.zoom.into());
+    let x = tile_coord.x.floor() as i32;
     Self {
-      x: tile_coord.x.floor() as u32,
+      x: x.rem_euclid(num_tiles as i32) as u32,
       y: tile_coord.y.floor() as u32,
       zoom: tile_coord.zoom,
     }
@@ -146,15 +147,38 @@ impl From<TileCoordinate> for Tile {
 }
 
 /// A function to create a tile iterator for a given bounding box.
+/// Handles antimeridian wrapping when `nw.x > se.x` and viewports wider than one world.
+#[allow(
+  clippy::cast_possible_truncation,
+  clippy::cast_sign_loss,
+  clippy::cast_precision_loss
+)]
 pub fn tiles_in_box(nw: TileCoordinate, se: TileCoordinate) -> impl Iterator<Item = Tile> {
   let nw_tile = Tile::from(nw);
   let se_tile = Tile::from(se);
-  (nw_tile.x..=se_tile.x)
-    .flat_map(move |x| {
-      (nw_tile.y..=se_tile.y).map(move |y| Tile {
-        x,
-        y,
-        zoom: nw_tile.zoom,
+  let num_tiles = 2u32.pow(nw_tile.zoom.into());
+  let max_tile = num_tiles - 1;
+
+  // If the unwrapped x-span covers a full world or more, return all x tiles.
+  let x_span = se.x - nw.x;
+
+  let x_ranges: Vec<(u32, u32)> = if x_span >= num_tiles as f32 {
+    vec![(0, max_tile)]
+  } else if nw_tile.x <= se_tile.x {
+    vec![(nw_tile.x, se_tile.x)]
+  } else {
+    vec![(nw_tile.x, max_tile), (0, se_tile.x)]
+  };
+
+  x_ranges
+    .into_iter()
+    .flat_map(move |(x_start, x_end)| {
+      (x_start..=x_end).flat_map(move |x| {
+        (nw_tile.y..=se_tile.y).map(move |y| Tile {
+          x,
+          y,
+          zoom: nw_tile.zoom,
+        })
       })
     })
     .filter(Tile::exists)
@@ -242,7 +266,7 @@ impl BoundingBox {
       && self.min_x.abs() < 2048.
       && self.min_y.abs() < 2048.
       && self.max_x.abs() < 2048.
-      && self.max_x.abs() < 2048.
+      && self.max_y.abs() < 2048.
   }
 
   #[must_use]
@@ -496,5 +520,69 @@ mod tests {
   fn test_tile_priority_ordering() {
     assert!(TilePriority::Current < TilePriority::Adjacent);
     assert!(TilePriority::Adjacent < TilePriority::ZoomLevel);
+  }
+
+  #[test]
+  fn tiles_in_box_wraps_antimeridian() {
+    // At zoom 5, there are 32 tiles (0..31). Viewport from x=30 to x=1 crosses the antimeridian.
+    let nw = TileCoordinate {
+      x: 30.5,
+      y: 1.0,
+      zoom: 5,
+    };
+    let se = TileCoordinate {
+      x: 1.5,
+      y: 3.0,
+      zoom: 5,
+    };
+    let tiles: Vec<_> = tiles_in_box(nw, se).collect();
+    // Should get tiles at x=30,31,0,1 * y=1,2,3 = 12 tiles
+    assert_eq!(tiles.len(), 12);
+    let xs: std::collections::HashSet<u32> = tiles.iter().map(|t| t.x).collect();
+    assert!(xs.contains(&30));
+    assert!(xs.contains(&31));
+    assert!(xs.contains(&0));
+    assert!(xs.contains(&1));
+  }
+
+  #[test]
+  fn tile_from_coordinate_wraps_x() {
+    // Tile coordinate with negative x should wrap
+    let tc = TileCoordinate {
+      x: -0.5,
+      y: 1.0,
+      zoom: 5,
+    };
+    let tile = Tile::from(tc);
+    assert_eq!(tile.x, 31); // -1 mod 32 = 31
+  }
+
+  #[test]
+  fn surrounding_tiles_wraps_at_antimeridian() {
+    let tile = Tile {
+      x: 0,
+      y: 5,
+      zoom: 5,
+    };
+    let surrounding = tile.surrounding_tiles();
+    // Western neighbor should wrap to x=31
+    assert!(surrounding.contains(&Tile {
+      x: 31,
+      y: 5,
+      zoom: 5
+    }));
+
+    let tile_end = Tile {
+      x: 31,
+      y: 5,
+      zoom: 5,
+    };
+    let surrounding_end = tile_end.surrounding_tiles();
+    // Eastern neighbor should wrap to x=0
+    assert!(surrounding_end.contains(&Tile {
+      x: 0,
+      y: 5,
+      zoom: 5
+    }));
   }
 }

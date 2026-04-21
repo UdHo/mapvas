@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use egui::Rect;
 
-use crate::map::coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform};
+use crate::map::coordinates::{
+  BoundingBox, CANVAS_SIZE, PixelCoordinate, PixelPosition, Transform,
+};
 
 pub const MAX_ZOOM: f32 = 524_288.;
 pub const MIN_ZOOM: f32 = 1.;
@@ -33,27 +35,44 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
   let inv = transform.invert();
-  let PixelCoordinate { x, y } = inv.apply(PixelPosition { x: 0., y: 0. });
-  if x < 0. || y < 0. {
+  let PixelCoordinate { x: _, y } = inv.apply(PixelPosition { x: 0., y: 0. });
+  if y < 0. {
     transform.translate(
       PixelPosition {
-        x: (x.min(0.)),
-        y: (y.min(0.)),
+        x: 0.,
+        y: y.min(0.),
       } * transform.zoom,
     );
   }
 
-  let PixelCoordinate { x, y } = inv.apply(PixelPosition {
+  let PixelCoordinate { x: _, y } = inv.apply(PixelPosition {
     x: rect.max.x,
     y: rect.max.y,
   });
-  if x > 2000. || y > 2000. {
+  if y > CANVAS_SIZE {
     transform.translate(
       PixelPosition {
-        x: (x - 2000.).max(0.),
-        y: (y - 2000.).max(0.),
+        x: 0.,
+        y: (y - CANVAS_SIZE).max(0.),
       } * transform.zoom,
     );
+  }
+
+  // Wrap the x-translation so the viewport stays within one canonical world.
+  // This ensures seamless horizontal wrapping without needing unbounded offsets.
+  let left_x = inv
+    .apply(PixelPosition {
+      x: rect.min.x,
+      y: 0.,
+    })
+    .x;
+  let wrapped = left_x.rem_euclid(CANVAS_SIZE);
+  let shift = wrapped - left_x;
+  if shift.abs() > 0.01 {
+    transform.translate(PixelPosition {
+      x: -shift * transform.zoom,
+      y: 0.,
+    });
   }
 }
 

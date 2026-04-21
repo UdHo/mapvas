@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Coordinate;
 
 /// The fixed canvas size for ``PixelPosition``s.
-const CANVAS_SIZE: f32 = 1024. * 2.;
+pub const CANVAS_SIZE: f32 = 1024. * 2.;
 pub const TILE_SIZE: f32 = 512.;
 
 pub trait XY:
@@ -292,7 +292,7 @@ impl WGS84Coordinate {
 
   #[must_use]
   pub fn is_valid(&self) -> bool {
-    -90.0 < self.lat && self.lat < 90.0 && -180.0 < self.lon && self.lon < 180.0
+    -90.0 < self.lat && self.lat < 90.0 && -180.0 <= self.lon && self.lon <= 180.0
   }
 }
 
