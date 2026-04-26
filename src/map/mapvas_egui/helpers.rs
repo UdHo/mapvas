@@ -35,27 +35,36 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
   let inv = transform.invert();
-  let PixelCoordinate { x: _, y } = inv.apply(PixelPosition { x: 0., y: 0. });
-  if y < 0. {
-    transform.translate(
-      PixelPosition {
-        x: 0.,
-        y: y.min(0.),
-      } * transform.zoom,
-    );
-  }
+  let world_h_screen = CANVAS_SIZE * transform.zoom;
+  let view_h = rect.height();
+  let top_y = inv.apply(PixelPosition { x: 0., y: 0. }).y;
 
-  let PixelCoordinate { x: _, y } = inv.apply(PixelPosition {
-    x: rect.max.x,
-    y: rect.max.y,
-  });
-  if y > CANVAS_SIZE {
-    transform.translate(
-      PixelPosition {
+  if view_h >= world_h_screen {
+    // Viewport is taller than the world — center the world vertically. Without this,
+    // top-anchor and bottom-anchor clamps below would both fire and oscillate.
+    let desired_top_y = -(view_h - world_h_screen) / (2. * transform.zoom);
+    let shift = (top_y - desired_top_y) * transform.zoom;
+    if shift.abs() > 0.01 {
+      transform.translate(PixelPosition { x: 0., y: shift });
+    }
+  } else if top_y < 0. {
+    transform.translate(PixelPosition {
+      x: 0.,
+      y: top_y * transform.zoom,
+    });
+  } else {
+    let bottom_y = inv
+      .apply(PixelPosition {
+        x: rect.max.x,
+        y: rect.max.y,
+      })
+      .y;
+    if bottom_y > CANVAS_SIZE {
+      transform.translate(PixelPosition {
         x: 0.,
-        y: (y - CANVAS_SIZE).max(0.),
-      } * transform.zoom,
-    );
+        y: (bottom_y - CANVAS_SIZE) * transform.zoom,
+      });
+    }
   }
 
   // Wrap the x-translation so the viewport stays within one canonical world.

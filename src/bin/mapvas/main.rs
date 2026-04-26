@@ -56,7 +56,7 @@ fn main() -> eframe::Result {
       let config = Config::new();
       init_style_config(config.vector_style_file.as_deref());
 
-      let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone());
+      let (map, remote, data_holder) = Map::new(cc.egui_ctx.clone(), config.clone());
       spawn_remote_runner(runtime, remote.clone());
       Ok(Box::new(MapApp::new(
         map,
