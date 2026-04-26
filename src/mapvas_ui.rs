@@ -802,7 +802,7 @@ impl Sidebar {
     for category in category_order {
       if let Some(mut tasks) = tasks_by_category.remove(&category) {
         // Sort by elapsed time (newest first)
-        tasks.sort_by_key(|(_, task)| std::cmp::Reverse(task.elapsed()));
+        tasks.sort_by_cached_key(|(_, task)| std::cmp::Reverse(task.elapsed()));
 
         let category_name = match category {
           TaskCategory::TileLoad => "🗺 Tile Loading",
