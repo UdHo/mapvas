@@ -145,7 +145,7 @@ impl MapSender {
       return false;
     }
 
-    while let Err(e) = surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck",))
+    while let Err(e) = surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
       .send()
       .await
     {

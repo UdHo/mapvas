@@ -11,7 +11,7 @@ use std::fs;
 use std::io::Cursor;
 
 fn create_test_app_with_geometries() -> MapApp {
-  let config = Config::new();
+  let config = Config::default();
   let ctx = egui::Context::default();
   let (mut map, remote, data_holder) = Map::new(ctx);
   map.set_headless();

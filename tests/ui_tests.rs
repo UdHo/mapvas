@@ -5,7 +5,7 @@ use egui_kittest::kittest::Queryable;
 use mapvas::{config::Config, map::mapvas_egui::Map, mapvas_ui::MapApp};
 
 fn create_test_app() -> MapApp {
-  let config = Config::new();
+  let config = Config::default();
   let ctx = egui::Context::default();
   let (map, remote, data_holder) = Map::new(ctx);
   MapApp::new(map, remote, data_holder, config, None)

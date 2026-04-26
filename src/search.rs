@@ -172,11 +172,7 @@ impl SearchManager {
     }
 
     // Sort by relevance (highest first)
-    all_results.sort_by(|a, b| {
-      b.relevance
-        .partial_cmp(&a.relevance)
-        .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    all_results.sort_by(|a, b| b.relevance.total_cmp(&a.relevance));
 
     // Limit total results
     all_results.truncate(10);

@@ -340,19 +340,16 @@ mod tests {
 
       for geometry in &layer.geometries {
         match geometry {
-          Geometry::Point(_, metadata) => {
-            if metadata.time_data.is_some() {
-              timestamped_points += 1;
-            }
+          Geometry::Point(_, metadata) if metadata.time_data.is_some() => {
+            timestamped_points += 1;
           }
-          Geometry::LineString(_, metadata) => {
+          Geometry::LineString(_, metadata)
             if metadata
               .time_data
               .as_ref()
-              .is_some_and(|td| td.time_span.is_some())
-            {
-              linestrings_with_timespan += 1;
-            }
+              .is_some_and(|td| td.time_span.is_some()) =>
+          {
+            linestrings_with_timespan += 1;
           }
           _ => {}
         }
