@@ -419,7 +419,7 @@ impl TileLayer {
           });
 
         let render_result =
-          tokio::time::timeout(std::time::Duration::from_secs(60), render_rx).await;
+          tokio::time::timeout(std::time::Duration::from_mins(1), render_rx).await;
 
         let render_duration = render_start.elapsed();
 

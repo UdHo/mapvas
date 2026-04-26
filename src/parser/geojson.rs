@@ -760,23 +760,21 @@ mod tests {
 
       for geometry in &layer.geometries {
         match geometry {
-          Geometry::Point(_, metadata) => {
+          Geometry::Point(_, metadata)
             if metadata
               .time_data
               .as_ref()
-              .is_some_and(|td| td.timestamp.is_some())
-            {
-              features_with_timestamps += 1;
-            }
+              .is_some_and(|td| td.timestamp.is_some()) =>
+          {
+            features_with_timestamps += 1;
           }
-          Geometry::LineString(_, metadata) => {
+          Geometry::LineString(_, metadata)
             if metadata
               .time_data
               .as_ref()
-              .is_some_and(|td| td.time_span.is_some())
-            {
-              features_with_time_spans += 1;
-            }
+              .is_some_and(|td| td.time_span.is_some()) =>
+          {
+            features_with_time_spans += 1;
           }
           _ => {}
         }

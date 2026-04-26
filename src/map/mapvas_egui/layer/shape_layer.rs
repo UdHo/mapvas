@@ -382,7 +382,7 @@ impl ShapeLayer {
         received = true;
         let l = self.shape_map.entry(id.clone()).or_default();
         let start_idx = l.len();
-        l.extend(geometries.into_iter());
+        l.extend(geometries);
         self.layer_visibility.entry(id.clone()).or_insert(true);
 
         for i in start_idx..l.len() {
@@ -2675,14 +2675,12 @@ impl ShapeLayer {
 
     for &path_index in nested_path {
       match current_geometry {
-        Geometry::GeometryCollection(nested_geometries, _) => {
-          if path_index < nested_geometries.len() {
-            current_geometry = &nested_geometries[path_index];
-          } else {
-            return None; // Invalid path index
-          }
+        Geometry::GeometryCollection(nested_geometries, _)
+          if path_index < nested_geometries.len() =>
+        {
+          current_geometry = &nested_geometries[path_index];
         }
-        _ => return None, // Path continues but current geometry is not a collection
+        _ => return None,
       }
     }
 

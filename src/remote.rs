@@ -144,7 +144,7 @@ pub async fn remote_runner(remote: Remote) {
 
   // Keep it running.
   loop {
-    tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+    tokio::time::sleep(tokio::time::Duration::from_hours(1)).await;
   }
 }
 
