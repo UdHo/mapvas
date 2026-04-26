@@ -61,7 +61,7 @@ impl HeadlessRenderer {
   #[must_use]
   pub fn render(&self, events: &[MapEvent], width: u32, height: u32) -> image::RgbaImage {
     let ctx = egui::Context::default();
-    let (mut map, remote, data_holder) = Map::new(ctx);
+    let (mut map, remote, data_holder) = Map::new(ctx, self.config.clone());
     map.set_headless();
 
     for event in events {

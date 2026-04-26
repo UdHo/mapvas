@@ -13,7 +13,7 @@ use std::io::Cursor;
 fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
   map.set_headless();
 
   // Parse the GeoJSON content and inject it as a map event
@@ -35,7 +35,7 @@ fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
 fn create_test_app_grid_mode() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
   map.set_headless();
   MapApp::new(map, remote, data_holder, config, None)
 }
@@ -221,17 +221,26 @@ async fn grid_mode_ui_workflow() {
     app,
   );
 
-  // Step 1: Initial state with loaded data
+  // Setup: switch to grid-only display via the settings UI so subsequent
+  // snapshots don't depend on real tile loads.
   harness.run();
+  harness.get_by_label("Tile Layer").click();
+  harness.run();
+  harness.get_by_label("Grid Only").click();
+  harness.run();
+  harness.get_by_label("Tile Layer").click();
+  harness.run();
+
+  // Step 1: Initial state with loaded data
   harness.snapshot("workflow_initial_with_data");
 
-  // Step 2: Open tile layer settings
+  // Step 2: Open tile layer settings (Grid Only is already selected from setup)
   let tile_layer = harness.get_by_label("Tile Layer");
   tile_layer.click();
   harness.run();
   harness.snapshot("workflow_settings_opened");
 
-  // Step 3: Switch directly to grid mode (avoiding tile dependencies)
+  // Step 3: Re-click Grid Only to verify the radio still works
   let grid_only_button = harness.get_by_label("Grid Only");
   grid_only_button.click();
   harness.run();

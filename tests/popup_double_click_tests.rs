@@ -12,7 +12,7 @@ use std::io::Cursor;
 fn create_test_app_with_nested_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
   map.set_headless();
 
   // Create nested KML content with multiple levels

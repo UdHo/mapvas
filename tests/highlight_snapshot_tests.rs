@@ -13,7 +13,7 @@ use std::io::Cursor;
 fn create_test_app_with_geometries() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx);
+  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
   map.set_headless();
 
   // Use nested folders KML to have both collections and individual geometries
@@ -88,6 +88,19 @@ async fn test_individual_geometry_highlighting() {
     app,
   );
 
+  harness.run();
+
+  // Switch to grid mode so snapshots don't depend on real tile loads
+  let tile_layer = harness.get_by_label("Tile Layer");
+  tile_layer.click();
+  harness.run();
+
+  let grid_only_button = harness.get_by_label("Grid Only");
+  grid_only_button.click();
+  harness.run();
+
+  let tile_layer = harness.get_by_label("Tile Layer");
+  tile_layer.click();
   harness.run();
 
   // Setup to reach individual geometries

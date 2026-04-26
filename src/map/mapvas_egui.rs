@@ -54,9 +54,10 @@ pub struct Map {
 
 impl Map {
   #[must_use]
-  pub fn new(ctx: egui::Context) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
-    let cfg = crate::config::Config::new();
-
+  pub fn new(
+    ctx: egui::Context,
+    cfg: crate::config::Config,
+  ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
     let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
     let shape_info = std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
     let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone(), shape_info.clone());
