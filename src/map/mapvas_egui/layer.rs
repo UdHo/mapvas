@@ -67,34 +67,15 @@ pub trait Layer {
     false
   }
 
-  /// Search functionality
-  fn search_geometries(&mut self, _query: &str) {
-    // Default implementation does nothing
+  /// Capability accessor: layers that support search/filter override this.
+  fn as_searchable(&self) -> Option<&dyn Searchable> {
+    None
   }
 
-  fn next_search_result(&mut self) -> bool {
-    false
+  fn as_searchable_mut(&mut self) -> Option<&mut dyn Searchable> {
+    None
   }
 
-  fn previous_search_result(&mut self) -> bool {
-    false
-  }
-
-  fn get_search_results_count(&self) -> usize {
-    0
-  }
-
-  fn show_search_result_popup(&mut self) {
-    // Default implementation does nothing
-  }
-
-  fn filter_geometries(&mut self, _query: &str) {
-    // Default implementation does nothing
-  }
-
-  fn clear_filter(&mut self) {
-    // Default implementation does nothing
-  }
   /// Find the closest geometry to the given position and handle selection if applicable
   /// Returns Some(distance) if this layer can handle the click, None otherwise
   /// If Some(distance) is returned, the layer should perform its selection action immediately
@@ -113,41 +94,6 @@ pub trait Layer {
   ) {
     // Default implementation does nothing - layers can override if they support temporal filtering
   }
-  /// Timeline-specific methods for temporal control layers
-  /// Update timeline with time range and current interval
-  fn update_timeline(
-    &mut self,
-    _time_range: (
-      Option<chrono::DateTime<chrono::Utc>>,
-      Option<chrono::DateTime<chrono::Utc>>,
-    ),
-    _current_interval: (
-      Option<chrono::DateTime<chrono::Utc>>,
-      Option<chrono::DateTime<chrono::Utc>>,
-    ),
-    _is_playing: bool,
-    _playback_speed: f32,
-  ) {
-    // Default implementation does nothing - only timeline layers override this
-  }
-
-  /// Get the current timeline interval
-  fn get_timeline_interval(
-    &self,
-  ) -> (
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>,
-  ) {
-    // Default implementation returns None - only timeline layers override this
-    (None, None)
-  }
-
-  /// Get timeline playback state
-  fn get_timeline_playback_state(&self) -> (bool, f32) {
-    // Default implementation returns (not playing, normal speed)
-    (false, 1.0)
-  }
-
   /// Check if this layer is visible
   fn is_visible(&self) -> bool {
     self.visible()
@@ -166,15 +112,6 @@ pub trait Layer {
     Option<chrono::DateTime<chrono::Utc>>,
   ) {
     (None, None) // Default implementation returns no temporal data
-  }
-
-  /// Toggle timeline interval lock state
-  fn toggle_timeline_interval_lock(&mut self) {}
-
-  /// Get current timeline interval lock state
-  fn get_timeline_interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
-    // Default implementation returns None
-    crate::map::mapvas_egui::timeline_widget::IntervalLock::None
   }
 
   /// Whether this layer has pending async work (e.g. tiles downloading/rendering).
@@ -207,6 +144,17 @@ pub trait Layer {
   fn shape_bounding_box(&self, _layer_id: &str, _shape_idx: usize) -> Option<BoundingBox> {
     None
   }
+}
+
+/// Capability for layers that support text search and filtering of their contents.
+pub trait Searchable {
+  fn search_geometries(&mut self, query: &str);
+  fn next_search_result(&mut self) -> bool;
+  fn previous_search_result(&mut self) -> bool;
+  fn search_results_count(&self) -> usize;
+  fn show_search_result_popup(&mut self);
+  fn filter_geometries(&mut self, query: &str);
+  fn clear_filter(&mut self);
 }
 
 /// Common properties for all layers.

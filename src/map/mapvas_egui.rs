@@ -1,4 +1,5 @@
 use std::{
+  cell::RefCell,
   rc::Rc,
   sync::{Mutex, MutexGuard, mpsc::Receiver},
 };
@@ -15,7 +16,7 @@ use egui::{InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
 use helpers::{
   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
 };
-use layer::Layer;
+use layer::{Layer, TimelineLayer};
 use log::{debug, warn};
 
 use super::{
@@ -43,6 +44,7 @@ pub struct GeometryInfo {
 pub struct Map {
   transform: Transform,
   layers: Rc<Mutex<Vec<Box<dyn Layer>>>>,
+  timeline: Rc<RefCell<TimelineLayer>>,
   recv: Rc<Receiver<MapEvent>>,
   ctx: egui::Context,
   remote: Remote,
@@ -71,7 +73,7 @@ impl Map {
     let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
     let screenshot_layer_sender = screenshot_layer.get_sender();
 
-    let timeline_layer = layer::TimelineLayer::new();
+    let timeline = Rc::new(RefCell::new(layer::TimelineLayer::new()));
 
     let (send, recv) = std::sync::mpsc::channel();
 
@@ -87,10 +89,9 @@ impl Map {
       Box::new(shape_layer),
       Box::new(command),
       Box::new(screenshot_layer),
-      Box::new(timeline_layer),
     ]));
 
-    let map_data_holder = Rc::new(MapLayerHolderImpl::new(layers.clone()));
+    let map_data_holder = Rc::new(MapLayerHolderImpl::new(layers.clone(), timeline.clone()));
 
     let remote = Remote {
       layer: shape_layer_sender.clone(),
@@ -109,6 +110,7 @@ impl Map {
       Self {
         transform: Transform::invalid(),
         layers,
+        timeline,
         recv: recv.into(),
         ctx,
         remote: remote.clone(),
@@ -587,6 +589,8 @@ impl Widget for &mut Map {
           profile_scope!("Layer::draw", layer.name());
           layer.draw(ui, &self.transform, rect);
         }
+        profile_scope!("Layer::draw", "Timeline");
+        self.timeline.borrow_mut().draw(ui, &self.transform, rect);
       }
     }
     self.handle_map_events(rect);
@@ -701,11 +705,12 @@ impl Map {
     is_playing: bool,
     playback_speed: f32,
   ) {
-    if let Ok(mut layers) = self.layers.lock() {
-      for layer in layers.iter_mut() {
-        layer.update_timeline(time_range, current_interval, is_playing, playback_speed);
-      }
-    }
+    self.timeline.borrow_mut().update_timeline(
+      time_range,
+      current_interval,
+      is_playing,
+      playback_speed,
+    );
   }
 
   /// Get the current timeline interval from the timeline layer
@@ -716,66 +721,29 @@ impl Map {
     Option<chrono::DateTime<chrono::Utc>>,
     Option<chrono::DateTime<chrono::Utc>>,
   ) {
-    if let Ok(layers) = self.layers.lock() {
-      for layer in layers.iter() {
-        let interval = layer.get_timeline_interval();
-        if interval.0.is_some() || interval.1.is_some() {
-          return interval;
-        }
-      }
-    }
-    (None, None)
+    self.timeline.borrow().get_interval()
   }
 
   /// Get the timeline playback state from the timeline layer
   #[must_use]
   pub fn get_timeline_playback_state(&self) -> (bool, f32) {
-    if let Ok(layers) = self.layers.lock() {
-      for layer in layers.iter() {
-        let (is_playing, speed) = layer.get_timeline_playback_state();
-        if is_playing || (speed - 1.0).abs() > f32::EPSILON {
-          return (is_playing, speed);
-        }
-      }
-    }
-    (false, 1.0)
+    self.timeline.borrow().playback_state()
   }
 
   /// Set the timeline layer visibility
   pub fn set_timeline_visible(&mut self, visible: bool) {
-    if let Ok(mut layers) = self.layers.lock() {
-      for layer in layers.iter_mut() {
-        if layer.name() == "Timeline" {
-          layer.set_visible(visible);
-          break;
-        }
-      }
-    }
+    self.timeline.borrow_mut().set_visible(visible);
   }
 
   /// Check if the timeline layer is visible
   #[must_use]
   pub fn is_timeline_visible(&self) -> bool {
-    if let Ok(layers) = self.layers.lock() {
-      for layer in layers.iter() {
-        if layer.name() == "Timeline" {
-          return layer.is_visible();
-        }
-      }
-    }
-    false
+    self.timeline.borrow().visible()
   }
 
   /// Toggle timeline interval lock state
   pub fn toggle_timeline_interval_lock(&mut self) {
-    if let Ok(mut layers) = self.layers.lock() {
-      for layer in layers.iter_mut() {
-        if layer.name() == "Timeline" {
-          layer.toggle_timeline_interval_lock();
-          return;
-        }
-      }
-    }
+    self.timeline.borrow_mut().toggle_interval_lock();
   }
 
   /// Get current timeline interval lock state
@@ -783,21 +751,16 @@ impl Map {
   pub fn get_timeline_interval_lock(
     &self,
   ) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
-    if let Ok(layers) = self.layers.lock() {
-      for layer in layers.iter() {
-        if layer.name() == "Timeline" {
-          return layer.get_timeline_interval_lock();
-        }
-      }
-    }
-    crate::map::mapvas_egui::timeline_widget::IntervalLock::None
+    self.timeline.borrow().interval_lock()
   }
 
   /// Search geometries across all layers
   pub fn search_geometries(&mut self, query: &str) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        layer.search_geometries(query);
+        if let Some(s) = layer.as_searchable_mut() {
+          s.search_geometries(query);
+        }
       }
     }
   }
@@ -806,7 +769,9 @@ impl Map {
   pub fn next_search_result(&mut self) -> bool {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if layer.next_search_result() {
+        if let Some(s) = layer.as_searchable_mut()
+          && s.next_search_result()
+        {
           return true;
         }
       }
@@ -818,7 +783,9 @@ impl Map {
   pub fn previous_search_result(&mut self) -> bool {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        if layer.previous_search_result() {
+        if let Some(s) = layer.as_searchable_mut()
+          && s.previous_search_result()
+        {
           return true;
         }
       }
@@ -830,7 +797,9 @@ impl Map {
   pub fn show_search_result_popup(&mut self) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        layer.show_search_result_popup();
+        if let Some(s) = layer.as_searchable_mut() {
+          s.show_search_result_popup();
+        }
       }
     }
   }
@@ -839,7 +808,9 @@ impl Map {
   pub fn filter_geometries(&mut self, query: &str) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        layer.filter_geometries(query);
+        if let Some(s) = layer.as_searchable_mut() {
+          s.filter_geometries(query);
+        }
       }
     }
   }
@@ -848,7 +819,9 @@ impl Map {
   pub fn clear_filter(&mut self) {
     if let Ok(mut layers) = self.layers.lock() {
       for layer in layers.iter_mut() {
-        layer.clear_filter();
+        if let Some(s) = layer.as_searchable_mut() {
+          s.clear_filter();
+        }
       }
     }
   }
@@ -858,9 +831,11 @@ impl Map {
   pub fn get_search_results_count(&self) -> usize {
     if let Ok(layers) = self.layers.lock() {
       for layer in layers.iter() {
-        let count = layer.get_search_results_count();
-        if count > 0 {
-          return count;
+        if let Some(s) = layer.as_searchable() {
+          let count = s.search_results_count();
+          if count > 0 {
+            return count;
+          }
         }
       }
     }
@@ -930,12 +905,24 @@ pub trait MapLayerReader {
 
 pub trait MapLayerHolder {
   fn get_reader(&self) -> Box<dyn MapLayerReader + '_>;
+  /// Render the timeline's sidebar UI block.
+  fn timeline_ui(&self, ui: &mut egui::Ui);
+  /// Read temporal range from the timeline (used by the temporal-controls scan).
+  fn timeline_temporal_range(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  );
 }
 
-struct MapLayerHolderImpl(Rc<Mutex<Vec<Box<dyn Layer>>>>);
+struct MapLayerHolderImpl {
+  layers: Rc<Mutex<Vec<Box<dyn Layer>>>>,
+  timeline: Rc<RefCell<TimelineLayer>>,
+}
 impl MapLayerHolderImpl {
-  fn new(layers: Rc<Mutex<Vec<Box<dyn Layer>>>>) -> Self {
-    Self(layers)
+  fn new(layers: Rc<Mutex<Vec<Box<dyn Layer>>>>, timeline: Rc<RefCell<TimelineLayer>>) -> Self {
+    Self { layers, timeline }
   }
 }
 
@@ -943,10 +930,23 @@ impl MapLayerHolder for MapLayerHolderImpl {
   fn get_reader(&self) -> Box<dyn MapLayerReader + '_> {
     Box::new(MapLayerReaderImpl(
       self
-        .0
+        .layers
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner),
     ))
+  }
+
+  fn timeline_ui(&self, ui: &mut egui::Ui) {
+    self.timeline.borrow_mut().ui(ui);
+  }
+
+  fn timeline_temporal_range(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
+    self.timeline.borrow().get_temporal_range()
   }
 }
 
