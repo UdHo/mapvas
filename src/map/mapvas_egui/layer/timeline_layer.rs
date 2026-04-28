@@ -177,6 +177,35 @@ impl Default for TimelineLayer {
   }
 }
 
+impl TimelineLayer {
+  pub fn update_timeline(
+    &mut self,
+    time_range: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    current_interval: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    is_playing: bool,
+    playback_speed: f32,
+  ) {
+    self.set_time_range(time_range.0, time_range.1);
+    self.set_interval(current_interval.0, current_interval.1);
+    self.set_playing(is_playing);
+    self.set_playback_speed(playback_speed);
+  }
+
+  #[must_use]
+  pub fn playback_state(&self) -> (bool, f32) {
+    (self.widget.is_playing(), self.widget.get_playback_speed())
+  }
+
+  pub fn toggle_interval_lock(&mut self) {
+    self.widget.toggle_interval_lock();
+  }
+
+  #[must_use]
+  pub fn interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
+    self.widget.get_interval_lock()
+  }
+}
+
 impl Layer for TimelineLayer {
   fn draw(&mut self, ui: &mut Ui, _transform: &Transform, rect: Rect) {
     if !self.properties.visible {
@@ -216,46 +245,6 @@ impl Layer for TimelineLayer {
 
   fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
     self.widget.get_time_range()
-  }
-
-  fn update_timeline(
-    &mut self,
-    time_range: (
-      Option<chrono::DateTime<chrono::Utc>>,
-      Option<chrono::DateTime<chrono::Utc>>,
-    ),
-    current_interval: (
-      Option<chrono::DateTime<chrono::Utc>>,
-      Option<chrono::DateTime<chrono::Utc>>,
-    ),
-    is_playing: bool,
-    playback_speed: f32,
-  ) {
-    self.set_time_range(time_range.0, time_range.1);
-    self.set_interval(current_interval.0, current_interval.1);
-    self.set_playing(is_playing);
-    self.set_playback_speed(playback_speed);
-  }
-
-  fn get_timeline_interval(
-    &self,
-  ) -> (
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>,
-  ) {
-    self.get_interval()
-  }
-
-  fn get_timeline_playback_state(&self) -> (bool, f32) {
-    (self.widget.is_playing(), self.widget.get_playback_speed())
-  }
-
-  fn toggle_timeline_interval_lock(&mut self) {
-    self.widget.toggle_interval_lock();
-  }
-
-  fn get_timeline_interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
-    self.widget.get_interval_lock()
   }
 
   fn ui_content(&mut self, ui: &mut Ui) {

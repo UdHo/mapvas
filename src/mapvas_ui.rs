@@ -589,6 +589,15 @@ impl TemporalControls {
         latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
       }
     }
+    drop(layer_reader);
+
+    let (tl_earliest, tl_latest) = map_content.timeline_temporal_range();
+    if let Some(tl_earliest) = tl_earliest {
+      earliest = Some(earliest.map_or(tl_earliest, |e| e.min(tl_earliest)));
+    }
+    if let Some(tl_latest) = tl_latest {
+      latest = Some(latest.map_or(tl_latest, |l| l.max(tl_latest)));
+    }
 
     // Only enable temporal filtering if we found actual temporal data
     if let (Some(start), Some(end)) = (earliest, latest) {
@@ -938,11 +947,14 @@ impl Sidebar {
           egui::CollapsingHeader::new("Map Layers")
             .default_open(true)
             .show(ui, |ui| {
-              let mut layer_reader = self.map_content.get_reader();
               ui.vertical(|ui| {
-                for layer in layer_reader.get_layers() {
-                  layer.ui(ui);
+                {
+                  let mut layer_reader = self.map_content.get_reader();
+                  for layer in layer_reader.get_layers() {
+                    layer.ui(ui);
+                  }
                 }
+                self.map_content.timeline_ui(ui);
               });
             });
 

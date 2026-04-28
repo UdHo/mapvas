@@ -1,5 +1,5 @@
 use super::{
-  Layer, LayerProperties, SubLayerInfo, geometry_highlighting::GeometryHighlighter,
+  Layer, LayerProperties, Searchable, SubLayerInfo, geometry_highlighting::GeometryHighlighter,
   geometry_rasterizer, geometry_selection,
 };
 use rstar::{AABB, RTree, RTreeObject};
@@ -2471,35 +2471,12 @@ impl Layer for ShapeLayer {
     self.just_double_clicked.is_some()
   }
 
-  fn search_geometries(&mut self, query: &str) {
-    // Call the ShapeLayer's specific implementation
-    ShapeLayer::search_geometries(self, query);
+  fn as_searchable(&self) -> Option<&dyn Searchable> {
+    Some(self)
   }
 
-  fn next_search_result(&mut self) -> bool {
-    // Call the ShapeLayer's specific implementation
-    ShapeLayer::next_search_result(self)
-  }
-
-  fn previous_search_result(&mut self) -> bool {
-    // Call the ShapeLayer's specific implementation
-    ShapeLayer::previous_search_result(self)
-  }
-
-  fn get_search_results_count(&self) -> usize {
-    self.get_search_results().len()
-  }
-
-  fn show_search_result_popup(&mut self) {
-    ShapeLayer::show_search_result_popup(self);
-  }
-
-  fn filter_geometries(&mut self, query: &str) {
-    ShapeLayer::filter_geometries(self, query);
-  }
-
-  fn clear_filter(&mut self) {
-    ShapeLayer::clear_filter(self);
+  fn as_searchable_mut(&mut self) -> Option<&mut dyn Searchable> {
+    Some(self)
   }
 
   fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
@@ -2662,6 +2639,30 @@ impl Layer for ShapeLayer {
   fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
     // This method is not used - double-click handling happens in closest_geometry_with_selection
     false
+  }
+}
+
+impl Searchable for ShapeLayer {
+  fn search_geometries(&mut self, query: &str) {
+    ShapeLayer::search_geometries(self, query);
+  }
+  fn next_search_result(&mut self) -> bool {
+    ShapeLayer::next_search_result(self)
+  }
+  fn previous_search_result(&mut self) -> bool {
+    ShapeLayer::previous_search_result(self)
+  }
+  fn search_results_count(&self) -> usize {
+    self.get_search_results().len()
+  }
+  fn show_search_result_popup(&mut self) {
+    ShapeLayer::show_search_result_popup(self);
+  }
+  fn filter_geometries(&mut self, query: &str) {
+    ShapeLayer::filter_geometries(self, query);
+  }
+  fn clear_filter(&mut self) {
+    ShapeLayer::clear_filter(self);
   }
 }
 
