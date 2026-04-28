@@ -2,8 +2,11 @@
 
 ## Unreleased
 
+## [0.2.11] - 2026-04-28
+
 - Heatmap rendering: `mapcat -H data.geojson` or `mapcat data.geojson:heatmap` renders point data as a colour-gradient heatmap (blue → cyan → green → yellow → red).
 - Per-file heatmap suffix: append `:heatmap` to any file argument to render that file as a heatmap while other files render normally (e.g. `mapcat routes.geojson points.geojson:heatmap`).
+- Headless `--no-map`: render without map tiles on a black background.
 
 ## [0.2.10] - 2026-04-18
 
