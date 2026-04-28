@@ -14,6 +14,9 @@ pub fn distance_to_geometry(
       .iter()
       .filter_map(|geom| distance_to_geometry(geom, click_coord))
       .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)),
+    // Heatmaps are not individually hover-selectable — walking every point on
+    // every mouse move freezes the UI for large datasets.
+    Geometry::Heatmap(_, _) => None,
   }
 }
 

@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
 use log::error;
-use mapvas::map::map_event::{Color, MapEvent};
+use mapvas::map::coordinates::PixelCoordinate;
+use mapvas::map::geometry_collection::{Geometry, Metadata};
+use mapvas::map::map_event::{Color, Layer, MapEvent};
 use mapvas::parser::{
   AutoFileParser, FileParser, GeoJsonParser, GpxParser, GrepParser, JsonParser, KmlParser,
   TTJsonParser,
@@ -13,8 +16,59 @@ use std::io::{BufRead, BufReader, Read};
 
 mod sender;
 
+/// Walk a geometry tree and append every coordinate it contains to `out`.
+fn collect_coords(geometry: &Geometry<PixelCoordinate>, out: &mut Vec<PixelCoordinate>) {
+  match geometry {
+    Geometry::Point(c, _) => out.push(*c),
+    Geometry::LineString(coords, _) | Geometry::Polygon(coords, _) => {
+      out.extend(coords.iter().copied());
+    }
+    Geometry::Heatmap(coords, _) => out.extend(coords.iter().copied()),
+    Geometry::GeometryCollection(geometries, _) => {
+      for g in geometries {
+        collect_coords(g, out);
+      }
+    }
+  }
+}
+
+/// Replace every `MapEvent::Layer` in `events` with a single `Geometry::Heatmap`
+/// per layer id, accumulating all the coordinates from the original geometries.
+fn convert_to_heatmap(events: Vec<MapEvent>) -> Vec<MapEvent> {
+  let mut heatmap_coords: BTreeMap<String, Vec<PixelCoordinate>> = BTreeMap::new();
+  let mut other = Vec::new();
+
+  for event in events {
+    if let MapEvent::Layer(Layer { id, geometries }) = event {
+      let entry = heatmap_coords.entry(id).or_default();
+      for g in &geometries {
+        collect_coords(g, entry);
+      }
+    } else {
+      other.push(event);
+    }
+  }
+
+  let mut result = Vec::with_capacity(other.len() + heatmap_coords.len());
+  for (id, coords) in heatmap_coords {
+    if coords.is_empty() {
+      continue;
+    }
+    result.push(MapEvent::Layer(Layer {
+      id,
+      geometries: vec![Geometry::Heatmap(
+        std::sync::Arc::new(coords),
+        Metadata::default(),
+      )],
+    }));
+  }
+  result.extend(other);
+  result
+}
+
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
   /// Which parser to use. Values: auto (file extension based with fallbacks), grep, ttjson, json, geojson, gpx, kml.
   #[arg(short, long, default_value = "auto")]
@@ -44,6 +98,10 @@ struct Args {
   /// Path to take a screenshot.
   #[arg(short, long, default_value = "")]
   screenshot: String,
+
+  /// Render all input coordinates as a heatmap instead of individual shapes.
+  #[arg(short = 'H', long)]
+  heatmap: bool,
 
   /// Render directly to an image file instead of sending to mapvas
   #[arg(short, long)]
@@ -91,6 +149,10 @@ fn render_output(args: &Args) {
         .with_invert_coordinates(args.invert_coordinates);
       events.extend(parser.parse());
     }
+  }
+
+  if args.heatmap {
+    events = convert_to_heatmap(events);
   }
 
   // Always focus on data in output mode
@@ -152,6 +214,19 @@ async fn main() {
 
   let (sender, _) = sender::MapSender::new().await;
 
+  let send_events = |events: Box<dyn Iterator<Item = MapEvent>>| {
+    if args.heatmap {
+      let collected: Vec<MapEvent> = events.collect();
+      for event in convert_to_heatmap(collected) {
+        sender.send_event(event);
+      }
+    } else {
+      for event in events {
+        sender.send_event(event);
+      }
+    }
+  };
+
   if args.parser == "auto" {
     if args.files.is_empty() {
       // Use content-based auto-parser for stdin
@@ -165,16 +240,15 @@ async fn main() {
       let content_parser = mapvas::parser::ContentAutoParser::new(content)
         .with_label_pattern(&args.label_pattern)
         .with_invert_coordinates(args.invert_coordinates);
-      for event in content_parser.parse() {
-        sender.send_event(event);
-      }
+      send_events(Box::new(content_parser.parse().into_iter()));
     } else {
       // Use file-based auto-parser for each file
       for file_path in &args.files {
         let mut auto_parser = AutoFileParser::new(file_path)
           .with_label_pattern(&args.label_pattern)
           .with_invert_coordinates(args.invert_coordinates);
-        auto_parser.parse().for_each(|e| sender.send_event(e));
+        let events: Vec<MapEvent> = auto_parser.parse().collect();
+        send_events(Box::new(events.into_iter()));
       }
     }
   } else {
@@ -201,7 +275,8 @@ async fn main() {
     let readers = readers(&args.files);
     for reader in readers {
       let mut parser = parser();
-      parser.parse(reader).for_each(|e| sender.send_event(e));
+      let events: Vec<MapEvent> = parser.parse(reader).collect();
+      send_events(Box::new(events.into_iter()));
     }
   }
 

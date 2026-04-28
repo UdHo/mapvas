@@ -138,6 +138,10 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
             stroke: PathStroke::new(DEFAULT_STROKE_WIDTH, style.color().gamma_multiply(0.7)), // More visible outline
           })
         }
+        Geometry::Heatmap(_, _) => {
+          // Heatmaps are rendered through the tile rasterizer only.
+          Shape::Noop
+        }
       };
       painter.add(shape);
     }
@@ -176,6 +180,15 @@ impl<C: Coordinate> Geometry<C> {
           .iter()
           .map(Geometry::convert_to_pixel_coordinates)
           .collect(),
+        metadata.clone(),
+      ),
+      Geometry::Heatmap(coords, metadata) => Geometry::Heatmap(
+        std::sync::Arc::new(
+          coords
+            .iter()
+            .map(Coordinate::as_pixel_coordinate)
+            .collect::<Vec<_>>(),
+        ),
         metadata.clone(),
       ),
     }

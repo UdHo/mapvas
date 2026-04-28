@@ -593,6 +593,9 @@ impl ShapeLayer {
           Geometry::GeometryCollection(_, meta) => {
             (meta.label.as_ref().map(|l| l.name.clone()), "Collection")
           }
+          Geometry::Heatmap(_, meta) => {
+            (meta.label.as_ref().map(|l| l.name.clone()), "Heatmap")
+          }
         };
         crate::remote::ShapeInfo {
           index: idx,
@@ -783,7 +786,8 @@ impl ShapeLayer {
               Geometry::Point(_, metadata)
               | Geometry::LineString(_, metadata)
               | Geometry::Polygon(_, metadata)
-              | Geometry::GeometryCollection(_, metadata) => metadata,
+              | Geometry::GeometryCollection(_, metadata)
+              | Geometry::Heatmap(_, metadata) => metadata,
             };
 
             if metadata.style.is_none() {
@@ -1097,6 +1101,24 @@ impl ShapeLayer {
         // This handles the case where a top-level geometry is a collection
         self.show_geometry_collection_inline(ui, layer_id, shape_idx, geometries, metadata);
       }
+
+      Geometry::Heatmap(coords, metadata) => {
+        self.show_colored_icon(ui, layer_id, shape_idx, "🔥", metadata, false);
+
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 40.0).max(100.0);
+          let (truncated_label, _was_truncated) =
+            truncate_label_by_width(ui, &label.short(), available_width);
+          ui.strong(truncated_label);
+        } else {
+          ui.label("Heatmap");
+        }
+
+        let pts_text = format!("{} pts", coords.len());
+        let available_width = (ui.available_width() - 20.0).max(30.0);
+        let (truncated, _) = truncate_label_by_width(ui, &pts_text, available_width);
+        ui.small(truncated);
+      }
     }
 
     let geometry_popup_ids = [
@@ -1400,6 +1422,18 @@ impl ShapeLayer {
           Geometry::GeometryCollection(..) => {
             // This should not happen in individual geometry context
           }
+          Geometry::Heatmap(coords, nested_metadata) => {
+            ui.label("🔥");
+            if let Some(label) = &nested_metadata.label {
+              let available_width = (ui.available_width() - 40.0).max(100.0);
+              let (truncated_label, _was_truncated) =
+                truncate_label_by_width(ui, &label.short(), available_width);
+              ui.strong(truncated_label);
+            } else {
+              ui.label("Heatmap");
+            }
+            ui.small(format!("({} pts)", coords.len()));
+          }
         }
       });
 
@@ -1489,7 +1523,8 @@ impl ShapeLayer {
           Geometry::Point(_, metadata)
           | Geometry::LineString(_, metadata)
           | Geometry::Polygon(_, metadata)
-          | Geometry::GeometryCollection(_, metadata) => metadata,
+          | Geometry::GeometryCollection(_, metadata)
+          | Geometry::Heatmap(_, metadata) => metadata,
         };
         shape_metadata.style = Some(crate::map::geometry_collection::Style::default());
       }
@@ -1505,7 +1540,8 @@ impl ShapeLayer {
         Geometry::Point(_, metadata)
         | Geometry::LineString(_, metadata)
         | Geometry::Polygon(_, metadata)
-        | Geometry::GeometryCollection(_, metadata) => metadata,
+        | Geometry::GeometryCollection(_, metadata)
+        | Geometry::Heatmap(_, metadata) => metadata,
       };
 
       let new_style = if let Some(existing_style) = &metadata.style {
@@ -1528,7 +1564,8 @@ impl ShapeLayer {
         Geometry::Point(_, metadata)
         | Geometry::LineString(_, metadata)
         | Geometry::Polygon(_, metadata)
-        | Geometry::GeometryCollection(_, metadata) => metadata,
+        | Geometry::GeometryCollection(_, metadata)
+        | Geometry::Heatmap(_, metadata) => metadata,
       };
 
       let new_style = if let Some(existing_style) = &metadata.style {
@@ -1551,7 +1588,8 @@ impl ShapeLayer {
         Geometry::Point(_, metadata)
         | Geometry::LineString(_, metadata)
         | Geometry::Polygon(_, metadata)
-        | Geometry::GeometryCollection(_, metadata) => metadata,
+        | Geometry::GeometryCollection(_, metadata)
+        | Geometry::Heatmap(_, metadata) => metadata,
       };
 
       let new_style = if let Some(existing_style) = &metadata.style {
@@ -1707,6 +1745,7 @@ impl ShapeLayer {
             Geometry::LineString(_, _) => "LineString".to_string(),
             Geometry::Polygon(_, _) => "Polygon".to_string(),
             Geometry::GeometryCollection(nested, _) => format!("Collection ({})", nested.len()),
+            Geometry::Heatmap(coords, _) => format!("Heatmap ({})", coords.len()),
           })
           .collect::<Vec<_>>()
           .join(", ")
@@ -1955,6 +1994,7 @@ impl ShapeLayer {
     match geometry {
       Geometry::Point(coord, _) => Some(*coord),
       Geometry::LineString(coords, _) | Geometry::Polygon(coords, _) => coords.first().copied(),
+      Geometry::Heatmap(coords, _) => coords.first().copied(),
       Geometry::GeometryCollection(geometries, _) => {
         // For collections, try to get coordinate from first child geometry
         geometries
@@ -2003,7 +2043,8 @@ impl ShapeLayer {
       Geometry::Point(_, metadata)
       | Geometry::LineString(_, metadata)
       | Geometry::Polygon(_, metadata)
-      | Geometry::GeometryCollection(_, metadata) => metadata,
+      | Geometry::GeometryCollection(_, metadata)
+      | Geometry::Heatmap(_, metadata) => metadata,
     };
 
     // Check if metadata contains the search pattern
@@ -2055,7 +2096,8 @@ impl ShapeLayer {
       Geometry::Point(_, metadata)
       | Geometry::LineString(_, metadata)
       | Geometry::Polygon(_, metadata)
-      | Geometry::GeometryCollection(_, metadata) => metadata,
+      | Geometry::GeometryCollection(_, metadata)
+      | Geometry::Heatmap(_, metadata) => metadata,
     };
 
     // Check if metadata contains the search pattern
@@ -2154,7 +2196,12 @@ impl Layer for ShapeLayer {
 
     // Paint visible tiles (spawn background render if not yet cached).
     let total_geometries: usize = self.shape_map.values().map(Vec::len).sum();
-    let use_sync_render = self.headless || total_geometries <= 10_000;
+    let has_heatmap = self.shape_map.values().flatten().any(|g| {
+      matches!(g, Geometry::Heatmap(_, _))
+        || matches!(g, Geometry::GeometryCollection(children, _)
+          if children.iter().any(|c| matches!(c, Geometry::Heatmap(_, _))))
+    });
+    let use_sync_render = self.headless || (!has_heatmap && total_geometries <= 10_000);
     let painter = ui.painter_at(rect);
     for tile in Self::compute_visible_geo_tiles(transform, rect) {
       // Quick reject: check if the R-tree has any geometry overlapping this tile.
@@ -2710,7 +2757,10 @@ impl ShapeLayer {
     latest: &mut Option<DateTime<Utc>>,
   ) {
     let metadata = match geometry {
-      Geometry::Point(_, meta) | Geometry::LineString(_, meta) | Geometry::Polygon(_, meta) => meta,
+      Geometry::Point(_, meta)
+      | Geometry::LineString(_, meta)
+      | Geometry::Polygon(_, meta)
+      | Geometry::Heatmap(_, meta) => meta,
       Geometry::GeometryCollection(children, meta) => {
         // Recursively process child geometries first
         for child in children {
@@ -2745,7 +2795,10 @@ impl ShapeLayer {
     current_time: DateTime<Utc>,
   ) -> bool {
     match geometry {
-      Geometry::Point(_, meta) | Geometry::LineString(_, meta) | Geometry::Polygon(_, meta) => {
+      Geometry::Point(_, meta)
+      | Geometry::LineString(_, meta)
+      | Geometry::Polygon(_, meta)
+      | Geometry::Heatmap(_, meta) => {
         // For individual geometries, check their metadata
         if let Some(time_window) = self.temporal_time_window {
           meta.is_visible_in_time_window(current_time, time_window)
@@ -2782,7 +2835,8 @@ impl ShapeLayer {
       Geometry::Point(_, meta)
       | Geometry::LineString(_, meta)
       | Geometry::Polygon(_, meta)
-      | Geometry::GeometryCollection(_, meta) => meta, // Collections shouldn't reach here, but handle gracefully
+      | Geometry::GeometryCollection(_, meta)
+      | Geometry::Heatmap(_, meta) => meta, // Collections shouldn't reach here, but handle gracefully
     };
 
     if let Some(time_window) = self.temporal_time_window {
@@ -2902,6 +2956,30 @@ impl ShapeLayer {
             timestamp.format("%Y-%m-%d %H:%M:%S UTC")
           )
           .unwrap();
+        }
+
+        write!(info, "\nLayer: {layer_id}").unwrap();
+        if !nested_path.is_empty() {
+          write!(
+            info,
+            "\nNested Path: {}",
+            nested_path
+              .iter()
+              .map(std::string::ToString::to_string)
+              .collect::<Vec<_>>()
+              .join(" → ")
+          )
+          .unwrap();
+        }
+
+        info
+      }
+
+      Geometry::Heatmap(coords, metadata) => {
+        let mut info = format!("🔥 Heatmap\nPoints: {}", coords.len());
+
+        if let Some(label) = &metadata.label {
+          write!(info, "\nLabel: {}", label.full()).unwrap();
         }
 
         write!(info, "\nLayer: {layer_id}").unwrap();

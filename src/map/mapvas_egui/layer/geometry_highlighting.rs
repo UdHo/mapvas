@@ -127,6 +127,9 @@ pub fn draw_highlighted_geometry(
         draw_highlighted_geometry(nested_geometry, painter, transform, false);
       }
     }
+    Geometry::Heatmap(_, _) => {
+      // Heatmaps are not individually highlightable.
+    }
   }
 }
 

@@ -504,7 +504,7 @@ mod tests {
               has_styles += 1;
             }
           }
-          Geometry::GeometryCollection(..) => {}
+          Geometry::GeometryCollection(..) | Geometry::Heatmap(..) => {}
         }
       }
 

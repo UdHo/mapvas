@@ -78,10 +78,9 @@ fn calculate_distance_to_geometry(
     }
     Geometry::LineString(coords, _) => distance_to_linestring(coords, click_pixel),
     Geometry::Polygon(coords, _) => distance_to_polygon(coords, click_pixel),
-    Geometry::GeometryCollection(_, _) => {
-      // Should not reach here as collections are handled recursively above
-      f64::INFINITY
-    }
+    // GeometryCollection should be handled recursively above; Heatmaps are
+    // not hover-selectable (walking every point on every frame freezes the UI).
+    Geometry::GeometryCollection(_, _) | Geometry::Heatmap(_, _) => f64::INFINITY,
   }
 }
 

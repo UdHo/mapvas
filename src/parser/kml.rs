@@ -750,7 +750,8 @@ mod tests {
           Geometry::Point(_, metadata)
           | Geometry::LineString(_, metadata)
           | Geometry::Polygon(_, metadata)
-          | Geometry::GeometryCollection(_, metadata) => metadata.label.is_some(),
+          | Geometry::GeometryCollection(_, metadata)
+          | Geometry::Heatmap(_, metadata) => metadata.label.is_some(),
         })
         .collect();
 
