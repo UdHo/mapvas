@@ -60,7 +60,27 @@ impl Map {
     ctx: egui::Context,
     cfg: crate::config::Config,
   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
-    let tile_layer = layer::TileLayer::from_config(ctx.clone(), &cfg);
+    Self::new_impl(ctx, cfg, false)
+  }
+
+  #[must_use]
+  pub fn new_without_tiles(
+    ctx: egui::Context,
+    cfg: crate::config::Config,
+  ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+    Self::new_impl(ctx, cfg, true)
+  }
+
+  fn new_impl(
+    ctx: egui::Context,
+    cfg: crate::config::Config,
+    no_tile_layer: bool,
+  ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+    let tile_layer = if no_tile_layer {
+      None
+    } else {
+      Some(layer::TileLayer::from_config(ctx.clone(), &cfg))
+    };
     let shape_info = std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
     let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone(), shape_info.clone());
     let shape_layer_sender = shape_layer.get_sender();
@@ -84,12 +104,14 @@ impl Map {
       acc
     });
 
-    let layers: Rc<Mutex<Vec<Box<dyn Layer>>>> = Rc::new(Mutex::new(vec![
-      Box::new(tile_layer),
-      Box::new(shape_layer),
-      Box::new(command),
-      Box::new(screenshot_layer),
-    ]));
+    let mut layer_vec: Vec<Box<dyn Layer>> = Vec::new();
+    if let Some(tl) = tile_layer {
+      layer_vec.push(Box::new(tl));
+    }
+    layer_vec.push(Box::new(shape_layer));
+    layer_vec.push(Box::new(command));
+    layer_vec.push(Box::new(screenshot_layer));
+    let layers: Rc<Mutex<Vec<Box<dyn Layer>>>> = Rc::new(Mutex::new(layer_vec));
 
     let map_data_holder = Rc::new(MapLayerHolderImpl::new(layers.clone(), timeline.clone()));
 

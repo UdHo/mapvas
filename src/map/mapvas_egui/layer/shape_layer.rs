@@ -593,9 +593,7 @@ impl ShapeLayer {
           Geometry::GeometryCollection(_, meta) => {
             (meta.label.as_ref().map(|l| l.name.clone()), "Collection")
           }
-          Geometry::Heatmap(_, meta) => {
-            (meta.label.as_ref().map(|l| l.name.clone()), "Heatmap")
-          }
+          Geometry::Heatmap(_, meta) => (meta.label.as_ref().map(|l| l.name.clone()), "Heatmap"),
         };
         crate::remote::ShapeInfo {
           index: idx,

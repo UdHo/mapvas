@@ -19,6 +19,8 @@ use crate::{
 pub struct HeadlessRenderer {
   config: Config,
   wait_for_tiles: bool,
+  no_map: bool,
+  background_color: Option<egui::Color32>,
 }
 
 impl HeadlessRenderer {
@@ -28,6 +30,8 @@ impl HeadlessRenderer {
     Self {
       config: Config::new(),
       wait_for_tiles: true,
+      no_map: false,
+      background_color: None,
     }
   }
 
@@ -37,12 +41,27 @@ impl HeadlessRenderer {
     Self {
       config,
       wait_for_tiles: true,
+      no_map: false,
+      background_color: None,
     }
   }
 
   #[must_use]
   pub fn without_tiles(mut self) -> Self {
     self.wait_for_tiles = false;
+    self
+  }
+
+  #[must_use]
+  pub fn without_map(mut self) -> Self {
+    self.no_map = true;
+    self.wait_for_tiles = false;
+    self
+  }
+
+  #[must_use]
+  pub fn with_background_color(mut self, color: egui::Color32) -> Self {
+    self.background_color = Some(color);
     self
   }
 
@@ -61,7 +80,17 @@ impl HeadlessRenderer {
   #[must_use]
   pub fn render(&self, events: &[MapEvent], width: u32, height: u32) -> image::RgbaImage {
     let ctx = egui::Context::default();
-    let (mut map, remote, data_holder) = Map::new(ctx, self.config.clone());
+    if let Some(color) = self.background_color {
+      ctx.global_style_mut(|s| {
+        s.visuals.panel_fill = color;
+        s.visuals.window_fill = color;
+      });
+    }
+    let (mut map, remote, data_holder) = if self.no_map {
+      Map::new_without_tiles(ctx, self.config.clone())
+    } else {
+      Map::new(ctx, self.config.clone())
+    };
     map.set_headless();
 
     for event in events {

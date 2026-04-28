@@ -6,7 +6,9 @@ use crate::{
   },
 };
 use egui::{Color32, Rect};
-use tiny_skia::{Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform as SkiaTransform};
+use tiny_skia::{
+  Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform as SkiaTransform,
+};
 
 const DEFAULT_STROKE_WIDTH: f32 = 4.0;
 const DEFAULT_POINT_RADIUS: f32 = 4.0;
@@ -349,7 +351,8 @@ fn draw_heatmap(pixmap: &mut Pixmap, points: &[(f32, f32)]) {
   let mut intensity = vec![0.0_f32; w * h];
 
   for &(cx, cy) in points {
-    if cx + radius < 0.0 || cx - radius >= w as f32 || cy + radius < 0.0 || cy - radius >= h as f32 {
+    if cx + radius < 0.0 || cx - radius >= w as f32 || cy + radius < 0.0 || cy - radius >= h as f32
+    {
       continue;
     }
     let xmin = ((cx - radius).floor() as i32).max(0) as usize;
@@ -372,7 +375,7 @@ fn draw_heatmap(pixmap: &mut Pixmap, points: &[(f32, f32)]) {
     }
   }
 
-  let max_intensity = intensity.iter().cloned().fold(0.0_f32, f32::max);
+  let max_intensity = intensity.iter().copied().fold(0.0_f32, f32::max);
   if max_intensity <= 0.0 {
     return;
   }
@@ -391,8 +394,8 @@ fn draw_heatmap(pixmap: &mut Pixmap, points: &[(f32, f32)]) {
     let pr = ((u32::from(r) * u32::from(a)) / 255) as u8;
     let pg = ((u32::from(g) * u32::from(a)) / 255) as u8;
     let pb = ((u32::from(b) * u32::from(a)) / 255) as u8;
-    pixels[i] = PremultipliedColorU8::from_rgba(pr, pg, pb, a)
-      .unwrap_or(PremultipliedColorU8::TRANSPARENT);
+    pixels[i] =
+      PremultipliedColorU8::from_rgba(pr, pg, pb, a).unwrap_or(PremultipliedColorU8::TRANSPARENT);
   }
 }
 
@@ -401,11 +404,11 @@ fn draw_heatmap(pixmap: &mut Pixmap, points: &[(f32, f32)]) {
 fn heatmap_gradient(t: f32) -> (u8, u8, u8, u8) {
   // Stops: (position, r, g, b)
   const STOPS: &[(f32, f32, f32, f32)] = &[
-    (0.0, 0.0, 0.0, 255.0),     // blue
-    (0.25, 0.0, 255.0, 255.0),  // cyan
-    (0.5, 0.0, 255.0, 0.0),     // green
-    (0.75, 255.0, 255.0, 0.0),  // yellow
-    (1.0, 255.0, 0.0, 0.0),     // red
+    (0.0, 0.0, 0.0, 255.0),    // blue
+    (0.25, 0.0, 255.0, 255.0), // cyan
+    (0.5, 0.0, 255.0, 0.0),    // green
+    (0.75, 255.0, 255.0, 0.0), // yellow
+    (1.0, 255.0, 0.0, 0.0),    // red
   ];
 
   let t = t.clamp(0.0, 1.0);
@@ -421,11 +424,7 @@ fn heatmap_gradient(t: f32) -> (u8, u8, u8, u8) {
       let (t1, r1, g1, b1) = w[1];
       if t >= t0 && t <= t1 {
         let f = (t - t0) / (t1 - t0);
-        result = (
-          r0 + (r1 - r0) * f,
-          g0 + (g1 - g0) * f,
-          b0 + (b1 - b0) * f,
-        );
+        result = (r0 + (r1 - r0) * f, g0 + (g1 - g0) * f, b0 + (b1 - b0) * f);
         break;
       }
     }

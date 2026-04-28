@@ -762,7 +762,10 @@ mod tests {
     );
     let cloned = geom.clone();
     if let (Geometry::Heatmap(a, _), Geometry::Heatmap(b, _)) = (&geom, &cloned) {
-      assert!(Arc::ptr_eq(a, b), "cloning Heatmap must share the Arc buffer");
+      assert!(
+        Arc::ptr_eq(a, b),
+        "cloning Heatmap must share the Arc buffer"
+      );
     } else {
       panic!("expected Heatmap variants");
     }
