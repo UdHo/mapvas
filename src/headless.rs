@@ -106,8 +106,8 @@ impl HeadlessRenderer {
           break;
         }
       }
-      // One final run to render any last tiles that arrived
-      let _ = harness.try_run_realtime();
+      // One final frame to paint the tiles that arrived in the last loop iteration.
+      harness.step();
     }
 
     harness.render().expect("Failed to render headless image")
