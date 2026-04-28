@@ -1,9 +1,13 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 
 use clap::Parser as CliParser;
+use egui::Color32;
 use log::error;
-use mapvas::map::map_event::{Color, MapEvent};
+use mapvas::map::coordinates::PixelCoordinate;
+use mapvas::map::geometry_collection::{Geometry, Metadata};
+use mapvas::map::map_event::{Color, Layer, MapEvent};
 use mapvas::parser::{
   AutoFileParser, FileParser, GeoJsonParser, GpxParser, GrepParser, JsonParser, KmlParser,
   TTJsonParser,
@@ -13,8 +17,82 @@ use std::io::{BufRead, BufReader, Read};
 
 mod sender;
 
+#[derive(Debug, Clone)]
+struct FileArg {
+  path: std::path::PathBuf,
+  heatmap: bool,
+}
+
+impl std::str::FromStr for FileArg {
+  type Err = std::convert::Infallible;
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if let Some(path) = s.strip_suffix(":heatmap") {
+      Ok(Self {
+        path: path.into(),
+        heatmap: true,
+      })
+    } else {
+      Ok(Self {
+        path: s.into(),
+        heatmap: false,
+      })
+    }
+  }
+}
+
+/// Walk a geometry tree and append every coordinate it contains to `out`.
+fn collect_coords(geometry: &Geometry<PixelCoordinate>, out: &mut Vec<PixelCoordinate>) {
+  match geometry {
+    Geometry::Point(c, _) => out.push(*c),
+    Geometry::LineString(coords, _) | Geometry::Polygon(coords, _) => {
+      out.extend(coords.iter().copied());
+    }
+    Geometry::Heatmap(coords, _) => out.extend(coords.iter().copied()),
+    Geometry::GeometryCollection(geometries, _) => {
+      for g in geometries {
+        collect_coords(g, out);
+      }
+    }
+  }
+}
+
+/// Replace every `MapEvent::Layer` in `events` with a single `Geometry::Heatmap`
+/// per layer id, accumulating all the coordinates from the original geometries.
+fn convert_to_heatmap(events: Vec<MapEvent>) -> Vec<MapEvent> {
+  let mut heatmap_coords: BTreeMap<String, Vec<PixelCoordinate>> = BTreeMap::new();
+  let mut other = Vec::new();
+
+  for event in events {
+    if let MapEvent::Layer(Layer { id, geometries }) = event {
+      let entry = heatmap_coords.entry(id).or_default();
+      for g in &geometries {
+        collect_coords(g, entry);
+      }
+    } else {
+      other.push(event);
+    }
+  }
+
+  let mut result = Vec::with_capacity(other.len() + heatmap_coords.len());
+  for (id, coords) in heatmap_coords {
+    if coords.is_empty() {
+      continue;
+    }
+    result.push(MapEvent::Layer(Layer {
+      id,
+      geometries: vec![Geometry::Heatmap(
+        std::sync::Arc::new(coords),
+        Metadata::default(),
+      )],
+    }));
+  }
+  result.extend(other);
+  result
+}
+
 #[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
   /// Which parser to use. Values: auto (file extension based with fallbacks), grep, ttjson, json, geojson, gpx, kml.
   #[arg(short, long, default_value = "auto")]
@@ -45,9 +123,17 @@ struct Args {
   #[arg(short, long, default_value = "")]
   screenshot: String,
 
+  /// Render all input coordinates as a heatmap instead of individual shapes.
+  #[arg(short = 'H', long)]
+  heatmap: bool,
+
   /// Render directly to an image file instead of sending to mapvas
   #[arg(short, long)]
   output: Option<std::path::PathBuf>,
+
+  /// Render without map background (black background, only geometries). Only with --output.
+  #[arg(long)]
+  no_map: bool,
 
   /// Image width in pixels (only with --output)
   #[arg(long, default_value_t = 1980)]
@@ -58,7 +144,8 @@ struct Args {
   height: u32,
 
   /// Files to parse. stdin is used if not provided.
-  files: Vec<std::path::PathBuf>,
+  /// Append `:heatmap` to a file to render it as a heatmap (e.g. `points.geojson:heatmap`).
+  files: Vec<FileArg>,
 }
 
 fn render_output(args: &Args) {
@@ -70,7 +157,13 @@ fn render_output(args: &Args) {
   let config = Config::new();
   init_style_config(config.vector_style_file.as_deref());
 
-  let renderer = HeadlessRenderer::with_config(config);
+  let renderer = if args.no_map {
+    HeadlessRenderer::with_config(config)
+      .without_map()
+      .with_background_color(Color32::BLACK)
+  } else {
+    HeadlessRenderer::with_config(config)
+  };
 
   let mut events: Vec<MapEvent> = Vec::new();
   if args.files.is_empty() {
@@ -85,12 +178,21 @@ fn render_output(args: &Args) {
       .with_invert_coordinates(args.invert_coordinates);
     events.extend(content_parser.parse());
   } else {
-    for path in &args.files {
-      let mut parser = AutoFileParser::new(path)
+    for file_arg in &args.files {
+      let mut parser = AutoFileParser::new(&file_arg.path)
         .with_label_pattern(&args.label_pattern)
         .with_invert_coordinates(args.invert_coordinates);
-      events.extend(parser.parse());
+      let file_events: Vec<MapEvent> = parser.parse().collect();
+      if args.heatmap || file_arg.heatmap {
+        events.extend(convert_to_heatmap(file_events));
+      } else {
+        events.extend(file_events);
+      }
     }
+  }
+
+  if args.files.is_empty() && args.heatmap {
+    events = convert_to_heatmap(events);
   }
 
   // Always focus on data in output mode
@@ -111,16 +213,16 @@ fn render_output(args: &Args) {
   );
 }
 
-fn readers(paths: &[std::path::PathBuf]) -> Vec<Box<dyn BufRead>> {
-  let mut res: Vec<Box<dyn BufRead>> = Vec::new();
-  if paths.is_empty() {
-    res.push(Box::new(std::io::stdin().lock()));
+fn readers(files: &[FileArg]) -> Vec<(Box<dyn BufRead>, bool)> {
+  let mut res: Vec<(Box<dyn BufRead>, bool)> = Vec::new();
+  if files.is_empty() {
+    res.push((Box::new(std::io::stdin().lock()), false));
   } else {
-    for f in paths {
-      match File::open(f) {
-        Ok(file) => res.push(Box::new(BufReader::new(file))),
+    for f in files {
+      match File::open(&f.path) {
+        Ok(file) => res.push((Box::new(BufReader::new(file)), f.heatmap)),
         Err(e) => {
-          eprintln!("Error: Failed to open file '{}': {}", f.display(), e);
+          eprintln!("Error: Failed to open file '{}': {}", f.path.display(), e);
           std::process::exit(1);
         }
       }
@@ -152,6 +254,12 @@ async fn main() {
 
   let (sender, _) = sender::MapSender::new().await;
 
+  let send_events = |events: Box<dyn Iterator<Item = MapEvent>>| {
+    for event in events {
+      sender.send_event(event);
+    }
+  };
+
   if args.parser == "auto" {
     if args.files.is_empty() {
       // Use content-based auto-parser for stdin
@@ -165,16 +273,24 @@ async fn main() {
       let content_parser = mapvas::parser::ContentAutoParser::new(content)
         .with_label_pattern(&args.label_pattern)
         .with_invert_coordinates(args.invert_coordinates);
-      for event in content_parser.parse() {
-        sender.send_event(event);
+      let events: Vec<MapEvent> = content_parser.parse();
+      if args.heatmap {
+        send_events(Box::new(convert_to_heatmap(events).into_iter()));
+      } else {
+        send_events(Box::new(events.into_iter()));
       }
     } else {
       // Use file-based auto-parser for each file
-      for file_path in &args.files {
-        let mut auto_parser = AutoFileParser::new(file_path)
+      for file_arg in &args.files {
+        let mut auto_parser = AutoFileParser::new(&file_arg.path)
           .with_label_pattern(&args.label_pattern)
           .with_invert_coordinates(args.invert_coordinates);
-        auto_parser.parse().for_each(|e| sender.send_event(e));
+        let events: Vec<MapEvent> = auto_parser.parse().collect();
+        if args.heatmap || file_arg.heatmap {
+          send_events(Box::new(convert_to_heatmap(events).into_iter()));
+        } else {
+          send_events(Box::new(events.into_iter()));
+        }
       }
     }
   } else {
@@ -199,9 +315,14 @@ async fn main() {
     };
 
     let readers = readers(&args.files);
-    for reader in readers {
+    for (reader, file_heatmap) in readers {
       let mut parser = parser();
-      parser.parse(reader).for_each(|e| sender.send_event(e));
+      let events: Vec<MapEvent> = parser.parse(reader).collect();
+      if args.heatmap || file_heatmap {
+        send_events(Box::new(convert_to_heatmap(events).into_iter()));
+      } else {
+        send_events(Box::new(events.into_iter()));
+      }
     }
   }
 

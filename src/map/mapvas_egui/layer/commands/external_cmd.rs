@@ -599,6 +599,7 @@ impl ExternalCommand {
           lines += l;
           polygons += poly;
         }
+        Geometry::Heatmap(_, _) => {}
       }
     }
 
@@ -927,6 +928,18 @@ impl ExternalCommand {
           }
         }
       }
+      Geometry::Heatmap(coords, metadata) => {
+        let heatmap_text = format!("🔥 Heatmap ({} pts)", coords.len());
+        let available_width = (ui.available_width() - 80.0).max(30.0);
+        let (truncated, _) = super::truncate_label_by_width(ui, &heatmap_text, available_width);
+        ui.label(truncated);
+        if let Some(label) = &metadata.label {
+          let available_width = (ui.available_width() - 40.0).max(100.0);
+          let (truncated_label, _) =
+            super::truncate_label_by_width(ui, &label.short(), available_width);
+          ui.small(format!("  Label: {truncated_label}"));
+        }
+      }
       Geometry::GeometryCollection(geometries, metadata) => {
         let (points, lines, polygons) = Self::count_geometry_types(geometries);
         let collection_text = format!("📦 {points}p {lines}l {polygons}poly");
@@ -952,6 +965,9 @@ impl ExternalCommand {
               }
               Geometry::GeometryCollection(nested, _) => {
                 format!("  {}: Collection ({} items)", i + 1, nested.len())
+              }
+              Geometry::Heatmap(coords, _) => {
+                format!("  {}: Heatmap ({} points)", i + 1, coords.len())
               }
             })
             .collect::<Vec<_>>()

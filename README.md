@@ -50,6 +50,21 @@ curl 'https://api.example.com/geo' | mapcat   # From API
 
 Or just drag and drop files onto the map window.
 
+## Heatmap
+
+Render point data as a colour-gradient heatmap instead of individual shapes:
+
+```bash
+# All inputs as heatmap
+mapcat -H points.geojson
+
+# Mix: one file as heatmap, another normal
+mapcat routes.geojson points.geojson:heatmap
+
+# Headless heatmap
+mapcat -o map.png -H points.geojson
+```
+
 ## Headless Rendering
 
 Render maps directly to PNG without opening a window:
@@ -58,11 +73,17 @@ Render maps directly to PNG without opening a window:
 # Render a file
 mapcat -o map.png data.geojson
 
+# Multiple files
+mapcat -o map.png routes.geojson points.geojson
+
 # Pipe data
 cat data.geojson | mapcat -o map.png
 
 # Custom image size
 mapcat -o map.png data.geojson --width 3200 --height 2400
+
+# Black background, no map tiles
+mapcat -o map.png --no-map data.geojson
 ```
 
 ## Basic Controls

@@ -1,9 +1,10 @@
 use std::iter::once;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use itertools::Either;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::coordinates::{BoundingBox, Coordinate, PixelCoordinate, WGS84Coordinate};
 
@@ -285,6 +286,30 @@ pub enum Geometry<C: Coordinate> {
   Point(C, Metadata),
   LineString(Vec<C>, Metadata),
   Polygon(Vec<C>, Metadata),
+  /// Heatmap density layer. Wrapped in `Arc` so the (potentially huge)
+  /// coordinate buffer is shared across tile-render clones rather than copied.
+  Heatmap(
+    #[serde(serialize_with = "serialize_arc_vec")]
+    #[serde(deserialize_with = "deserialize_arc_vec")]
+    Arc<Vec<C>>,
+    Metadata,
+  ),
+}
+
+fn serialize_arc_vec<S, T>(arc: &Arc<Vec<T>>, ser: S) -> Result<S::Ok, S::Error>
+where
+  S: Serializer,
+  T: Serialize,
+{
+  arc.as_ref().serialize(ser)
+}
+
+fn deserialize_arc_vec<'de, D, T>(de: D) -> Result<Arc<Vec<T>>, D::Error>
+where
+  D: Deserializer<'de>,
+  T: Deserialize<'de>,
+{
+  Ok(Arc::new(Vec::<T>::deserialize(de)?))
 }
 
 impl From<Geometry<WGS84Coordinate>> for Geometry<PixelCoordinate> {
@@ -307,6 +332,15 @@ impl From<Geometry<WGS84Coordinate>> for Geometry<PixelCoordinate> {
           .into_iter()
           .map(|c| c.as_pixel_coordinate())
           .collect(),
+        metadata,
+      ),
+      Geometry::Heatmap(coords, metadata) => Geometry::Heatmap(
+        Arc::new(
+          coords
+            .iter()
+            .map(super::coordinates::Coordinate::as_pixel_coordinate)
+            .collect::<Vec<_>>(),
+        ),
         metadata,
       ),
     }
@@ -338,6 +372,10 @@ impl<C: Coordinate> Geometry<C> {
         .iter()
         .map(|c| BoundingBox::from_iterator(once(*c)))
         .fold(BoundingBox::default(), |acc, b| acc.extend(&b)),
+      Geometry::Heatmap(coords, _) => coords
+        .iter()
+        .map(|c| BoundingBox::from_iterator(once(*c)))
+        .fold(BoundingBox::default(), |acc, b| acc.extend(&b)),
     }
   }
 
@@ -346,7 +384,8 @@ impl<C: Coordinate> Geometry<C> {
       Geometry::GeometryCollection(_, metadata)
       | Geometry::Point(_, metadata)
       | Geometry::Polygon(_, metadata)
-      | Geometry::LineString(_, metadata) => metadata.style.as_ref().is_none_or(|s| s.visible),
+      | Geometry::LineString(_, metadata)
+      | Geometry::Heatmap(_, metadata) => metadata.style.as_ref().is_none_or(|s| s.visible),
     }
   }
 
@@ -362,7 +401,8 @@ impl<C: Coordinate> Geometry<C> {
       }
       Geometry::Point(_, metadata)
       | Geometry::LineString(_, metadata)
-      | Geometry::Polygon(_, metadata) => {
+      | Geometry::Polygon(_, metadata)
+      | Geometry::Heatmap(_, metadata) => {
         self.is_visible() && metadata.is_visible_at_time(current_time)
       }
     }
@@ -392,7 +432,8 @@ impl<C: Coordinate> Geometry<C> {
       Geometry::GeometryCollection(_, metadata)
       | Geometry::Point(_, metadata)
       | Geometry::Polygon(_, metadata)
-      | Geometry::LineString(_, metadata) => {
+      | Geometry::LineString(_, metadata)
+      | Geometry::Heatmap(_, metadata) => {
         metadata.style = Some(style.clone());
       }
     }
@@ -405,7 +446,8 @@ impl<C: Coordinate> Geometry<C> {
       Geometry::GeometryCollection(_, metadata)
       | Geometry::Point(_, metadata)
       | Geometry::Polygon(_, metadata)
-      | Geometry::LineString(_, metadata) => &metadata.style,
+      | Geometry::LineString(_, metadata)
+      | Geometry::Heatmap(_, metadata) => &metadata.style,
     }
   }
 }
@@ -673,6 +715,60 @@ mod tests {
   fn geometry_is_visible_with_default_style() {
     let geom = Geometry::Point(PixelCoordinate::new(1.0, 2.0), Metadata::default());
     assert!(geom.is_visible());
+  }
+
+  #[test]
+  fn heatmap_bounding_box_unions_all_points() {
+    let geom = Geometry::Heatmap(
+      Arc::new(vec![
+        PixelCoordinate::new(1.0, 2.0),
+        PixelCoordinate::new(5.0, 8.0),
+        PixelCoordinate::new(-3.0, 4.0),
+      ]),
+      Metadata::default(),
+    );
+    let bbox = geom.bounding_box();
+    assert!(bbox.is_valid());
+    assert!((bbox.min_x() - -3.0).abs() < 1e-6);
+    assert!((bbox.max_x() - 5.0).abs() < 1e-6);
+    assert!((bbox.min_y() - 2.0).abs() < 1e-6);
+    assert!((bbox.max_y() - 8.0).abs() < 1e-6);
+  }
+
+  #[test]
+  fn heatmap_visibility_respects_style() {
+    let geom = Geometry::Heatmap(
+      Arc::new(vec![PixelCoordinate::new(0.0, 0.0)]),
+      Metadata::default().with_style(Style::default().with_visible(false)),
+    );
+    assert!(!geom.is_visible());
+  }
+
+  #[test]
+  fn heatmap_wgs84_to_pixel_conversion() {
+    let geom: Geometry<WGS84Coordinate> = Geometry::Heatmap(
+      Arc::new(vec![WGS84Coordinate { lat: 0.0, lon: 0.0 }]),
+      Metadata::default(),
+    );
+    let pixel: Geometry<PixelCoordinate> = geom.into();
+    assert!(matches!(pixel, Geometry::Heatmap(_, _)));
+  }
+
+  #[test]
+  fn heatmap_clone_shares_buffer() {
+    let geom = Geometry::Heatmap(
+      Arc::new(vec![PixelCoordinate::new(0.0, 0.0); 1024]),
+      Metadata::default(),
+    );
+    let cloned = geom.clone();
+    if let (Geometry::Heatmap(a, _), Geometry::Heatmap(b, _)) = (&geom, &cloned) {
+      assert!(
+        Arc::ptr_eq(a, b),
+        "cloning Heatmap must share the Arc buffer"
+      );
+    } else {
+      panic!("expected Heatmap variants");
+    }
   }
 
   #[test]
