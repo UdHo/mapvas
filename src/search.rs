@@ -2,9 +2,17 @@ pub mod providers;
 pub mod ui;
 
 use crate::map::coordinates::WGS84Coordinate;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum SearchError {
+  #[error("HTTP request failed: {0}")]
+  Http(#[from] reqwest::Error),
+  #[error("Search failed: {0}")]
+  Other(String),
+}
 
 /// A search result containing location information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,7 +40,7 @@ pub trait SearchProvider: Send + Sync {
   fn name(&self) -> &str;
 
   /// Search for locations based on query string
-  async fn search(&self, query: &str) -> Result<Vec<SearchResult>>;
+  async fn search(&self, query: &str) -> Result<Vec<SearchResult>, SearchError>;
 
   /// Whether this provider supports reverse geocoding
   fn supports_reverse(&self) -> bool {
@@ -40,7 +48,7 @@ pub trait SearchProvider: Send + Sync {
   }
 
   /// Reverse geocode a coordinate to get place information
-  async fn reverse(&self, coord: WGS84Coordinate) -> Result<Option<SearchResult>> {
+  async fn reverse(&self, coord: WGS84Coordinate) -> Result<Option<SearchResult>, SearchError> {
     let _ = coord;
     Ok(None)
   }
@@ -89,7 +97,7 @@ impl SearchManager {
   ///
   /// Returns an error if any of the search providers fail to initialize,
   /// such as invalid URLs or missing required configuration parameters.
-  pub fn with_config(configs: Vec<SearchProviderConfig>) -> Result<Self> {
+  pub fn with_config(configs: Vec<SearchProviderConfig>) -> Result<Self, SearchError> {
     let mut providers: Vec<Box<dyn SearchProvider>> = Vec::new();
 
     for config in configs {
@@ -131,7 +139,7 @@ impl SearchManager {
   ///
   /// Returns an error if all search providers fail or if there are network
   /// connectivity issues preventing any searches from completing.
-  pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+  pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, SearchError> {
     let query = query.trim();
     if query.is_empty() {
       return Ok(vec![]);

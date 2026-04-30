@@ -1,8 +1,8 @@
 use crate::config::{TileProvider, TileType};
 use crate::map::coordinates::{Tile, TilePriority};
-use anyhow::Result;
 use log::{debug, error, trace};
 use regex::Regex;
+use reqwest;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::Display;
@@ -12,7 +12,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use reqwest;
 // Compile regex once at first use
 static API_KEY_REGEX: LazyLock<Regex> =
   LazyLock::new(|| Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("API_KEY_REGEX pattern is valid"));
@@ -79,7 +78,7 @@ impl Ord for PrioritizedTileRequest {
 /// The interface the cached and non-cached tile loader.
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
-  async fn tile_data(&self, tile: &Tile, source: TileSource) -> Result<TileData>;
+  async fn tile_data(&self, tile: &Tile, source: TileSource) -> Result<TileData, TileLoaderError>;
 
   /// Tries to fetch the tile data with priority.
   async fn tile_data_with_priority(
@@ -87,7 +86,7 @@ pub trait TileLoader {
     tile: &Tile,
     source: TileSource,
     _priority: TilePriority,
-  ) -> Result<TileData> {
+  ) -> Result<TileData, TileLoaderError> {
     // Default implementation ignores priority
     self.tile_data(tile, source).await
   }
@@ -126,20 +125,24 @@ impl TileCache {
 }
 
 impl TileLoader for TileCache {
-  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+  async fn tile_data(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+  ) -> Result<TileData, TileLoaderError> {
     if tile_source == TileSource::Download {
-      return Err(TileLoaderError::TileNotAvailable { tile: *tile }.into());
+      return Err(TileLoaderError::TileNotAvailable { tile: *tile });
     }
     match self.path(tile) {
       Some(p) => {
         if p.exists() {
           Ok(tokio::fs::read(p).await?)
         } else {
-          Err(TileLoaderError::TileNotAvailable { tile: *tile }.into())
+          Err(TileLoaderError::TileNotAvailable { tile: *tile })
         }
       }
 
-      None => Err(TileLoaderError::TileNotAvailable { tile: *tile }.into()),
+      None => Err(TileLoaderError::TileNotAvailable { tile: *tile }),
     }
   }
 }
@@ -386,7 +389,11 @@ impl TileDownloader {
 }
 
 impl TileLoader for TileDownloader {
-  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+  async fn tile_data(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+  ) -> Result<TileData, TileLoaderError> {
     self
       .tile_data_with_priority(tile, tile_source, TilePriority::Current)
       .await
@@ -397,9 +404,9 @@ impl TileLoader for TileDownloader {
     tile: &Tile,
     tile_source: TileSource,
     priority: TilePriority,
-  ) -> Result<TileData> {
+  ) -> Result<TileData, TileLoaderError> {
     if tile_source == TileSource::Cache {
-      return Err(TileLoaderError::TileNotAvailable { tile: *tile }.into());
+      return Err(TileLoaderError::TileNotAvailable { tile: *tile });
     }
 
     let download_token =
@@ -407,7 +414,7 @@ impl TileLoader for TileDownloader {
         .or_else(|| DownloadManager::try_next_from_queue(&self.download_manager));
 
     if download_token.is_none() {
-      return Err(TileLoaderError::TileDownloadInProgress { tile: *tile }.into());
+      return Err(TileLoaderError::TileDownloadInProgress { tile: *tile });
     }
 
     let url = self.get_path_for_tile(tile);
@@ -442,7 +449,7 @@ impl TileLoader for TileDownloader {
     };
     debug!("Downloaded {tile:?}.");
 
-    Ok(result?)
+    result
   }
 }
 
@@ -520,7 +527,11 @@ impl CachedTileLoader {
     }
   }
 
-  pub async fn get_from_cache(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+  pub async fn get_from_cache(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+  ) -> Result<TileData, TileLoaderError> {
     self.cache.tile_data(tile, tile_source).await
   }
 
@@ -539,7 +550,7 @@ impl CachedTileLoader {
     tile: &Tile,
     tile_source: TileSource,
     priority: TilePriority,
-  ) -> Result<TileData> {
+  ) -> Result<TileData, TileLoaderError> {
     match self
       .loader
       .tile_data_with_priority(tile, tile_source, priority)
@@ -548,7 +559,7 @@ impl CachedTileLoader {
       Ok(data) => {
         self.cache.cache_tile(tile, &data);
         match data.len() {
-          0..=100 => Err(TileLoaderError::TileNotAvailable { tile: *tile }.into()),
+          0..=100 => Err(TileLoaderError::TileNotAvailable { tile: *tile }),
           _ => Ok(data),
         }
       }
@@ -589,7 +600,11 @@ impl Default for CachedTileLoader {
 }
 
 impl TileLoader for CachedTileLoader {
-  async fn tile_data(&self, tile: &Tile, tile_source: TileSource) -> Result<TileData> {
+  async fn tile_data(
+    &self,
+    tile: &Tile,
+    tile_source: TileSource,
+  ) -> Result<TileData, TileLoaderError> {
     self
       .tile_data_with_priority(tile, tile_source, TilePriority::Current)
       .await
@@ -600,7 +615,7 @@ impl TileLoader for CachedTileLoader {
     tile: &Tile,
     tile_source: TileSource,
     priority: TilePriority,
-  ) -> Result<TileData> {
+  ) -> Result<TileData, TileLoaderError> {
     trace!("Loading tile from file {:?}", &tile);
     if let Ok(data) = self.get_from_cache(tile, tile_source).await {
       debug!("cache_hit: {tile:?}");

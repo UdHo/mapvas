@@ -2967,7 +2967,6 @@ dependencies = [
 name = "mapvas"
 version = "0.2.11"
 dependencies = [
- "anyhow",
  "arboard",
  "assert_approx_eq",
  "async-trait",

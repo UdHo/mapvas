@@ -1,6 +1,5 @@
-use super::{SearchProvider, SearchResult};
+use super::{SearchError, SearchProvider, SearchResult};
 use crate::map::coordinates::WGS84Coordinate;
-use anyhow::{Result, anyhow};
 use regex::Regex;
 use reqwest;
 use serde_json::Value;
@@ -130,7 +129,7 @@ impl SearchProvider for NominatimProvider {
     "OpenStreetMap Nominatim"
   }
 
-  async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+  async fn search(&self, query: &str) -> Result<Vec<SearchResult>, SearchError> {
     let url = format!(
       "{}/search?format=json&limit=5&addressdetails=1&q={}",
       self.base_url,
@@ -140,13 +139,16 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header("User-Agent", "MapVas/0.2.8 (https://github.com/UdHo/mapvas)")
+      .header(
+        "User-Agent",
+        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
+      )
       .send()
       .await
-      .map_err(|e| anyhow!("Nominatim API request failed: {e}"))?
+      .map_err(SearchError::Http)?
       .json::<Value>()
       .await
-      .map_err(|e| anyhow!("Nominatim API response parse failed: {e}"))?;
+      .map_err(SearchError::Http)?;
 
     let mut results = Vec::new();
 
@@ -187,7 +189,7 @@ impl SearchProvider for NominatimProvider {
     true
   }
 
-  async fn reverse(&self, coord: WGS84Coordinate) -> Result<Option<SearchResult>> {
+  async fn reverse(&self, coord: WGS84Coordinate) -> Result<Option<SearchResult>, SearchError> {
     let url = format!(
       "{}/reverse?format=json&lat={}&lon={}&addressdetails=1",
       self.base_url, coord.lat, coord.lon
@@ -196,13 +198,16 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header("User-Agent", "MapVas/0.2.8 (https://github.com/UdHo/mapvas)")
+      .header(
+        "User-Agent",
+        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
+      )
       .send()
       .await
-      .map_err(|e| anyhow!("Nominatim reverse API request failed: {e}"))?
+      .map_err(SearchError::Http)?
       .json::<Value>()
       .await
-      .map_err(|e| anyhow!("Nominatim reverse API response parse failed: {e}"))?;
+      .map_err(SearchError::Http)?;
 
     if let Some(display_name) = response["display_name"].as_str() {
       let address = response["address"].as_object();
@@ -249,7 +254,7 @@ impl SearchProvider for CustomProvider {
     &self.name
   }
 
-  async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+  async fn search(&self, query: &str) -> Result<Vec<SearchResult>, SearchError> {
     let url = self
       .url_template
       .replace("{query}", &urlencoding::encode(query));
@@ -262,10 +267,10 @@ impl SearchProvider for CustomProvider {
     let response = request
       .send()
       .await
-      .map_err(|e| anyhow!("Custom API request failed: {e}"))?
+      .map_err(SearchError::Http)?
       .json::<Value>()
       .await
-      .map_err(|e| anyhow!("Custom API response parse failed: {e}"))?;
+      .map_err(SearchError::Http)?;
 
     // This is a basic implementation - could be extended to support
     // different response formats based on configuration
