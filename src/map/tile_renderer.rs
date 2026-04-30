@@ -4,7 +4,7 @@ mod vector;
 pub use raster::RasterTileRenderer;
 pub use vector::VectorTileRenderer;
 pub use vector::styling::{
-  Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
+  MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
   style_config, style_version,
 };
 

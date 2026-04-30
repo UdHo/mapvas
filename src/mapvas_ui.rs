@@ -8,8 +8,8 @@ use crate::{
   map::{
     mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
     tile_renderer::{
-      Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
-      style_config,
+      MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
+      set_style_config, style_config,
     },
   },
   profile_scope,
@@ -1401,6 +1401,27 @@ impl SettingsDialog {
     ui.separator();
 
     ui.label("Configure colors and styling for vector tile rendering. Changes apply immediately.");
+    ui.add_space(8.0);
+
+    // Preset picker — applies a curated style on selection
+    ui.group(|ui| {
+      ui.horizontal(|ui| {
+        ui.label("Preset:");
+        for preset in MapStyle::all() {
+          if ui
+            .button(preset.name())
+            .on_hover_text(preset.description())
+            .clicked()
+          {
+            self.style_config = preset.to_style_config();
+            set_style_config(self.style_config.clone());
+            self.style_changed = true;
+          }
+        }
+      });
+      ui.small("Pick a curated look. Tweak any value below to customize.");
+    });
+
     ui.add_space(8.0);
 
     // Action buttons

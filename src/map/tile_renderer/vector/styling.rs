@@ -90,6 +90,70 @@ pub fn save_style_config() -> Result<(), String> {
   Ok(())
 }
 
+/// Predefined map styles. Selecting one overwrites the live `StyleConfig` with
+/// preset colors and widths designed for that look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MapStyle {
+  /// Vibrant OSM-like default with full road colors.
+  Default,
+  /// Muted greyscale palette — basemap fades into the background so user
+  /// overlays (markers, lines, polygons) pop.
+  Greyscale,
+  /// Dark theme with low-luminance background and bright accents.
+  Dark,
+  /// Dark, fully desaturated palette — neutral greys on a dark base so
+  /// overlays pop against a muted night background.
+  DarkGreyscale,
+}
+
+impl MapStyle {
+  /// All presets, in display order.
+  #[must_use]
+  pub const fn all() -> &'static [Self] {
+    &[
+      Self::Default,
+      Self::Greyscale,
+      Self::Dark,
+      Self::DarkGreyscale,
+    ]
+  }
+
+  /// Short human-readable name for UI.
+  #[must_use]
+  pub const fn name(self) -> &'static str {
+    match self {
+      Self::Default => "Default",
+      Self::Greyscale => "Greyscale",
+      Self::Dark => "Dark",
+      Self::DarkGreyscale => "Dark Grey",
+    }
+  }
+
+  /// One-line description shown as tooltip / hint.
+  #[must_use]
+  pub const fn description(self) -> &'static str {
+    match self {
+      Self::Default => "Vibrant OSM-style colors",
+      Self::Greyscale => "Muted greys — overlays pop",
+      Self::Dark => "Dark background with bright roads",
+      Self::DarkGreyscale => "Desaturated dark — overlays pop on night base",
+    }
+  }
+
+  /// Build a `StyleConfig` for this preset. Non-color settings (font sizes,
+  /// visibility, zoom scale) are taken from the defaults so all presets share
+  /// the same layout/legibility tuning.
+  #[must_use]
+  pub fn to_style_config(self) -> StyleConfig {
+    match self {
+      Self::Default => StyleConfig::default(),
+      Self::Greyscale => greyscale_style(),
+      Self::Dark => dark_style(),
+      Self::DarkGreyscale => dark_greyscale_style(),
+    }
+  }
+}
+
 /// RGB color representation, serialized as hex string (e.g., "#FF8800")
 #[derive(Debug, Clone, Copy)]
 pub struct Rgb {
@@ -745,6 +809,239 @@ impl Default for RoadStyleConfig {
       default_inner_width: 1.5,
       water_width: 1.5,
     }
+  }
+}
+
+// =============================================================================
+// PRESET BUILDERS
+// =============================================================================
+
+/// Greyscale preset. The basemap is intentionally desaturated so user-drawn
+/// overlays (markers, lines, polygons) stand out against it. Water keeps a
+/// faint cool tint and parks a faint warm-green tint to remain readable
+/// without competing with overlay colors.
+fn greyscale_style() -> StyleConfig {
+  StyleConfig {
+    background: Rgb::new(232, 232, 232),
+    water: Rgb::new(201, 208, 212),
+    land: Rgb::new(220, 220, 220),
+    park: Rgb::new(208, 218, 201),
+    building: Rgb::new(194, 194, 194),
+
+    marker_dot: Rgb::new(64, 64, 64),
+    place_label: Rgb::new(42, 42, 42),
+    road_label: Rgb::new(85, 85, 85),
+    water_label: Rgb::new(95, 110, 125),
+
+    roads: RoadStyleConfig {
+      motorway: RoadStyle {
+        casing: Rgb::new(140, 140, 140),
+        inner: Rgb::new(245, 245, 245),
+        casing_width: 10.0,
+        inner_width: 7.0,
+      },
+      trunk: RoadStyle {
+        casing: Rgb::new(150, 150, 150),
+        inner: Rgb::new(245, 245, 245),
+        casing_width: 8.0,
+        inner_width: 5.5,
+      },
+      primary: RoadStyle {
+        casing: Rgb::new(160, 160, 160),
+        inner: Rgb::new(248, 248, 248),
+        casing_width: 6.5,
+        inner_width: 4.5,
+      },
+      secondary: RoadStyle {
+        casing: Rgb::new(170, 170, 170),
+        inner: Rgb::new(252, 252, 252),
+        casing_width: 5.0,
+        inner_width: 3.5,
+      },
+      tertiary: RoadStyle {
+        casing: Rgb::new(180, 180, 180),
+        inner: Rgb::new(255, 255, 255),
+        casing_width: 3.5,
+        inner_width: 2.5,
+      },
+      residential: RoadStyle {
+        casing: Rgb::new(190, 190, 190),
+        inner: Rgb::new(255, 255, 255),
+        casing_width: 2.5,
+        inner_width: 1.5,
+      },
+      service: RoadStyle {
+        casing: Rgb::new(205, 205, 205),
+        inner: Rgb::new(238, 238, 238),
+        casing_width: 1.5,
+        inner_width: 1.0,
+      },
+      path: RoadStyle {
+        casing: Rgb::new(180, 175, 170),
+        inner: Rgb::new(222, 218, 212),
+        casing_width: 1.2,
+        inner_width: 0.8,
+      },
+      default_casing: Rgb::new(190, 190, 190),
+      default_inner: Rgb::new(255, 255, 255),
+      default_casing_width: 2.5,
+      default_inner_width: 1.5,
+      water_width: 1.5,
+    },
+
+    ..StyleConfig::default()
+  }
+}
+
+/// Dark preset. Low-luminance background with brighter road inners so they
+/// read against the dark land. Suitable for night viewing or pairing with
+/// dark UI themes.
+fn dark_style() -> StyleConfig {
+  StyleConfig {
+    background: Rgb::new(30, 32, 36),
+    water: Rgb::new(40, 60, 80),
+    land: Rgb::new(42, 45, 50),
+    park: Rgb::new(40, 60, 45),
+    building: Rgb::new(58, 60, 66),
+
+    marker_dot: Rgb::new(220, 220, 220),
+    place_label: Rgb::new(235, 235, 235),
+    road_label: Rgb::new(190, 190, 190),
+    water_label: Rgb::new(140, 170, 200),
+
+    roads: RoadStyleConfig {
+      motorway: RoadStyle {
+        casing: Rgb::new(120, 60, 50),
+        inner: Rgb::new(210, 130, 110),
+        casing_width: 10.0,
+        inner_width: 7.0,
+      },
+      trunk: RoadStyle {
+        casing: Rgb::new(110, 80, 50),
+        inner: Rgb::new(200, 150, 100),
+        casing_width: 8.0,
+        inner_width: 5.5,
+      },
+      primary: RoadStyle {
+        casing: Rgb::new(100, 90, 60),
+        inner: Rgb::new(190, 165, 110),
+        casing_width: 6.5,
+        inner_width: 4.5,
+      },
+      secondary: RoadStyle {
+        casing: Rgb::new(90, 90, 70),
+        inner: Rgb::new(170, 165, 130),
+        casing_width: 5.0,
+        inner_width: 3.5,
+      },
+      tertiary: RoadStyle {
+        casing: Rgb::new(70, 72, 78),
+        inner: Rgb::new(140, 142, 148),
+        casing_width: 3.5,
+        inner_width: 2.5,
+      },
+      residential: RoadStyle {
+        casing: Rgb::new(60, 62, 68),
+        inner: Rgb::new(110, 112, 118),
+        casing_width: 2.5,
+        inner_width: 1.5,
+      },
+      service: RoadStyle {
+        casing: Rgb::new(55, 57, 62),
+        inner: Rgb::new(85, 87, 92),
+        casing_width: 1.5,
+        inner_width: 1.0,
+      },
+      path: RoadStyle {
+        casing: Rgb::new(80, 70, 60),
+        inner: Rgb::new(130, 115, 95),
+        casing_width: 1.2,
+        inner_width: 0.8,
+      },
+      default_casing: Rgb::new(60, 62, 68),
+      default_inner: Rgb::new(110, 112, 118),
+      default_casing_width: 2.5,
+      default_inner_width: 1.5,
+      water_width: 1.5,
+    },
+
+    ..StyleConfig::default()
+  }
+}
+
+/// Dark greyscale preset. Fully desaturated dark base — like `Greyscale` but
+/// inverted in luminance. Roads, water and parks all collapse into neutral
+/// greys, so colored overlays read strongly against the night background.
+fn dark_greyscale_style() -> StyleConfig {
+  StyleConfig {
+    background: Rgb::new(28, 28, 30),
+    water: Rgb::new(48, 50, 54),
+    land: Rgb::new(40, 42, 46),
+    park: Rgb::new(46, 50, 46),
+    building: Rgb::new(58, 60, 64),
+
+    marker_dot: Rgb::new(210, 210, 210),
+    place_label: Rgb::new(225, 225, 225),
+    road_label: Rgb::new(180, 180, 180),
+    water_label: Rgb::new(150, 155, 160),
+
+    roads: RoadStyleConfig {
+      motorway: RoadStyle {
+        casing: Rgb::new(95, 95, 95),
+        inner: Rgb::new(170, 170, 170),
+        casing_width: 10.0,
+        inner_width: 7.0,
+      },
+      trunk: RoadStyle {
+        casing: Rgb::new(85, 85, 85),
+        inner: Rgb::new(155, 155, 155),
+        casing_width: 8.0,
+        inner_width: 5.5,
+      },
+      primary: RoadStyle {
+        casing: Rgb::new(78, 78, 78),
+        inner: Rgb::new(140, 140, 140),
+        casing_width: 6.5,
+        inner_width: 4.5,
+      },
+      secondary: RoadStyle {
+        casing: Rgb::new(72, 72, 72),
+        inner: Rgb::new(125, 125, 125),
+        casing_width: 5.0,
+        inner_width: 3.5,
+      },
+      tertiary: RoadStyle {
+        casing: Rgb::new(66, 66, 68),
+        inner: Rgb::new(112, 112, 115),
+        casing_width: 3.5,
+        inner_width: 2.5,
+      },
+      residential: RoadStyle {
+        casing: Rgb::new(58, 58, 60),
+        inner: Rgb::new(95, 95, 98),
+        casing_width: 2.5,
+        inner_width: 1.5,
+      },
+      service: RoadStyle {
+        casing: Rgb::new(50, 50, 52),
+        inner: Rgb::new(78, 78, 80),
+        casing_width: 1.5,
+        inner_width: 1.0,
+      },
+      path: RoadStyle {
+        casing: Rgb::new(60, 58, 55),
+        inner: Rgb::new(105, 100, 95),
+        casing_width: 1.2,
+        inner_width: 0.8,
+      },
+      default_casing: Rgb::new(58, 58, 60),
+      default_inner: Rgb::new(95, 95, 98),
+      default_casing_width: 2.5,
+      default_inner_width: 1.5,
+      water_width: 1.5,
+    },
+
+    ..StyleConfig::default()
   }
 }
 
