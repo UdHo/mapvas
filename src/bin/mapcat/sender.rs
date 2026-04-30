@@ -101,15 +101,13 @@ impl SenderInner {
   }
 
   async fn send_event(event: &MapEvent) {
-    let request = match surf::post(format!("http://localhost:{DEFAULT_PORT}/")).body_json(&event) {
-      Ok(req) => req,
-      Err(e) => {
-        error!("Failed to serialize event to JSON: {e}");
-        return;
-      }
-    };
-
-    if let Err(e) = request.send().await {
+    let client = reqwest::Client::new();
+    if let Err(e) = client
+      .post(format!("http://localhost:{DEFAULT_PORT}/"))
+      .json(event)
+      .send()
+      .await
+    {
       error!("Failed to send event to mapvas: {e}");
     }
   }
@@ -128,7 +126,9 @@ impl MapSender {
   }
 
   async fn spawn_mapvas_if_needed(&self) -> bool {
-    if surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
+    let client = reqwest::Client::new();
+    if client
+      .get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
       .send()
       .await
       .is_ok()
@@ -145,7 +145,8 @@ impl MapSender {
       return false;
     }
 
-    while let Err(e) = surf::get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
+    while let Err(e) = client
+      .get(format!("http://localhost:{DEFAULT_PORT}/healthcheck"))
       .send()
       .await
     {

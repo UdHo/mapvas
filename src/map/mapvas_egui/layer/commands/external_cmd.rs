@@ -6,6 +6,7 @@ use std::{
 
 use itertools::Either;
 use log::error;
+use reqwest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -291,38 +292,48 @@ impl CurlCfg {
     let mut parser = self.parser.clone();
 
     tokio::spawn(async move {
-      let response = surf::get(&url)
-        .recv_string()
+      let response_body = reqwest::get(&url)
         .await
-        .inspect_err(|e| error!("Could not fetch data: {e}"));
+        .inspect_err(|e| error!("Could not fetch data: {e}"))
+        .ok()
+        .map(reqwest::Response::text);
 
-      match response {
-        Ok(response_body) => {
-          let raw_response = RawResponse {
-            stdout: response_body.clone(),
-            stderr: String::new(),
-            exit_code: Some(200), // HTTP 200 OK
-            command_type: CommandType::Curl,
-          };
+      if let Some(body_future) = response_body {
+        match body_future.await {
+          Ok(response_body) => {
+            let raw_response = RawResponse {
+              stdout: response_body.clone(),
+              stderr: String::new(),
+              exit_code: Some(200),
+              command_type: CommandType::Curl,
+            };
+            let _ = response_sender.send(raw_response);
 
-          let _ = response_sender.send(raw_response);
-
-          let cursor = std::io::Cursor::new(response_body.into_bytes());
-          let buf_read: Box<dyn BufRead> = Box::new(cursor);
-          let parsed = parser.parse(buf_read);
-          for el in parsed {
-            let _ = sender.send(el);
+            let cursor = std::io::Cursor::new(response_body.into_bytes());
+            let buf_read: Box<dyn BufRead> = Box::new(cursor);
+            let parsed = parser.parse(buf_read);
+            for el in parsed {
+              let _ = sender.send(el);
+            }
+          }
+          Err(e) => {
+            let raw_response = RawResponse {
+              stdout: String::new(),
+              stderr: format!("Failed to read response from '{url}': {e}"),
+              exit_code: None,
+              command_type: CommandType::Curl,
+            };
+            let _ = response_sender.send(raw_response);
           }
         }
-        Err(e) => {
-          let raw_response = RawResponse {
-            stdout: String::new(),
-            stderr: format!("Failed to fetch URL '{url}': {e}"),
-            exit_code: None,
-            command_type: CommandType::Curl,
-          };
-          let _ = response_sender.send(raw_response);
-        }
+      } else {
+        let raw_response = RawResponse {
+          stdout: String::new(),
+          stderr: format!("Failed to fetch URL '{url}'"),
+          exit_code: None,
+          command_type: CommandType::Curl,
+        };
+        let _ = response_sender.send(raw_response);
       }
     });
   }

@@ -2,6 +2,7 @@ use super::{SearchProvider, SearchResult};
 use crate::map::coordinates::WGS84Coordinate;
 use anyhow::{Result, anyhow};
 use regex::Regex;
+use reqwest;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -110,7 +111,7 @@ impl CoordinateParser {
 /// OpenStreetMap Nominatim provider (free)
 pub struct NominatimProvider {
   base_url: String,
-  client: surf::Client,
+  client: reqwest::Client,
 }
 
 impl NominatimProvider {
@@ -118,7 +119,7 @@ impl NominatimProvider {
   pub fn new(base_url: Option<String>) -> Self {
     Self {
       base_url: base_url.unwrap_or_else(|| "https://nominatim.openstreetmap.org".to_string()),
-      client: surf::Client::new(),
+      client: reqwest::Client::new(),
     }
   }
 }
@@ -139,13 +140,13 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header(
-        "User-Agent",
-        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
-      )
-      .recv_json::<Value>()
+      .header("User-Agent", "MapVas/0.2.8 (https://github.com/UdHo/mapvas)")
+      .send()
       .await
-      .map_err(|e| anyhow!("Nominatim API request failed: {e}"))?;
+      .map_err(|e| anyhow!("Nominatim API request failed: {e}"))?
+      .json::<Value>()
+      .await
+      .map_err(|e| anyhow!("Nominatim API response parse failed: {e}"))?;
 
     let mut results = Vec::new();
 
@@ -195,13 +196,13 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header(
-        "User-Agent",
-        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
-      )
-      .recv_json::<Value>()
+      .header("User-Agent", "MapVas/0.2.8 (https://github.com/UdHo/mapvas)")
+      .send()
       .await
-      .map_err(|e| anyhow!("Nominatim reverse API request failed: {e}"))?;
+      .map_err(|e| anyhow!("Nominatim reverse API request failed: {e}"))?
+      .json::<Value>()
+      .await
+      .map_err(|e| anyhow!("Nominatim reverse API response parse failed: {e}"))?;
 
     if let Some(display_name) = response["display_name"].as_str() {
       let address = response["address"].as_object();
@@ -227,7 +228,7 @@ pub struct CustomProvider {
   name: String,
   url_template: String,
   headers: HashMap<String, String>,
-  client: surf::Client,
+  client: reqwest::Client,
 }
 
 impl CustomProvider {
@@ -237,7 +238,7 @@ impl CustomProvider {
       name,
       url_template,
       headers: headers.unwrap_or_default(),
-      client: surf::Client::new(),
+      client: reqwest::Client::new(),
     }
   }
 }
@@ -254,16 +255,17 @@ impl SearchProvider for CustomProvider {
       .replace("{query}", &urlencoding::encode(query));
 
     let mut request = self.client.get(&url);
-
-    // Add custom headers
     for (key, value) in &self.headers {
       request = request.header(key.as_str(), value.as_str());
     }
 
     let response = request
-      .recv_json::<Value>()
+      .send()
       .await
-      .map_err(|e| anyhow!("Custom API request failed: {e}"))?;
+      .map_err(|e| anyhow!("Custom API request failed: {e}"))?
+      .json::<Value>()
+      .await
+      .map_err(|e| anyhow!("Custom API response parse failed: {e}"))?;
 
     // This is a basic implementation - could be extended to support
     // different response formats based on configuration

@@ -12,12 +12,10 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use surf::http::Method;
-
+use reqwest;
 // Compile regex once at first use
 static API_KEY_REGEX: LazyLock<Regex> =
   LazyLock::new(|| Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("API_KEY_REGEX pattern is valid"));
-use surf::{Config, Request, Url};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -26,8 +24,6 @@ pub enum TileLoaderError {
   TileNotAvailable { tile: Tile },
   #[error("Download already in progress.")]
   TileDownloadInProgress { tile: Tile },
-  #[error("URL parsing failed: {0}")]
-  UrlParse(#[from] surf::http::url::ParseError),
   #[error("Regex compilation failed: {0}")]
   Regex(#[from] regex::Error),
   #[error("I/O error: {0}")]
@@ -344,7 +340,7 @@ struct TileDownloader {
   name: String,
   url_template: String,
   download_manager: Arc<DownloadManager<Tile>>,
-  client: surf::Client,
+  client: reqwest::Client,
 }
 
 impl TileDownloader {
@@ -352,17 +348,19 @@ impl TileDownloader {
     &self.name
   }
 
+  fn build_client() -> reqwest::Client {
+    reqwest::Client::builder()
+      .timeout(Duration::from_secs(5))
+      .build()
+      .expect("client")
+  }
+
   pub fn from_url(url: &str, name: String) -> Self {
-    let url_template = url.to_string();
-    let client: surf::Client = Config::new()
-      .set_timeout(Some(Duration::from_secs(5)))
-      .try_into()
-      .expect("client");
     Self {
       name,
-      url_template,
+      url_template: url.to_string(),
       download_manager: Arc::default(),
-      client,
+      client: Self::build_client(),
     }
   }
 
@@ -370,15 +368,11 @@ impl TileDownloader {
     let url_template = std::env::var("MAPVAS_TILE_URL").unwrap_or(String::from(
       "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
     ));
-    let client: surf::Client = Config::new()
-      .set_timeout(Some(Duration::from_secs(5)))
-      .try_into()
-      .expect("client");
     Self {
       name: "OSM".to_string(),
       url_template,
       download_manager: Arc::default(),
-      client,
+      client: Self::build_client(),
     }
   }
 
@@ -417,43 +411,33 @@ impl TileLoader for TileDownloader {
     }
 
     let url = self.get_path_for_tile(tile);
-    let request = Request::new(Method::Get, Url::parse(&url).unwrap());
-    let result = self
+    let response = self
       .client
-      .send(request)
+      .get(&url)
+      .send()
       .await
       .inspect_err(|e| error!("Error when downloading tile: {e}"))
-      .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile });
-    let result = if let Ok(mut result) = result {
-      if result.status() == 200 {
-        result
-          .body_bytes()
-          .await
-          .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })
-          .and_then(|data| {
-            if data.is_empty() {
-              error!("Tile {tile:?} has empty response");
-              Err(TileLoaderError::TileNotAvailable { tile: *tile })
-            } else {
-              Ok(data)
-            }
-          })
-      } else {
-        self
-          .download_manager
-          .last_failed_attempt
-          .lock()
-          .unwrap()
-          .insert(*tile, Instant::now());
-        error!(
-          "Error when downloading tile: {}, {:?}",
-          result.status(),
-          result.body_string().await
-        );
+      .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })?;
+
+    let result = if response.status() == reqwest::StatusCode::OK {
+      let data = response
+        .bytes()
+        .await
+        .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })?;
+      if data.is_empty() {
+        error!("Tile {tile:?} has empty response");
         Err(TileLoaderError::TileNotAvailable { tile: *tile })
+      } else {
+        Ok(data.to_vec())
       }
     } else {
-      debug!("{result:?}");
+      self
+        .download_manager
+        .last_failed_attempt
+        .lock()
+        .unwrap()
+        .insert(*tile, Instant::now());
+      error!("Error when downloading tile: {}", response.status());
       Err(TileLoaderError::TileNotAvailable { tile: *tile })
     };
     debug!("Downloaded {tile:?}.");

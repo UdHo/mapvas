@@ -18,7 +18,7 @@ itertools = "0.14.0"
 log = "0.4.29"
 rayon = "1.12.0"
 serde = "1.0.219"
-surf = "2.3.2"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 thiserror = "2.0.17"
 tokio = {version = "1.52.1", features = ["full", "tracing"]}
 tokio-metrics = { version = "0.5", features = ["rt"] }
@@ -31,7 +31,6 @@ regex = "1.12.2"
 rand = "0.10.1"
 clap = {version ="4.6.1", features=["derive"]}
 arboard = "3.6.1"
-surf-governor = "0.2.0"
 chrono = { version = "0.4.44", features = ["serde"] }
 egui ={version =  "0.34.1", features = ["serde","bytemuck"]}
 eframe = "0.34.1"
@@ -39,7 +38,6 @@ egui_extras = { version = "0.34.1", features = ["all_loaders"] }
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }
 puffin_http = { version = "0.17", optional = true }
-async-std = "1.13.2"
 flexpolyline = "1.0.0"
 polyline = "0.11.0"
 dirs = "6.0.0"
