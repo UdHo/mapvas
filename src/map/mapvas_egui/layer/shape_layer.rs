@@ -106,6 +106,23 @@ pub struct ShapeLayer {
   /// Shared shape info cache that the HTTP endpoint reads directly.
   shape_info:
     Arc<std::sync::RwLock<std::collections::HashMap<String, Vec<crate::remote::ShapeInfo>>>>,
+  /// Cached pixmap+texture for the polygon fills of the currently highlighted
+  /// geometry. Avoids re-rasterizing every frame on a static hover.
+  highlight_texture: Option<HighlightTextureCache>,
+}
+
+#[derive(PartialEq, Eq)]
+struct HighlightCacheKey {
+  geometry_path: (String, usize, Vec<usize>),
+  viewport: [u32; 4],
+  transform: [u32; 3],
+  version: u64,
+}
+
+struct HighlightTextureCache {
+  key: HighlightCacheKey,
+  texture: egui::TextureHandle,
+  screen_rect: egui::Rect,
 }
 
 fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> (String, bool) {
@@ -303,6 +320,7 @@ impl ShapeLayer {
       shape_vis_receiver,
       shape_vis_sender,
       shape_info,
+      highlight_texture: None,
     }
   }
 
@@ -1771,6 +1789,88 @@ impl ShapeLayer {
     draw_highlighted_geometry(geometry, painter, transform, false);
   }
 
+  /// Render the hover-highlight for the currently selected geometry.
+  /// Polygon fills are rasterized via tiny-skia and cached as a texture;
+  /// strokes/points/lines are added as egui shapes.
+  fn draw_highlight_overlay(&mut self, ui: &mut egui::Ui, transform: &Transform, rect: Rect) {
+    let Some((layer_id, shape_idx, nested_path)) =
+      self.geometry_highlighter.get_highlighted_geometry()
+    else {
+      self.highlight_texture = None;
+      return;
+    };
+    if !nested_path.is_empty() {
+      // The render loop only handles top-level highlights; preserve that.
+      self.highlight_texture = None;
+      return;
+    }
+    if !*self.layer_visibility.get(&layer_id).unwrap_or(&true) {
+      self.highlight_texture = None;
+      return;
+    }
+    if !*self
+      .geometry_visibility
+      .get(&(layer_id.clone(), shape_idx))
+      .unwrap_or(&true)
+    {
+      self.highlight_texture = None;
+      return;
+    }
+    let Some(shape) = self
+      .shape_map
+      .get(&layer_id)
+      .and_then(|s| s.get(shape_idx))
+      .cloned()
+    else {
+      self.highlight_texture = None;
+      return;
+    };
+
+    let key = HighlightCacheKey {
+      geometry_path: (layer_id, shape_idx, nested_path),
+      viewport: [
+        rect.min.x.to_bits(),
+        rect.min.y.to_bits(),
+        rect.max.x.to_bits(),
+        rect.max.y.to_bits(),
+      ],
+      transform: [
+        transform.zoom.to_bits(),
+        transform.trans.x.to_bits(),
+        transform.trans.y.to_bits(),
+      ],
+      version: self.version,
+    };
+
+    let needs_rebuild = self.highlight_texture.as_ref().is_none_or(|c| c.key != key);
+    if needs_rebuild {
+      use super::geometry_highlighting::rasterize_highlighted_polygons;
+      if let Some((image, screen_rect)) = rasterize_highlighted_polygons(&shape, transform, rect) {
+        let handle =
+          ui.ctx()
+            .load_texture("highlight_polygon", image, egui::TextureOptions::LINEAR);
+        self.highlight_texture = Some(HighlightTextureCache {
+          key,
+          texture: handle,
+          screen_rect,
+        });
+      } else {
+        self.highlight_texture = None;
+      }
+    }
+
+    let painter = ui.painter_at(rect);
+    if let Some(cache) = &self.highlight_texture {
+      painter.image(
+        cache.texture.id(),
+        cache.screen_rect,
+        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
+      );
+    }
+    Self::draw_highlighted_geometry(&shape, &painter, transform, false);
+  }
+
   fn show_delete_collection_button(
     &mut self,
     ui: &mut egui::Ui,
@@ -2322,26 +2422,10 @@ impl Layer for ShapeLayer {
       }
     }
 
-    // Draw highlighted geometries on top using egui shapes (per-frame, follows mouse).
-    for (layer_id, shapes) in &self.shape_map {
-      if !*self.layer_visibility.get(layer_id).unwrap_or(&true) {
-        continue;
-      }
-      for (shape_idx, shape) in shapes.iter().enumerate() {
-        let geometry_key = (layer_id.clone(), shape_idx);
-        if !*self.geometry_visibility.get(&geometry_key).unwrap_or(&true) {
-          continue;
-        }
-        let highlight_key = (layer_id.clone(), shape_idx, Vec::new());
-        if self.geometry_highlighter.is_highlighted(
-          &highlight_key.0,
-          highlight_key.1,
-          &highlight_key.2,
-        ) {
-          Self::draw_highlighted_geometry(shape, ui.painter(), transform, false);
-        }
-      }
-    }
+    // Draw highlight overlay for the currently-hovered geometry.
+    // Polygon fills go through tiny-skia (cached as a texture) to avoid egui's
+    // fan-triangulation; points, lines, and polygon strokes go through egui.
+    self.draw_highlight_overlay(ui, transform, rect);
 
     // Handle pending detail popup from double-click as lightweight positioned window
     // This needs to be in draw() so it shows regardless of sidebar state
@@ -3238,6 +3322,7 @@ mod tests {
           s
         },
         shape_info: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        highlight_texture: None,
       }
     }
   }
