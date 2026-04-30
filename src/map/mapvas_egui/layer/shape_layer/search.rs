@@ -327,3 +327,155 @@ impl ShapeLayer {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::super::ShapeLayer;
+  use crate::map::{
+    coordinates::PixelCoordinate,
+    geometry_collection::{Geometry, Label, Metadata},
+  };
+
+  fn point_with_label(name: &str) -> Geometry<PixelCoordinate> {
+    Geometry::Point(
+      PixelCoordinate { x: 0.0, y: 0.0 },
+      Metadata::default().with_label(name),
+    )
+  }
+
+  fn layer_with(shapes: Vec<Geometry<PixelCoordinate>>) -> ShapeLayer {
+    let mut layer = ShapeLayer::new_with_test_receiver();
+    layer.shape_map.insert("layer".to_string(), shapes);
+    layer
+  }
+
+  // --- search_geometries ---
+
+  #[test]
+  fn search_empty_layer_returns_no_results() {
+    let mut layer = layer_with(vec![]);
+    layer.search_geometries("foo");
+    assert!(layer.get_search_results().is_empty());
+  }
+
+  #[test]
+  fn search_literal_match() {
+    let mut layer = layer_with(vec![point_with_label("Berlin"), point_with_label("Paris")]);
+    layer.search_geometries("Berlin");
+    assert_eq!(layer.get_search_results().len(), 1);
+    assert_eq!(layer.get_search_results()[0].0, "layer");
+    assert_eq!(layer.get_search_results()[0].1, 0);
+  }
+
+  #[test]
+  fn search_literal_case_insensitive() {
+    // Invalid regex triggers the literal (case-insensitive) fallback path
+    let mut layer = layer_with(vec![point_with_label("BERLIN")]);
+    layer.search_geometries("[invalid regex");
+    assert!(layer.get_search_results().is_empty());
+
+    // Case-insensitive literal match via regex flag
+    layer.search_geometries("(?i)berlin");
+    assert_eq!(layer.get_search_results().len(), 1);
+  }
+
+  #[test]
+  fn search_regex_match() {
+    let mut layer = layer_with(vec![
+      point_with_label("stop_123"),
+      point_with_label("stop_456"),
+      point_with_label("depot"),
+    ]);
+    layer.search_geometries("stop_[0-9]+");
+    assert_eq!(layer.get_search_results().len(), 2);
+  }
+
+  #[test]
+  fn search_no_match_clears_results() {
+    let mut layer = layer_with(vec![point_with_label("Berlin")]);
+    layer.search_geometries("Berlin");
+    assert_eq!(layer.get_search_results().len(), 1);
+    layer.search_geometries("Tokyo");
+    assert!(layer.get_search_results().is_empty());
+  }
+
+  #[test]
+  fn search_in_nested_collection() {
+    let inner = point_with_label("Hamburg");
+    let collection = Geometry::GeometryCollection(vec![inner], Metadata::default());
+    let mut layer = layer_with(vec![collection]);
+    layer.search_geometries("Hamburg");
+    assert_eq!(layer.get_search_results().len(), 1);
+    assert_eq!(layer.get_search_results()[0].2, vec![0]); // nested_path points to child
+  }
+
+  // --- next/previous_search_result ---
+
+  #[test]
+  fn next_result_cycles_through_results() {
+    let mut layer = layer_with(vec![
+      point_with_label("stop_1"),
+      point_with_label("stop_2"),
+      point_with_label("stop_3"),
+    ]);
+    layer.search_geometries("stop_");
+    assert_eq!(layer.get_search_results().len(), 3);
+
+    assert!(layer.next_search_result());
+    assert!(layer.next_search_result());
+    assert!(layer.next_search_result()); // wraps around
+  }
+
+  #[test]
+  fn previous_result_on_empty_returns_false() {
+    let mut layer = layer_with(vec![]);
+    layer.search_geometries("anything");
+    assert!(!layer.previous_search_result());
+  }
+
+  // --- filter_geometries / geometry_matches_filter ---
+
+  #[test]
+  fn filter_matches_hides_non_matching() {
+    let berlin = point_with_label("Berlin");
+    let paris = point_with_label("Paris");
+
+    let layer = layer_with(vec![]);
+    assert!(layer.geometry_matches_filter(&berlin)); // no filter → always true
+
+    let mut layer = layer_with(vec![]);
+    layer.filter_geometries("Berlin");
+    assert!(layer.geometry_matches_filter(&berlin));
+    assert!(!layer.geometry_matches_filter(&paris));
+  }
+
+  #[test]
+  fn clear_filter_shows_all() {
+    let mut layer = layer_with(vec![]);
+    let paris = point_with_label("Paris");
+    layer.filter_geometries("berlin");
+    assert!(!layer.geometry_matches_filter(&paris));
+    layer.clear_filter();
+    assert!(layer.geometry_matches_filter(&paris));
+  }
+
+  #[test]
+  fn filter_regex() {
+    let mut layer = layer_with(vec![]);
+    layer.filter_geometries("stop_[0-9]+");
+    assert!(layer.geometry_matches_filter(&point_with_label("stop_42")));
+    assert!(!layer.geometry_matches_filter(&point_with_label("depot")));
+  }
+
+  #[test]
+  fn filter_matches_description() {
+    let mut layer = layer_with(vec![]);
+    layer.filter_geometries("central hub");
+    let geo = Geometry::Point(
+      PixelCoordinate { x: 0.0, y: 0.0 },
+      Metadata::default()
+        .with_label(Label::new("stop".to_string()).with_description("central hub".to_string())),
+    );
+    assert!(layer.geometry_matches_filter(&geo));
+  }
+}

@@ -1219,7 +1219,7 @@ mod tests {
   impl ShapeLayer {
     // Helper method for testing
     #[allow(clippy::arc_with_non_send_sync)]
-    fn new_with_test_receiver() -> Self {
+    pub(crate) fn new_with_test_receiver() -> Self {
       let (send, recv) = mpsc::channel();
       Self {
         shape_map: HashMap::new(),
