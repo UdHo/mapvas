@@ -76,6 +76,7 @@ impl Ord for PrioritizedTileRequest {
 }
 
 /// The interface the cached and non-cached tile loader.
+#[allow(async_fn_in_trait)]
 pub trait TileLoader {
   /// Tries to fetch the tile data asyncroneously.
   async fn tile_data(&self, tile: &Tile, source: TileSource) -> Result<TileData, TileLoaderError>;
@@ -462,18 +463,22 @@ pub struct CachedTileLoader {
 }
 
 impl CachedTileLoader {
+  #[must_use]
   pub fn name(&self) -> &str {
     self.loader.name()
   }
 
+  #[must_use]
   pub fn tile_type(&self) -> TileType {
     self.format
   }
 
+  #[must_use]
   pub fn max_zoom(&self) -> u8 {
     self.max_zoom
   }
 
+  #[must_use]
   pub fn tiles_downloading(&self) -> usize {
     self
       .loader
@@ -484,6 +489,7 @@ impl CachedTileLoader {
       .len()
   }
 
+  #[must_use]
   pub fn tiles_queued(&self) -> usize {
     self
       .loader
@@ -527,6 +533,12 @@ impl CachedTileLoader {
     }
   }
 
+  /// Reads tile data from the local cache without triggering a network download.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`TileLoaderError::TileNotAvailable`] if the tile is not present in
+  /// the cache, or an I/O error if reading the cached file fails.
   pub async fn get_from_cache(
     &self,
     tile: &Tile,
