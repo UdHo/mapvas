@@ -1,4 +1,7 @@
-use crate::map::coordinates::{BoundingBox, Transform};
+use crate::map::{
+  coordinates::{BoundingBox, PixelCoordinate, Transform},
+  geometry_collection::Geometry,
+};
 use egui::{Pos2, Rect, Ui};
 
 /// Allows to display results of commands that return coordinates.
@@ -31,6 +34,12 @@ pub struct SubLayerInfo {
   pub id: String,
   pub visible: bool,
   pub shape_count: usize,
+}
+
+#[derive(Clone, Default)]
+pub struct GeometrySnapshot {
+  pub version: u64,
+  pub geometries: Vec<Geometry<PixelCoordinate>>,
 }
 
 /// A layer represents everything that can be summarized as a logical unit on the map.
@@ -146,6 +155,16 @@ pub trait Layer {
   /// Return the bounding box of a single shape within a sub-layer.
   fn shape_bounding_box(&self, _layer_id: &str, _shape_idx: usize) -> Option<BoundingBox> {
     None
+  }
+
+  /// Return visible map geometry for native renderer migration paths.
+  fn geometry_snapshot(&self) -> GeometrySnapshot {
+    GeometrySnapshot::default()
+  }
+
+  /// Return the version used to decide whether a geometry snapshot needs refreshing.
+  fn geometry_snapshot_version(&self) -> u64 {
+    0
   }
 }
 

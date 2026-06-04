@@ -1,6 +1,6 @@
 use super::{
-  Layer, LayerProperties, Searchable, SubLayerInfo, geometry_highlighting::GeometryHighlighter,
-  geometry_rasterizer,
+  GeometrySnapshot, Layer, LayerProperties, Searchable, SubLayerInfo,
+  geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
 };
 use rstar::{AABB, RTree, RTreeObject};
 
@@ -11,7 +11,7 @@ use crate::{
       BoundingBox, PixelCoordinate, PixelPosition, TILE_SIZE, Tile, TileCoordinate, Transform,
       tiles_in_box,
     },
-    geometry_collection::Geometry,
+    geometry_collection::{Geometry, Style},
     map_event::{Layer as EventLayer, MapEvent},
   },
   profile_scope,
@@ -842,6 +842,67 @@ impl Layer for ShapeLayer {
       .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
 
     bb.is_valid().then_some(bb)
+  }
+
+  fn geometry_snapshot(&self) -> GeometrySnapshot {
+    let version = self.geometry_snapshot_version();
+    if !self.visible() {
+      return GeometrySnapshot {
+        version,
+        geometries: Vec::new(),
+      };
+    }
+
+    let default_style = Style::default();
+    let geometries = self
+      .shape_map
+      .iter()
+      .filter(|(layer_id, _)| *self.layer_visibility.get(*layer_id).unwrap_or(&true))
+      .flat_map(|(layer_id, shapes)| {
+        let default_style = default_style.clone();
+        shapes
+          .iter()
+          .enumerate()
+          .filter_map(move |(shape_idx, shape)| {
+            if !*self
+              .geometry_visibility
+              .get(&(layer_id.clone(), shape_idx))
+              .unwrap_or(&true)
+            {
+              return None;
+            }
+            if let Some(current_time) = self.temporal_current_time
+              && !self.is_geometry_visible_at_time(shape, current_time)
+            {
+              return None;
+            }
+            if !self.geometry_matches_filter(shape) {
+              return None;
+            }
+            self
+              .filter_nested_visibility(layer_id, shape_idx, &[], shape)
+              .map(|geometry| {
+                geometry
+                  .flat_iterate_with_merged_style(&default_style)
+                  .filter(Geometry::is_visible)
+                  .collect::<Vec<_>>()
+              })
+          })
+      })
+      .flatten()
+      .collect();
+
+    GeometrySnapshot {
+      version,
+      geometries,
+    }
+  }
+
+  fn geometry_snapshot_version(&self) -> u64 {
+    self
+      .version
+      .wrapping_mul(2)
+      .wrapping_add(u64::from(self.visible()))
   }
 
   fn clear(&mut self) {
