@@ -29,7 +29,7 @@ mod helpers;
 pub mod timeline_widget;
 
 pub mod layer;
-pub use layer::ParameterUpdate;
+pub use layer::{GeometrySnapshot, ParameterUpdate};
 
 #[derive(Debug, Clone)]
 pub struct GeometryInfo {
@@ -39,6 +39,12 @@ pub struct GeometryInfo {
   pub wgs84: WGS84Coordinate,
   pub metadata: Metadata,
   pub details: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MapViewport {
+  pub transform: Transform,
+  pub rect: Rect,
 }
 
 pub struct Map {
@@ -52,6 +58,7 @@ pub struct Map {
   keys: Vec<String>,
   geometry_info: Option<GeometryInfo>,
   config: Config,
+  last_viewport: Option<MapViewport>,
 }
 
 impl Map {
@@ -140,6 +147,7 @@ impl Map {
         keys,
         geometry_info: None,
         config: cfg,
+        last_viewport: None,
       },
       remote,
       map_data_holder,
@@ -599,6 +607,10 @@ impl Widget for &mut Map {
     }
 
     fit_to_screen(&mut self.transform, &rect);
+    self.last_viewport = Some(MapViewport {
+      transform: self.transform,
+      rect,
+    });
     {
       profile_scope!("Map::draw_layers");
       if ui.is_rect_visible(rect)
@@ -688,6 +700,40 @@ impl Map {
       return;
     };
     state.layers = sub_layers;
+  }
+
+  #[must_use]
+  pub fn viewport(&self) -> Option<MapViewport> {
+    self.last_viewport
+  }
+
+  #[must_use]
+  pub fn geometry_snapshot(&self) -> GeometrySnapshot {
+    let Ok(layers) = self.layers.lock() else {
+      return GeometrySnapshot::default();
+    };
+
+    layers.iter().map(|layer| layer.geometry_snapshot()).fold(
+      GeometrySnapshot::default(),
+      |mut acc, mut snapshot| {
+        acc.version = acc.version.wrapping_mul(31).wrapping_add(snapshot.version);
+        acc.geometries.append(&mut snapshot.geometries);
+        acc
+      },
+    )
+  }
+
+  #[must_use]
+  pub fn geometry_snapshot_version(&self) -> u64 {
+    let Ok(layers) = self.layers.lock() else {
+      return 0;
+    };
+
+    layers.iter().fold(0, |version, layer| {
+      version
+        .wrapping_mul(31)
+        .wrapping_add(layer.geometry_snapshot_version())
+    })
   }
 
   /// Update the config for the map and all its layers

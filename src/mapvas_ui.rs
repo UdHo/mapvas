@@ -30,6 +30,7 @@ pub struct MapApp {
   command_line: CommandLine,
   runtime_monitor: Option<RuntimeMonitor>,
   headless: bool,
+  transparent_map_background: bool,
 }
 
 impl MapApp {
@@ -53,11 +54,36 @@ impl MapApp {
       command_line: CommandLine::new(),
       runtime_monitor,
       headless: false,
+      transparent_map_background: false,
     }
   }
 
   pub fn set_headless(&mut self) {
     self.headless = true;
+  }
+
+  pub fn set_transparent_map_background(&mut self) {
+    self.transparent_map_background = true;
+  }
+
+  #[must_use]
+  pub fn viewport(&self) -> Option<crate::map::mapvas_egui::MapViewport> {
+    self.map.viewport()
+  }
+
+  #[must_use]
+  pub fn geometry_snapshot(&self) -> crate::map::mapvas_egui::GeometrySnapshot {
+    self.map.geometry_snapshot()
+  }
+
+  #[must_use]
+  pub fn geometry_snapshot_version(&self) -> u64 {
+    self.map.geometry_snapshot_version()
+  }
+
+  #[must_use]
+  pub fn current_config(&self) -> Config {
+    self.settings_dialog.borrow().get_current_config()
   }
 
   #[must_use]
@@ -117,6 +143,15 @@ impl MapApp {
 impl MapApp {
   #[allow(clippy::too_many_lines)]
   pub fn show(&mut self, ui: &mut egui::Ui) {
+    self.show_with_map_layer_controls(ui, &mut |_| {});
+  }
+
+  #[allow(clippy::too_many_lines)]
+  pub fn show_with_map_layer_controls(
+    &mut self,
+    ui: &mut egui::Ui,
+    map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+  ) {
     let ctx_owned = ui.ctx().clone();
     let ctx = &ctx_owned;
     profile_scope!("MapApp::update");
@@ -276,7 +311,9 @@ impl MapApp {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
-          self.sidebar.ui(ui, self.runtime_monitor.as_ref());
+          self
+            .sidebar
+            .ui(ui, self.runtime_monitor.as_ref(), map_layer_controls);
 
           self.sidebar.width = ui.available_width().clamp(200.0, 600.0);
         });
@@ -298,8 +335,14 @@ impl MapApp {
       self.execute_command(command, ctx);
     }
 
+    let map_frame = if self.transparent_map_background {
+      egui::Frame::NONE
+    } else {
+      egui::Frame::default().fill(ctx.style().visuals.panel_fill)
+    };
+
     egui::CentralPanel::default()
-      .frame(egui::Frame::default().fill(ctx.style().visuals.panel_fill))
+      .frame(map_frame)
       .show_inside(ui, |ui| {
         profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
@@ -887,7 +930,12 @@ impl Sidebar {
     });
   }
 
-  fn ui(&mut self, ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
+  fn ui(
+    &mut self,
+    ui: &mut egui::Ui,
+    runtime_monitor: Option<&RuntimeMonitor>,
+    map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+  ) {
     ui.vertical(|ui| {
       // Sidebar header with close button
       ui.horizontal(|ui| {
@@ -955,6 +1003,7 @@ impl Sidebar {
             .default_open(true)
             .show(ui, |ui| {
               ui.vertical(|ui| {
+                map_layer_controls(ui);
                 {
                   let mut layer_reader = self.map_content.get_reader();
                   for layer in layer_reader.get_layers() {

@@ -1,5 +1,10 @@
+mod bevy_geometry;
+mod bevy_tiles;
+
 use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+use bevy_tiles::{NativeMapViewport, NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
 use mapvas::{
   config::Config,
   map::{mapvas_egui::Map, tile_renderer::init_style_config},
@@ -34,16 +39,18 @@ impl MapvasBevyState {
     let config = Config::new();
     init_style_config(config.vector_style_file.as_deref());
 
-    let (map, remote, data_holder) = Map::new(egui_ctx, config.clone());
+    let (map, remote, data_holder) = Map::new_without_tiles(egui_ctx, config.clone());
     spawn_remote_runner_on_handle(self.runtime.handle().clone(), remote.clone());
 
-    self.app = Some(MapApp::new(
+    let mut app = MapApp::new(
       map,
       remote,
       data_holder,
       config,
       self.runtime_monitor.take(),
-    ));
+    );
+    app.set_transparent_map_background();
+    self.app = Some(app);
   }
 }
 
@@ -62,20 +69,50 @@ fn build_runtime() -> tokio::runtime::Runtime {
   }
 }
 
-fn mapvas_ui_system(mut contexts: EguiContexts, mut state: NonSendMut<MapvasBevyState>) -> Result {
+fn mapvas_ui_system(
+  mut contexts: EguiContexts,
+  mut state: NonSendMut<MapvasBevyState>,
+  mut native_viewport: ResMut<NativeMapViewport>,
+  mut native_geometry: ResMut<NativeGeometryLayer>,
+  mut native_tiles: ResMut<NativeTileLayer>,
+) -> Result {
   let egui_ctx = contexts.ctx_mut()?.clone();
   let runtime_handle = state.runtime.handle().clone();
   let _runtime_guard = runtime_handle.enter();
 
   state.initialize(egui_ctx.clone());
 
+  let mut viewport = None;
+  let mut current_config = None;
+  let mut geometry_snapshot = None;
   egui::CentralPanel::default()
     .frame(egui::Frame::NONE)
     .show(&egui_ctx, |ui| {
       if let Some(app) = state.app.as_mut() {
-        app.show(ui);
+        {
+          let mut map_layer_controls = |ui: &mut egui::Ui| {
+            native_tiles.ui(ui);
+            native_geometry.ui(ui);
+          };
+          app.show_with_map_layer_controls(ui, &mut map_layer_controls);
+        }
+        viewport = app.viewport();
+        native_tiles.draw_overlay(ui, viewport);
+        current_config = Some(app.current_config());
+        let geometry_snapshot_version = app.geometry_snapshot_version();
+        if native_geometry.needs_snapshot(geometry_snapshot_version) {
+          geometry_snapshot = Some(app.geometry_snapshot());
+        }
       }
     });
+  native_viewport.set(viewport);
+  if let Some(snapshot) = geometry_snapshot {
+    native_geometry.update_snapshot(snapshot);
+  }
+  if let Some(config) = current_config {
+    native_tiles.update_config(&config);
+  }
+  native_tiles.refresh_style_version();
 
   Ok(())
 }
@@ -91,9 +128,13 @@ fn main() {
   let runtime = build_runtime();
   let runtime_handle = runtime.handle().clone();
   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
+  let native_tile_config = Config::new();
 
   App::new()
     .insert_non_send_resource(MapvasBevyState::new(runtime, runtime_monitor))
+    .init_resource::<NativeGeometryLayer>()
+    .insert_resource(NativeTileRuntime(runtime_handle))
+    .insert_resource(NativeTileLayer::new(native_tile_config))
     .add_plugins(
       DefaultPlugins
         .set(WindowPlugin {
@@ -107,6 +148,8 @@ fn main() {
         .disable::<LogPlugin>(),
     )
     .add_plugins(EguiPlugin::default())
+    .add_plugins(NativeTilePlugin)
+    .add_plugins(NativeGeometryPlugin)
     .add_systems(Startup, setup_camera)
     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
     .run();
