@@ -122,6 +122,9 @@ pub trait Layer {
   /// Configure this layer for headless rendering (disable preloading, etc.).
   fn set_headless(&mut self) {}
 
+  /// Draw attribution or licensing overlays after all map content is painted.
+  fn draw_attribution(&self, _ui: &mut Ui, _rect: Rect) {}
+
   /// Return info about named sub-layers (e.g. each id sent via `mapcat`).
   fn sub_layers(&self) -> Vec<SubLayerInfo> {
     vec![]
