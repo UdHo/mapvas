@@ -166,6 +166,11 @@ pub trait Layer {
   fn geometry_snapshot_version(&self) -> u64 {
     0
   }
+
+  /// Whether this layer is a geometry source that can be drawn by a native renderer.
+  fn is_native_geometry_source(&self) -> bool {
+    false
+  }
 }
 
 /// Capability for layers that support text search and filtering of their contents.

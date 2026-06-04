@@ -16,8 +16,8 @@ use mapvas::{
   config::{Config, TileProvider, TileType},
   map::{
     coordinates::{
-      CANVAS_SIZE, TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform as MapTransform,
-      generate_preload_tiles, tiles_in_box,
+      CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform as MapTransform,
+      generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
     },
     mapvas_egui::MapViewport,
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
@@ -286,11 +286,7 @@ impl NativeTileLayer {
       return Vec::new();
     };
 
-    let calculated_zoom = (viewport.transform.zoom
-      * (viewport.rect.width().max(viewport.rect.height()) / TILE_SIZE))
-      .log2()
-      .max(0.0) as u8
-      + 2;
+    let calculated_zoom = tile_zoom_for_transform(&viewport.transform);
     let max_zoom = tile_loader.max_zoom();
     let tile_type = tile_loader.tile_type();
     let request_zoom = if tile_type == TileType::Vector && calculated_zoom > max_zoom {

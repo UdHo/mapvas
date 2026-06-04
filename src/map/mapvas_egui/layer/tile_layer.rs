@@ -10,8 +10,8 @@ use crate::{
   config::TileType,
   map::{
     coordinates::{
-      CANVAS_SIZE, TILE_SIZE, Tile, TileCoordinate, TilePriority, Transform,
-      generate_preload_tiles, tiles_in_box,
+      CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
+      tile_zoom_for_transform, tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
@@ -742,8 +742,7 @@ impl Layer for TileLayer {
       return;
     }
 
-    let (width, height) = (rect.width(), rect.height());
-    let calculated_zoom = (transform.zoom * (width.max(height) / TILE_SIZE)).log2() as u8 + 2;
+    let calculated_zoom = tile_zoom_for_transform(transform);
     let max_zoom = self.tile_loader().max_zoom();
     let tile_type = self.tile_loader().tile_type();
 

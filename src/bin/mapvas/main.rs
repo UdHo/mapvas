@@ -1,9 +1,11 @@
 mod bevy_geometry;
+mod bevy_map;
 mod bevy_tiles;
 
 use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+use bevy_map::{NativeMapControl, NativeMapPlugin};
 use bevy_tiles::{NativeMapViewport, NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
 use mapvas::{
   config::Config,
@@ -72,6 +74,7 @@ fn build_runtime() -> tokio::runtime::Runtime {
 fn mapvas_ui_system(
   mut contexts: EguiContexts,
   mut state: NonSendMut<MapvasBevyState>,
+  mut native_map: ResMut<NativeMapControl>,
   mut native_viewport: ResMut<NativeMapViewport>,
   mut native_geometry: ResMut<NativeGeometryLayer>,
   mut native_tiles: ResMut<NativeTileLayer>,
@@ -89,8 +92,16 @@ fn mapvas_ui_system(
     .frame(egui::Frame::NONE)
     .show(&egui_ctx, |ui| {
       if let Some(app) = state.app.as_mut() {
+        app.set_external_viewport_input(native_map.enabled());
+        app.set_native_geometry_rendering(native_geometry.replaces_egui_geometry());
+        if native_map.enabled()
+          && let Some(transform) = native_map.transform()
+        {
+          app.set_map_transform(transform);
+        }
         {
           let mut map_layer_controls = |ui: &mut egui::Ui| {
+            native_map.ui(ui);
             native_tiles.ui(ui);
             native_geometry.ui(ui);
           };
@@ -106,6 +117,7 @@ fn mapvas_ui_system(
       }
     });
   native_viewport.set(viewport);
+  native_map.set_viewport(viewport);
   if let Some(snapshot) = geometry_snapshot {
     native_geometry.update_snapshot(snapshot);
   }
@@ -148,6 +160,7 @@ fn main() {
         .disable::<LogPlugin>(),
     )
     .add_plugins(EguiPlugin::default())
+    .add_plugins(NativeMapPlugin)
     .add_plugins(NativeTilePlugin)
     .add_plugins(NativeGeometryPlugin)
     .add_systems(Startup, setup_camera)

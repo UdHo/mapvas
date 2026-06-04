@@ -998,6 +998,7 @@ impl ShapeLayer {
           | Geometry::Heatmap(_, metadata) => metadata,
         };
         shape_metadata.style = Some(crate::map::geometry_collection::Style::default());
+        self.invalidate_cache();
       }
       ui.memory_mut(|mem| mem.data.insert_temp(popup_id, true));
     }
@@ -1024,6 +1025,7 @@ impl ShapeLayer {
         Style::default().with_color(new_color)
       };
       metadata.style = Some(new_style);
+      self.invalidate_cache();
     }
   }
 
@@ -1048,6 +1050,7 @@ impl ShapeLayer {
         Style::default().with_color(new_color)
       };
       metadata.style = Some(new_style);
+      self.invalidate_cache();
     }
   }
 
@@ -1074,6 +1077,7 @@ impl ShapeLayer {
           .with_fill_color(new_fill_color)
       };
       metadata.style = Some(new_style);
+      self.invalidate_cache();
     }
   }
 
@@ -1150,6 +1154,7 @@ impl ShapeLayer {
       .clicked()
     {
       toggle_action(self);
+      self.invalidate_cache();
       ui.close();
     }
   }

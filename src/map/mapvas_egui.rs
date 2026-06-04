@@ -6,7 +6,9 @@ use std::{
 
 use crate::{
   config::Config,
-  map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
+  map::coordinates::{
+    Coordinate, PixelCoordinate, Transform, WGS84Coordinate, transform_zoom_for_tile_zoom,
+  },
   parser::{GrepParser, JsonParser, Parser},
   profile_scope,
   remote::{Remote, RepaintSignal},
@@ -59,6 +61,8 @@ pub struct Map {
   geometry_info: Option<GeometryInfo>,
   config: Config,
   last_viewport: Option<MapViewport>,
+  external_viewport_input: bool,
+  native_geometry_rendering: bool,
 }
 
 impl Map {
@@ -148,6 +152,8 @@ impl Map {
         geometry_info: None,
         config: cfg,
         last_viewport: None,
+        external_viewport_input: false,
+        native_geometry_rendering: false,
       },
       remote,
       map_data_holder,
@@ -203,23 +209,23 @@ impl Map {
         match key {
           egui::Key::Delete => self.clear(),
 
-          egui::Key::ArrowDown => {
+          egui::Key::ArrowDown if !self.external_viewport_input => {
             let _ = self.transform.translate(PixelPosition { x: 0., y: -10. });
           }
-          egui::Key::ArrowLeft => {
+          egui::Key::ArrowLeft if !self.external_viewport_input => {
             let _ = self.transform.translate(PixelPosition { x: 10., y: 0. });
           }
-          egui::Key::ArrowRight => {
+          egui::Key::ArrowRight if !self.external_viewport_input => {
             let _ = self.transform.translate(PixelPosition { x: -10., y: 0. });
           }
-          egui::Key::ArrowUp => {
+          egui::Key::ArrowUp if !self.external_viewport_input => {
             let _ = self.transform.translate(PixelPosition { x: 0., y: 10. });
           }
 
-          egui::Key::Minus => {
+          egui::Key::Minus if !self.external_viewport_input => {
             self.zoom_with_center(0.9, rect.center().into());
           }
-          egui::Key::Plus | egui::Key::Equals => {
+          egui::Key::Plus | egui::Key::Equals if !self.external_viewport_input => {
             self.zoom_with_center(1. / 0.9, rect.center().into());
           }
 
@@ -318,19 +324,8 @@ impl Map {
     // Convert WGS84 coordinate to pixel coordinate
     let pixel_coord = PixelCoordinate::from(coordinate);
 
-    // Set zoom level if specified
-    if let Some(tile_zoom) = zoom_level {
-      const TILE_SIZE: f32 = 512.0;
-      let screen_size = rect.width().max(rect.height());
-      let new_transform_zoom = 2f32.powi(i32::from(tile_zoom) - 2) * TILE_SIZE / screen_size;
-      self.transform.zoom = new_transform_zoom.clamp(1.0, 524_288.0);
-    } else {
-      // Default to a good zoom level for viewing a location (equivalent to zoom level 15)
-      const TILE_SIZE: f32 = 512.0;
-      let screen_size = rect.width().max(rect.height());
-      let default_zoom = 2f32.powi(15 - 2) * TILE_SIZE / screen_size;
-      self.transform.zoom = default_zoom.clamp(1.0, 524_288.0);
-    }
+    let tile_zoom = zoom_level.unwrap_or(15);
+    self.transform.zoom = transform_zoom_for_tile_zoom(tile_zoom).clamp(1.0, 524_288.0);
 
     // Center the map on the coordinate
     helpers::set_coordinate_to_pixel(pixel_coord, rect.center().into(), &mut self.transform);
@@ -340,7 +335,7 @@ impl Map {
       coordinate.lat,
       coordinate.lon,
       self.transform.zoom,
-      zoom_level
+      Some(tile_zoom)
     );
   }
 
@@ -537,7 +532,9 @@ impl Widget for &mut Map {
     }
 
     self.handle_dropped_files(ui.ctx());
-    self.handle_mouse_wheel(ui, &response);
+    if !self.external_viewport_input {
+      self.handle_mouse_wheel(ui, &response);
+    }
 
     let events = ui.input(|i: &InputState| {
       i.events
@@ -599,7 +596,10 @@ impl Widget for &mut Map {
       ));
     }
 
-    if response.dragged() && response.dragged_by(PointerButton::Primary) {
+    if !self.external_viewport_input
+      && response.dragged()
+      && response.dragged_by(PointerButton::Primary)
+    {
       self.transform.translate(PixelPosition {
         x: response.drag_delta().x,
         y: response.drag_delta().y,
@@ -619,6 +619,10 @@ impl Widget for &mut Map {
         })
       {
         for layer in layer_guard.iter_mut() {
+          layer.process_pending_events();
+          if self.native_geometry_rendering && layer.is_native_geometry_source() {
+            continue;
+          }
           profile_scope!("Layer::draw", layer.name());
           layer.draw(ui, &self.transform, rect);
         }
@@ -705,6 +709,23 @@ impl Map {
   #[must_use]
   pub fn viewport(&self) -> Option<MapViewport> {
     self.last_viewport
+  }
+
+  pub fn set_external_viewport_input(&mut self, external_viewport_input: bool) {
+    self.external_viewport_input = external_viewport_input;
+  }
+
+  pub fn set_native_geometry_rendering(&mut self, native_geometry_rendering: bool) {
+    self.native_geometry_rendering = native_geometry_rendering;
+  }
+
+  pub fn set_transform(&mut self, transform: Transform) {
+    self.transform = transform;
+  }
+
+  #[must_use]
+  pub fn transform(&self) -> Transform {
+    self.transform
   }
 
   #[must_use]
