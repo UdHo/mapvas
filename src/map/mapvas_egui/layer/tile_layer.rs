@@ -552,11 +552,16 @@ impl TileLayer {
       let tile_data = tile_loader
         .tile_data_with_priority(&tile, tile_source, priority)
         .await;
-      if tile_data.is_err() {
-        let _ = in_flight_tiles.lock().unwrap().remove(&tile);
-        return;
-      }
-      if let Ok(tile_data) = tile_data {
+      let tile_data = match tile_data {
+        Ok(tile_data) => tile_data,
+        Err(error) => {
+          log::debug!("Tile {tile:?} load failed: {error}");
+          let _ = in_flight_tiles.lock().unwrap().remove(&tile);
+          ctx.request_repaint();
+          return;
+        }
+      };
+      {
         log::info!("Tile {tile:?} data received: {} bytes", tile_data.len());
 
         // Render phase (CPU-bound - use priority scheduler)
@@ -710,7 +715,11 @@ impl TileLayer {
 }
 
 impl Layer for TileLayer {
-  #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+  #[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
+  )]
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
     profile_scope!("TileLayer::draw");
     self.collect_new_tile_data(ui);
@@ -801,7 +810,7 @@ impl Layer for TileLayer {
     }
 
     // Start preloading adjacent and zoom level tiles
-    if self.preload_enabled {
+    if self.preload_enabled && self.tile_loader().allows_preloading() {
       self.preload_tiles(&visible_tiles);
     }
 
@@ -954,6 +963,41 @@ impl Layer for TileLayer {
   fn set_headless(&mut self) {
     self.preload_enabled = false;
   }
+
+  fn draw_attribution(&self, ui: &mut Ui, rect: Rect) {
+    if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly
+      && !self.loaded_tiles.is_empty()
+      && self.tile_loader().requires_osm_attribution()
+    {
+      draw_osm_attribution(ui, rect);
+    }
+  }
+}
+
+fn draw_osm_attribution(ui: &mut Ui, clip_rect: Rect) {
+  let painter = ui.painter_at(clip_rect);
+  let margin = 8.0;
+  let size = egui::vec2(158.0, 20.0);
+  let attribution_rect = Rect::from_min_size(
+    egui::pos2(
+      clip_rect.max.x - size.x - margin,
+      clip_rect.max.y - size.y - margin,
+    ),
+    size,
+  );
+
+  painter.rect_filled(
+    attribution_rect,
+    egui::CornerRadius::same(3),
+    Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+  );
+  painter.text(
+    attribution_rect.center(),
+    egui::Align2::CENTER_CENTER,
+    "© OpenStreetMap contributors",
+    egui::FontId::proportional(11.0),
+    Color32::from_rgb(35, 35, 35),
+  );
 }
 
 fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {

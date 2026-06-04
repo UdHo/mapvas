@@ -613,6 +613,9 @@ impl Widget for &mut Map {
         }
         profile_scope!("Layer::draw", "Timeline");
         self.timeline.borrow_mut().draw(ui, &self.transform, rect);
+        for layer in layer_guard.iter() {
+          layer.draw_attribution(ui, rect);
+        }
       }
     }
     self.handle_map_events(rect);

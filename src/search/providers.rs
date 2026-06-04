@@ -139,10 +139,7 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header(
-        "User-Agent",
-        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
-      )
+      .header("User-Agent", crate::APP_USER_AGENT)
       .send()
       .await
       .map_err(SearchError::Http)?
@@ -198,10 +195,7 @@ impl SearchProvider for NominatimProvider {
     let response = self
       .client
       .get(&url)
-      .header(
-        "User-Agent",
-        "MapVas/0.2.8 (https://github.com/UdHo/mapvas)",
-      )
+      .header("User-Agent", crate::APP_USER_AGENT)
       .send()
       .await
       .map_err(SearchError::Http)?

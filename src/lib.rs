@@ -22,3 +22,12 @@ pub mod render_scheduler;
 pub mod search;
 /// Task tracking for UI display.
 pub mod task_tracker;
+
+/// Stable HTTP identity for public map/search services.
+pub const APP_USER_AGENT: &str = concat!(
+  "MapVas/",
+  env!("CARGO_PKG_VERSION"),
+  " (+",
+  env!("CARGO_PKG_HOMEPAGE"),
+  ")"
+);

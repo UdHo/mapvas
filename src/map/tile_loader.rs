@@ -1,10 +1,11 @@
 use crate::config::{TileProvider, TileType};
 use crate::map::coordinates::{Tile, TilePriority};
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use regex::Regex;
 use reqwest;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::error::Error as StdError;
 use std::fmt::Display;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -15,6 +16,9 @@ use std::time::{Duration, Instant};
 // Compile regex once at first use
 static API_KEY_REGEX: LazyLock<Regex> =
   LazyLock::new(|| Regex::new("[Kk]ey=([A-Za-z0-9-_]*)").expect("API_KEY_REGEX pattern is valid"));
+const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 6;
+const OSM_MAX_CONCURRENT_DOWNLOADS: usize = 2;
+const OSM_CACHE_NAMESPACE: &str = "osm-policy-v2";
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -161,11 +165,20 @@ where
   T: Hash + Eq + Clone,
 {
   fn default() -> Self {
+    Self::new(DEFAULT_MAX_CONCURRENT_DOWNLOADS)
+  }
+}
+
+impl<T> DownloadManager<T>
+where
+  T: Hash + Eq + Clone,
+{
+  fn new(max_concurrent: usize) -> Self {
     Self {
       tiles_in_download: Arc::new(Mutex::new(HashSet::new())),
       last_failed_attempt: Arc::new(Mutex::new(HashMap::new())),
       priority_queue: Arc::new(Mutex::new(BinaryHeap::new())),
-      max_concurrent: 6, // Reduced from 10 to prioritize current tiles
+      max_concurrent,
     }
   }
 }
@@ -337,7 +350,42 @@ impl<T: Hash + Eq + Clone> Drop for DownloadToken<T> {
   }
 }
 
-impl<T: Hash + Eq + Clone> DownloadManager<T> {}
+fn is_osm_tile_provider_url(url_template: &str) -> bool {
+  url_template.starts_with("https://tile.openstreetmap.org/")
+    || url_template.starts_with("http://tile.openstreetmap.org/")
+}
+
+fn max_concurrent_downloads_for_url(url_template: &str) -> usize {
+  if is_osm_tile_provider_url(url_template) {
+    OSM_MAX_CONCURRENT_DOWNLOADS
+  } else {
+    DEFAULT_MAX_CONCURRENT_DOWNLOADS
+  }
+}
+
+fn allows_preloading_for_url(url_template: &str) -> bool {
+  !is_osm_tile_provider_url(url_template)
+}
+
+fn cache_key_for_url(url_template: &str) -> String {
+  let sanitized_url = API_KEY_REGEX.replace(url_template, "*");
+  if is_osm_tile_provider_url(url_template) {
+    format!("{sanitized_url}:{OSM_CACHE_NAMESPACE}")
+  } else {
+    sanitized_url.into_owned()
+  }
+}
+
+fn format_reqwest_error(error: &reqwest::Error) -> String {
+  let mut message = error.to_string();
+  let mut source = StdError::source(error);
+  while let Some(error) = source {
+    message.push_str(": ");
+    message.push_str(&error.to_string());
+    source = error.source();
+  }
+  message
+}
 
 #[derive(Debug)]
 struct TileDownloader {
@@ -354,6 +402,7 @@ impl TileDownloader {
 
   fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
+      .user_agent(crate::APP_USER_AGENT)
       .timeout(Duration::from_secs(5))
       .build()
       .expect("client")
@@ -363,7 +412,7 @@ impl TileDownloader {
     Self {
       name,
       url_template: url.to_string(),
-      download_manager: Arc::default(),
+      download_manager: Arc::new(DownloadManager::new(max_concurrent_downloads_for_url(url))),
       client: Self::build_client(),
     }
   }
@@ -374,10 +423,20 @@ impl TileDownloader {
     ));
     Self {
       name: "OSM".to_string(),
+      download_manager: Arc::new(DownloadManager::new(max_concurrent_downloads_for_url(
+        &url_template,
+      ))),
       url_template,
-      download_manager: Arc::default(),
       client: Self::build_client(),
     }
+  }
+
+  fn requires_osm_attribution(&self) -> bool {
+    is_osm_tile_provider_url(&self.url_template)
+  }
+
+  fn allows_preloading(&self) -> bool {
+    allows_preloading_for_url(&self.url_template)
   }
 
   fn get_path_for_tile(&self, tile: &Tile) -> String {
@@ -419,21 +478,49 @@ impl TileLoader for TileDownloader {
     }
 
     let url = self.get_path_for_tile(tile);
-    let response = self
-      .client
-      .get(&url)
-      .send()
-      .await
-      .inspect_err(|e| error!("Error when downloading tile: {e}"))
-      .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })?;
+    let response = {
+      let mut attempt = 1;
+      loop {
+        match self.client.get(&url).send().await {
+          Ok(response) => break response,
+          Err(error) if attempt == 1 => {
+            warn!(
+              "Retrying tile {tile:?} from {url} with provider {} after request error: {}",
+              self.name,
+              format_reqwest_error(&error)
+            );
+            attempt += 1;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+          }
+          Err(error) => {
+            let formatted_error = format_reqwest_error(&error);
+            error!(
+              "Error when downloading tile {tile:?} from {url} with provider {} after {attempt} attempts: {formatted_error}",
+              self.name
+            );
+            return Err(TileLoaderError::TileNotAvailable { tile: *tile });
+          }
+        }
+      }
+    };
 
     let result = if response.status() == reqwest::StatusCode::OK {
-      let data = response
-        .bytes()
-        .await
-        .map_err(|_| TileLoaderError::TileNotAvailable { tile: *tile })?;
+      let data = match response.bytes().await {
+        Ok(data) => data,
+        Err(error) => {
+          let formatted_error = format_reqwest_error(&error);
+          error!(
+            "Error when reading tile response {tile:?} from {url} with provider {}: {formatted_error}",
+            self.name
+          );
+          return Err(TileLoaderError::TileNotAvailable { tile: *tile });
+        }
+      };
       if data.is_empty() {
-        error!("Tile {tile:?} has empty response");
+        error!(
+          "Tile {tile:?} from {url} with provider {} has empty response",
+          self.name
+        );
         Err(TileLoaderError::TileNotAvailable { tile: *tile })
       } else {
         Ok(data.to_vec())
@@ -445,7 +532,11 @@ impl TileLoader for TileDownloader {
         .lock()
         .unwrap()
         .insert(*tile, Instant::now());
-      error!("Error when downloading tile: {}", response.status());
+      error!(
+        "Error when downloading tile {tile:?} from {url} with provider {}: HTTP {}",
+        self.name,
+        response.status()
+      );
       Err(TileLoaderError::TileNotAvailable { tile: *tile })
     };
     debug!("Downloaded {tile:?}.");
@@ -476,6 +567,16 @@ impl CachedTileLoader {
   #[must_use]
   pub fn max_zoom(&self) -> u8 {
     self.max_zoom
+  }
+
+  #[must_use]
+  pub fn requires_osm_attribution(&self) -> bool {
+    self.loader.requires_osm_attribution()
+  }
+
+  #[must_use]
+  pub fn allows_preloading(&self) -> bool {
+    self.loader.allows_preloading()
   }
 
   #[must_use]
@@ -510,8 +611,7 @@ impl CachedTileLoader {
   fn from_url(provider: &TileProvider, cache: Option<PathBuf>) -> Self {
     let tile_loader = TileDownloader::from_url(&provider.url, provider.name.clone());
     let cache_path = cache.map(|mut p| {
-      let haystack = &tile_loader.url_template;
-      let res = API_KEY_REGEX.replace(haystack, "*");
+      let res = cache_key_for_url(&tile_loader.url_template);
       let mut hasher = DefaultHasher::new();
       res.hash(&mut hasher);
       p.push(hasher.finish().to_string());
@@ -589,7 +689,7 @@ impl Default for CachedTileLoader {
 
     let tile_loader = TileDownloader::from_env();
     let cache_path = base_path.map(|mut p| {
-      let res = API_KEY_REGEX.replace(&tile_loader.url_template, "*");
+      let res = cache_key_for_url(&tile_loader.url_template);
       let mut hasher = DefaultHasher::new();
       res.hash(&mut hasher);
       p.push(hasher.finish().to_string());
@@ -638,5 +738,62 @@ impl TileLoader for CachedTileLoader {
         .download_with_priority(tile, tile_source, priority)
         .await
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn app_user_agent_identifies_mapvas() {
+    assert!(crate::APP_USER_AGENT.starts_with("MapVas/"));
+    assert!(crate::APP_USER_AGENT.contains(env!("CARGO_PKG_HOMEPAGE")));
+  }
+
+  #[test]
+  fn detects_osm_tile_provider_urls() {
+    assert!(is_osm_tile_provider_url(
+      "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+    ));
+    assert!(is_osm_tile_provider_url(
+      "http://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+    ));
+    assert!(!is_osm_tile_provider_url(
+      "https://tiles.example.com/{zoom}/{x}/{y}.png"
+    ));
+  }
+
+  #[test]
+  fn throttles_only_osm_tile_provider() {
+    let osm = "https://tile.openstreetmap.org/{zoom}/{x}/{y}.png";
+    let custom = "https://tiles.example.com/{zoom}/{x}/{y}.png";
+    let local = "http://192.168.0.44:3000/20260109/{zoom}/{x}/{y}";
+
+    assert_eq!(
+      max_concurrent_downloads_for_url(osm),
+      OSM_MAX_CONCURRENT_DOWNLOADS
+    );
+    assert_eq!(
+      max_concurrent_downloads_for_url(custom),
+      DEFAULT_MAX_CONCURRENT_DOWNLOADS
+    );
+    assert_eq!(
+      max_concurrent_downloads_for_url(local),
+      DEFAULT_MAX_CONCURRENT_DOWNLOADS
+    );
+
+    assert!(!allows_preloading_for_url(osm));
+    assert!(allows_preloading_for_url(custom));
+    assert!(allows_preloading_for_url(local));
+  }
+
+  #[test]
+  fn namespaces_osm_cache_key() {
+    let osm_key = cache_key_for_url("https://tile.openstreetmap.org/{zoom}/{x}/{y}.png");
+    let custom_key = cache_key_for_url("https://tiles.example.com/{zoom}/{x}/{y}.png");
+
+    assert!(osm_key.ends_with(OSM_CACHE_NAMESPACE));
+    assert!(!custom_key.ends_with(OSM_CACHE_NAMESPACE));
   }
 }
