@@ -28,19 +28,34 @@ struct GeometryStats {
   heatmap_points: usize,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct NativeGeometryLayer {
   enabled: bool,
+  replace_egui_geometry: bool,
   snapshot_version: u64,
   geometries: Vec<Geometry<PixelCoordinate>>,
   snapshot_stats: GeometryStats,
   draw_stats: GeometryStats,
 }
 
+impl Default for NativeGeometryLayer {
+  fn default() -> Self {
+    Self {
+      enabled: false,
+      replace_egui_geometry: true,
+      snapshot_version: 0,
+      geometries: Vec::new(),
+      snapshot_stats: GeometryStats::default(),
+      draw_stats: GeometryStats::default(),
+    }
+  }
+}
+
 impl NativeGeometryLayer {
   pub fn ui(&mut self, ui: &mut egui::Ui) {
     ui.collapsing("Native Geometry Preview", |ui| {
       ui.checkbox(&mut self.enabled, "visible");
+      ui.checkbox(&mut self.replace_egui_geometry, "replace egui geometry");
 
       ui.separator();
       ui.label("Snapshot:");
@@ -73,6 +88,11 @@ impl NativeGeometryLayer {
   #[must_use]
   pub fn needs_snapshot(&self, version: u64) -> bool {
     self.snapshot_version != version
+  }
+
+  #[must_use]
+  pub fn replaces_egui_geometry(&self) -> bool {
+    self.enabled && self.replace_egui_geometry
   }
 }
 

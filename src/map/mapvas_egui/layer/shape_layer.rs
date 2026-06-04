@@ -8,8 +8,8 @@ use crate::{
   config::{Config, HeadingStyle},
   map::{
     coordinates::{
-      BoundingBox, PixelCoordinate, PixelPosition, TILE_SIZE, Tile, TileCoordinate, Transform,
-      tiles_in_box,
+      BoundingBox, PixelCoordinate, PixelPosition, Tile, TileCoordinate, Transform,
+      tile_zoom_for_transform, tiles_in_box,
     },
     geometry_collection::{Geometry, Style},
     map_event::{Layer as EventLayer, MapEvent},
@@ -370,6 +370,17 @@ impl ShapeLayer {
     self.version += 1;
   }
 
+  fn sync_geometry_cache(&mut self) {
+    if self.cache_version == self.version {
+      return;
+    }
+    self.tile_cache.clear();
+    self.in_flight_geo_tiles.lock().unwrap().clear();
+    self.geo_tile_handles.clear();
+    self.rebuild_spatial_index();
+    self.cache_version = self.version;
+  }
+
   /// Receive any geometry tiles that finished rendering on background threads.
   fn collect_new_geo_tile_data(&mut self, ui: &egui::Ui) {
     for (tile, image) in self.geo_tile_receiver.try_iter() {
@@ -413,8 +424,7 @@ impl ShapeLayer {
   /// Return the `Tile`s visible in the current viewport, using the same zoom formula as `TileLayer`.
   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
   fn compute_visible_geo_tiles(transform: &Transform, rect: Rect) -> Vec<Tile> {
-    let max_dim = rect.width().max(rect.height());
-    let zoom = ((transform.zoom * max_dim / TILE_SIZE).log2() as u8).saturating_add(2);
+    let zoom = tile_zoom_for_transform(transform);
     let zoom = zoom.min(19); // cap at OSM max zoom to avoid explosion of tiny tiles
     let inv = transform.invert();
     let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
@@ -569,6 +579,7 @@ impl Layer for ShapeLayer {
   }
   fn process_pending_events(&mut self) {
     self.handle_new_shapes();
+    self.sync_geometry_cache();
   }
 
   fn discard_pending_events(&mut self) {
@@ -601,13 +612,7 @@ impl Layer for ShapeLayer {
     self.collect_new_geo_tile_data(ui);
 
     // Rebuild spatial index and clear stale tile textures when data/visibility changed.
-    if self.cache_version != self.version {
-      self.tile_cache.clear();
-      self.in_flight_geo_tiles.lock().unwrap().clear();
-      self.geo_tile_handles.clear();
-      self.rebuild_spatial_index();
-      self.cache_version = self.version;
-    }
+    self.sync_geometry_cache();
 
     // Paint visible tiles (spawn background render if not yet cached).
     let total_geometries: usize = self.shape_map.values().map(Vec::len).sum();
@@ -903,6 +908,10 @@ impl Layer for ShapeLayer {
       .version
       .wrapping_mul(2)
       .wrapping_add(u64::from(self.visible()))
+  }
+
+  fn is_native_geometry_source(&self) -> bool {
+    true
   }
 
   fn clear(&mut self) {

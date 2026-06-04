@@ -66,6 +66,27 @@ impl MapApp {
     self.transparent_map_background = true;
   }
 
+  pub fn set_external_viewport_input(&mut self, external_viewport_input: bool) {
+    self
+      .map
+      .set_external_viewport_input(external_viewport_input);
+  }
+
+  pub fn set_native_geometry_rendering(&mut self, native_geometry_rendering: bool) {
+    self
+      .map
+      .set_native_geometry_rendering(native_geometry_rendering);
+  }
+
+  pub fn set_map_transform(&mut self, transform: crate::map::coordinates::Transform) {
+    self.map.set_transform(transform);
+  }
+
+  #[must_use]
+  pub fn map_transform(&self) -> crate::map::coordinates::Transform {
+    self.map.transform()
+  }
+
   #[must_use]
   pub fn viewport(&self) -> Option<crate::map::mapvas_egui::MapViewport> {
     self.map.viewport()
