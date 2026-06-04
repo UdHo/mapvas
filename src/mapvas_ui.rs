@@ -114,9 +114,9 @@ impl MapApp {
   }
 }
 
-impl eframe::App for MapApp {
+impl MapApp {
   #[allow(clippy::too_many_lines)]
-  fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+  pub fn show(&mut self, ui: &mut egui::Ui) {
     let ctx_owned = ui.ctx().clone();
     let ctx = &ctx_owned;
     profile_scope!("MapApp::update");
@@ -268,9 +268,9 @@ impl eframe::App for MapApp {
 
     if effective_width > 1.0 {
       profile_scope!("MapApp::sidebar");
-      egui::Panel::left("sidebar")
-        .default_size(self.sidebar.width)
-        .size_range(200.0..=600.0)
+      egui::SidePanel::left("sidebar")
+        .default_width(self.sidebar.width)
+        .width_range(200.0..=600.0)
         .resizable(true) // Use egui's built-in resize handle
         .show_inside(ui, |ui| {
           let alpha = self.sidebar.get_content_alpha();
@@ -299,7 +299,7 @@ impl eframe::App for MapApp {
     }
 
     egui::CentralPanel::default()
-      .frame(egui::Frame::NONE)
+      .frame(egui::Frame::default().fill(ctx.style().visuals.panel_fill))
       .show_inside(ui, |ui| {
         profile_scope!("MapApp::central_panel");
         (&mut self.map).ui(ui);
@@ -309,6 +309,13 @@ impl eframe::App for MapApp {
     show_command_line_ui(&mut self.command_line, ctx);
 
     self.map.update_state_snapshot();
+    if self.map.has_pending_work() {
+      ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+  }
+
+  pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    self.show(ui);
   }
 }
 

@@ -9,7 +9,7 @@ use crate::{
   map::coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   parser::{GrepParser, JsonParser, Parser},
   profile_scope,
-  remote::Remote,
+  remote::{Remote, RepaintSignal},
 };
 use arboard::Clipboard;
 use egui::{InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
@@ -121,12 +121,12 @@ impl Map {
       clear: send.clone(),
       shutdown: shape_layer_sender,
       screenshot: screenshot_layer_sender,
-      update: ctx.clone(),
       command: command_sender,
       layer_vis: shape_layer_vis_sender,
       shape_vis: shape_layer_shape_vis_sender,
       state: map_state.clone(),
       shape_info,
+      repaint: RepaintSignal::egui(ctx.clone()),
     };
     (
       Self {
@@ -371,7 +371,6 @@ impl Map {
                 unit: _,
                 delta,
                 modifiers: _,
-                phase: _,
               } => Some(delta),
               _ => None,
             })
@@ -489,13 +488,13 @@ impl Map {
     for file in ctx.input(|i| i.raw.dropped_files.clone()) {
       if let Some(file_path) = file.path {
         let sender = self.remote.layer.clone();
-        let update = self.remote.update.clone();
+        let repaint = self.remote.repaint.clone();
         tokio::spawn(async move {
           // Use auto parser for dropped files
           let mut auto_parser = crate::parser::AutoFileParser::new(&file_path);
           for map_event in auto_parser.parse() {
             let _ = sender.send(map_event);
-            update.request_repaint();
+            repaint.request_repaint();
           }
         });
       }
