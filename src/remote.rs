@@ -15,6 +15,38 @@ use crate::{
   task_tracker::{TaskCategory, TaskGuard},
 };
 
+trait RepaintRequester: Send + Sync {
+  fn request_repaint(&self);
+}
+
+struct EguiRepaintRequester {
+  ctx: egui::Context,
+}
+
+impl RepaintRequester for EguiRepaintRequester {
+  fn request_repaint(&self) {
+    self.ctx.request_repaint();
+  }
+}
+
+#[derive(Clone)]
+pub struct RepaintSignal {
+  requester: Arc<dyn RepaintRequester>,
+}
+
+impl RepaintSignal {
+  #[must_use]
+  pub fn egui(ctx: egui::Context) -> Self {
+    Self {
+      requester: Arc::new(EguiRepaintRequester { ctx }),
+    }
+  }
+
+  pub fn request_repaint(&self) {
+    self.requester.request_repaint();
+  }
+}
+
 #[derive(serde::Serialize, Clone, Default)]
 pub struct MapState {
   pub layers: Vec<LayerInfo>,
@@ -77,10 +109,10 @@ async fn post_layer_handler(
     .send((body.id, body.visible))
     .inspect_err(|e| warn!("Failed to send layer_vis: {e}"))
     .ok();
-  let ctx = remote.update.clone();
+  let repaint = remote.repaint.clone();
   std::thread::spawn(move || {
     std::thread::sleep(std::time::Duration::from_millis(1));
-    ctx.request_repaint();
+    repaint.request_repaint();
   });
   "ok".to_string()
 }
@@ -95,10 +127,10 @@ async fn post_shape_handler(
     .send((layer_id, shape_idx, body.visible))
     .inspect_err(|e| warn!("Failed to send shape_vis: {e}"))
     .ok();
-  let ctx = remote.update.clone();
+  let repaint = remote.repaint.clone();
   std::thread::spawn(move || {
     std::thread::sleep(std::time::Duration::from_millis(1));
-    ctx.request_repaint();
+    repaint.request_repaint();
   });
   "ok".to_string()
 }
@@ -109,6 +141,13 @@ pub fn spawn_remote_runner(runtime: tokio::runtime::Runtime, remote: Remote) {
     runtime.block_on(async {
       remote_runner(remote).await;
     });
+  });
+}
+
+pub fn spawn_remote_runner_on_handle(handle: tokio::runtime::Handle, remote: Remote) {
+  let _server_task = handle.spawn(async move {
+    log::info!("Mapcat server starting on shared runtime");
+    remote_runner(remote).await;
   });
 }
 
@@ -171,8 +210,7 @@ pub struct Remote {
   pub shape_vis: Sender<(String, usize, bool)>,
   pub state: Arc<RwLock<MapState>>,
   pub shape_info: Arc<RwLock<std::collections::HashMap<String, Vec<ShapeInfo>>>>,
-  /// TODO: keep egui out of here.
-  pub update: egui::Context,
+  pub repaint: RepaintSignal,
 }
 
 impl Remote {
@@ -237,10 +275,10 @@ impl Remote {
       }
     }
     // Delay repaint request to avoid deadlock during UI event processing
-    let ctx = self.update.clone();
+    let repaint = self.repaint.clone();
     std::thread::spawn(move || {
       std::thread::sleep(std::time::Duration::from_millis(1));
-      ctx.request_repaint();
+      repaint.request_repaint();
     });
   }
 
@@ -305,7 +343,7 @@ mod tests {
       shape_vis: shape_vis_tx,
       state: Arc::new(RwLock::new(MapState::default())),
       shape_info: Arc::new(RwLock::new(std::collections::HashMap::new())),
-      update: egui::Context::default(),
+      repaint: RepaintSignal::egui(egui::Context::default()),
     };
     TestRemote {
       remote,
