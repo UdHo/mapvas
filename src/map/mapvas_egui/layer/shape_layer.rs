@@ -278,7 +278,7 @@ impl ShapeLayer {
     );
     let candidates: Vec<(String, usize)> = self
       .spatial_index
-      .locate_in_envelope_intersecting(&query)
+      .locate_in_envelope_intersecting(query)
       .map(|e| (e.layer_id.clone(), e.shape_idx))
       .collect();
 
@@ -428,7 +428,7 @@ impl ShapeLayer {
     let query = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
     self
       .spatial_index
-      .locate_in_envelope_intersecting(&query)
+      .locate_in_envelope_intersecting(query)
       .filter_map(|entry| {
         if !*self.layer_visibility.get(&entry.layer_id).unwrap_or(&true) {
           return None;
@@ -624,7 +624,7 @@ impl Layer for ShapeLayer {
       let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
       if self
         .spatial_index
-        .locate_in_envelope_intersecting(&tile_envelope)
+        .locate_in_envelope_intersecting(tile_envelope)
         .next()
         .is_none()
       {
@@ -703,7 +703,7 @@ impl Layer for ShapeLayer {
         let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
         if self
           .spatial_index
-          .locate_in_envelope_intersecting(&tile_envelope)
+          .locate_in_envelope_intersecting(tile_envelope)
           .next()
           .is_none()
         {
@@ -935,7 +935,7 @@ impl Layer for ShapeLayer {
     );
     let candidates: Vec<(String, usize)> = self
       .spatial_index
-      .locate_in_envelope_intersecting(&query)
+      .locate_in_envelope_intersecting(query)
       .map(|e| (e.layer_id.clone(), e.shape_idx))
       .collect();
 
