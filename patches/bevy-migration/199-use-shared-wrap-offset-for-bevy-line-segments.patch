@@ -1,0 +1,85 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index d10a3b9..4f383e4 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -200,6 +200,7 @@ Apply these patches in order from the repository root:
+ 196. `196-draw-timeline-overlay-in-bevy-map.patch`
+ 197. `197-align-polygon-fill-wrap-offsets.patch`
+ 198. `198-use-local-polygon-fill-mesh-coordinates.patch`
++199. `199-use-shared-wrap-offset-for-bevy-line-segments.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_geometry.rs b/src/bin/mapvas/bevy_geometry.rs
+index f8f0519..aade4d2 100644
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -861,15 +861,9 @@ fn draw_segment(
+   color: Color,
+   gizmos: &mut Gizmos<BevyGeometryGizmos>,
+ ) -> bool {
+-  let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
++  let Some((screen_start, screen_end)) = segment_to_screen(start, end, viewport, left_x) else {
+     return false;
+   };
+-  let Some(screen_end) = coordinate_to_screen(end, viewport, left_x) else {
+-    return false;
+-  };
+-  if !segment_intersects_rect(screen_start, screen_end, viewport.rect) {
+-    return false;
+-  }
+ 
+   gizmos.line_2d(
+     screen_to_bevy(screen_start, window),
+@@ -968,15 +962,9 @@ fn draw_highlighted_segment(
+   color: Color,
+   gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+-  let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+-    return;
+-  };
+-  let Some(screen_end) = coordinate_to_screen(end, viewport, left_x) else {
++  let Some((screen_start, screen_end)) = segment_to_screen(start, end, viewport, left_x) else {
+     return;
+   };
+-  if !segment_intersects_rect(screen_start, screen_end, viewport.rect) {
+-    return;
+-  }
+ 
+   gizmos.line_2d(
+     screen_to_bevy(screen_start, window),
+@@ -1089,6 +1077,34 @@ fn coordinate_to_screen(
+   Some(viewport.transform.apply(shifted))
+ }
+ 
++fn segment_to_screen(
++  start: PixelCoordinate,
++  end: PixelCoordinate,
++  viewport: MapViewport,
++  left_x: f32,
++) -> Option<(PixelPosition, PixelPosition)> {
++  if !start.is_valid() || !end.is_valid() {
++    return None;
++  }
++
++  let offset = world_offset(start.x.min(end.x), left_x);
++  for offset in [offset - CANVAS_SIZE, offset, offset + CANVAS_SIZE] {
++    let screen_start = viewport.transform.apply(PixelCoordinate {
++      x: start.x + offset,
++      y: start.y,
++    });
++    let screen_end = viewport.transform.apply(PixelCoordinate {
++      x: end.x + offset,
++      y: end.y,
++    });
++    if segment_intersects_rect(screen_start, screen_end, viewport.rect) {
++      return Some((screen_start, screen_end));
++    }
++  }
++
++  None
++}
++
+ fn screen_to_bevy(screen: PixelPosition, window: &Window) -> Vec2 {
+   Vec2::new(
+     screen.x - window.width() / 2.0,

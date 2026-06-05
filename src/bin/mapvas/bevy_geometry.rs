@@ -101,15 +101,26 @@ struct GeometryBounds {
   max_y: f32,
 }
 
+impl GeometryBounds {
+  fn min(self) -> PixelCoordinate {
+    PixelCoordinate {
+      x: self.min_x,
+      y: self.min_y,
+    }
+  }
+}
+
 #[derive(Component)]
 struct BevyPolygonFill {
   bounds: GeometryBounds,
+  origin: PixelCoordinate,
   wrap_offset: f32,
 }
 
 #[derive(Component)]
 struct BevyHighlightPolygonFill {
   bounds: GeometryBounds,
+  origin: PixelCoordinate,
   wrap_offset: f32,
 }
 
@@ -122,6 +133,7 @@ struct PolygonFillSpec {
   mesh: Mesh,
   color: Color,
   bounds: GeometryBounds,
+  origin: PixelCoordinate,
 }
 
 struct PointFillSpec {
@@ -347,6 +359,7 @@ fn rebuild_polygon_fills_if_needed(
           Transform::default(),
           BevyPolygonFill {
             bounds: spec.bounds,
+            origin: spec.origin,
             wrap_offset,
           },
         ))
@@ -421,6 +434,7 @@ fn rebuild_highlight_polygon_fills_if_needed(
           Transform::default(),
           BevyHighlightPolygonFill {
             bounds: spec.bounds,
+            origin: spec.origin,
             wrap_offset,
           },
         ))
@@ -442,8 +456,10 @@ fn update_polygon_fills(
   >,
 ) {
   for (fill, mut transform, mut visibility) in fills.iter_mut() {
-    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, GEOMETRY_FILL_Z);
-    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
+    let wrap_offset = polygon_fill_wrap_offset(fill.bounds, viewport, fill.wrap_offset);
+    *transform =
+      polygon_fill_transform(viewport, window, fill.origin, wrap_offset, GEOMETRY_FILL_Z);
+    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, wrap_offset) {
       Visibility::Visible
     } else {
       Visibility::Hidden
@@ -460,8 +476,10 @@ fn update_highlight_polygon_fills(
   >,
 ) {
   for (fill, mut transform, mut visibility) in fills.iter_mut() {
-    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, HIGHLIGHT_FILL_Z);
-    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
+    let wrap_offset = polygon_fill_wrap_offset(fill.bounds, viewport, fill.wrap_offset);
+    *transform =
+      polygon_fill_transform(viewport, window, fill.origin, wrap_offset, HIGHLIGHT_FILL_Z);
+    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, wrap_offset) {
       Visibility::Visible
     } else {
       Visibility::Hidden
@@ -493,15 +511,25 @@ fn update_point_fills(
   }
 }
 
+fn polygon_fill_wrap_offset(
+  bounds: GeometryBounds,
+  viewport: MapViewport,
+  copy_offset: f32,
+) -> f32 {
+  world_offset(bounds.min_x, viewport_left_x(viewport)) + copy_offset
+}
+
 fn polygon_fill_transform(
   viewport: MapViewport,
   window: &Window,
+  origin: PixelCoordinate,
   wrap_offset: f32,
   z: f32,
 ) -> Transform {
   Transform::from_xyz(
-    viewport.transform.trans.x + wrap_offset * viewport.transform.zoom - window.width() / 2.0,
-    window.height() / 2.0 - viewport.transform.trans.y,
+    viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
+      - window.width() / 2.0,
+    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
     z,
   )
   .with_scale(Vec3::new(
@@ -560,13 +588,15 @@ fn collect_polygon_fill_specs(
       let Some(bounds) = bounds_from_coords(coords) else {
         return;
       };
-      let Some(mesh) = polygon_fill_mesh(coords) else {
+      let origin = bounds.min();
+      let Some(mesh) = polygon_fill_mesh(coords, origin) else {
         return;
       };
       fills.push(PolygonFillSpec {
         mesh,
         color: map_color_to_bevy(fill_color),
         bounds,
+        origin,
       });
     }
     Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
@@ -591,13 +621,15 @@ fn collect_highlighted_polygon_fill_specs(
       let Some(bounds) = bounds_from_coords(coords) else {
         return;
       };
-      let Some(mesh) = polygon_fill_mesh(coords) else {
+      let origin = bounds.min();
+      let Some(mesh) = polygon_fill_mesh(coords, origin) else {
         return;
       };
       fills.push(PolygonFillSpec {
         mesh,
         color: map_color_to_bevy(color),
         bounds,
+        origin,
       });
     }
     Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
@@ -624,7 +656,7 @@ fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Ve
   }
 }
 
-fn polygon_fill_mesh(coords: &[PixelCoordinate]) -> Option<Mesh> {
+fn polygon_fill_mesh(coords: &[PixelCoordinate], origin: PixelCoordinate) -> Option<Mesh> {
   let vertices = polygon_vertices(coords);
   if vertices.len() < 3 {
     return None;
@@ -643,7 +675,7 @@ fn polygon_fill_mesh(coords: &[PixelCoordinate]) -> Option<Mesh> {
 
   let positions = vertices
     .iter()
-    .map(|coord| [coord.x, coord.y, 0.0])
+    .map(|coord| [coord.x - origin.x, coord.y - origin.y, 0.0])
     .collect::<Vec<_>>();
   let normals = vec![[0.0, 0.0, 1.0]; vertices.len()];
   let uvs = vec![[0.0, 0.0]; vertices.len()];
@@ -829,15 +861,9 @@ fn draw_segment(
   color: Color,
   gizmos: &mut Gizmos<BevyGeometryGizmos>,
 ) -> bool {
-  let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+  let Some((screen_start, screen_end)) = segment_to_screen(start, end, viewport, left_x) else {
     return false;
   };
-  let Some(screen_end) = coordinate_to_screen(end, viewport, left_x) else {
-    return false;
-  };
-  if !segment_intersects_rect(screen_start, screen_end, viewport.rect) {
-    return false;
-  }
 
   gizmos.line_2d(
     screen_to_bevy(screen_start, window),
@@ -936,15 +962,9 @@ fn draw_highlighted_segment(
   color: Color,
   gizmos: &mut Gizmos<BevyHighlightGizmos>,
 ) {
-  let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+  let Some((screen_start, screen_end)) = segment_to_screen(start, end, viewport, left_x) else {
     return;
   };
-  let Some(screen_end) = coordinate_to_screen(end, viewport, left_x) else {
-    return;
-  };
-  if !segment_intersects_rect(screen_start, screen_end, viewport.rect) {
-    return;
-  }
 
   gizmos.line_2d(
     screen_to_bevy(screen_start, window),
@@ -1055,6 +1075,34 @@ fn coordinate_to_screen(
     y: coord.y,
   };
   Some(viewport.transform.apply(shifted))
+}
+
+fn segment_to_screen(
+  start: PixelCoordinate,
+  end: PixelCoordinate,
+  viewport: MapViewport,
+  left_x: f32,
+) -> Option<(PixelPosition, PixelPosition)> {
+  if !start.is_valid() || !end.is_valid() {
+    return None;
+  }
+
+  let offset = world_offset(start.x.min(end.x), left_x);
+  for offset in [offset - CANVAS_SIZE, offset, offset + CANVAS_SIZE] {
+    let screen_start = viewport.transform.apply(PixelCoordinate {
+      x: start.x + offset,
+      y: start.y,
+    });
+    let screen_end = viewport.transform.apply(PixelCoordinate {
+      x: end.x + offset,
+      y: end.y,
+    });
+    if segment_intersects_rect(screen_start, screen_end, viewport.rect) {
+      return Some((screen_start, screen_end));
+    }
+  }
+
+  None
 }
 
 fn screen_to_bevy(screen: PixelPosition, window: &Window) -> Vec2 {

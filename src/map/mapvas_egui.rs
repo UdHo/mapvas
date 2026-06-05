@@ -697,12 +697,15 @@ impl Map {
     }
 
     let transform = self.transform;
+    let timeline = self.timeline.clone();
     self
       .layers
       .try_with_egui_layers_mut("bevy layer frame", |layers| {
         for layer in layers.iter_mut() {
           layer.process_pending_events();
         }
+        profile_scope!("Layer::draw_egui", "Timeline");
+        timeline.borrow_mut().draw_egui(ui, rect);
         Self::draw_egui_layer_overlays(layers, ui, &transform);
       });
   }
