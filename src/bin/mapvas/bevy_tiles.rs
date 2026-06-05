@@ -811,6 +811,7 @@ impl BevyTileLayer {
     let sender = self.sender.clone();
     let tile_source = self.tile_source;
     let generation = self.generation;
+    let style_zoom = native_vector_style_zoom(tile.zoom, self.tile_detail_factor);
     runtime.spawn(async move {
       let task_name = format!(
         "bevy-native-vector-tile-{}-{}-{}",
@@ -827,7 +828,7 @@ impl BevyTileLayer {
       };
 
       let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
-        native_vector_tile_content(&tile, &tile_data)
+        native_vector_tile_content(&tile, style_zoom, &tile_data)
       });
 
       let render_result = tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
@@ -1344,9 +1345,8 @@ fn update_native_vector_tiles(
   let visible_tiles = layer.visible_tiles(viewport);
   let runtime_handle = runtime.0.clone();
   for tile in &visible_tiles {
-    if loaded_native_vector_tile_or_parent(&layer, *tile).is_none() {
-      layer.request_native_vector_tile(*tile, TilePriority::Current, runtime_handle.clone());
-    }
+    // Parent tiles are a draw fallback only; exact visible tiles still need a current-priority request.
+    layer.request_native_vector_tile(*tile, TilePriority::Current, runtime_handle.clone());
   }
   layer.request_preload_native_vector_tiles(&visible_tiles, runtime_handle);
 
@@ -2436,6 +2436,19 @@ fn tile_zoom_with_detail_factor(
   tile_zoom_for_transform(&detail_transform)
 }
 
+fn native_vector_style_zoom(tile_zoom: u8, detail_factor: f32) -> u8 {
+  tile_zoom.saturating_sub(tile_detail_zoom_offset(detail_factor))
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tile_detail_zoom_offset(detail_factor: f32) -> u8 {
+  effective_tile_detail_factor(detail_factor)
+    .max(1.0)
+    .log2()
+    .round()
+    .clamp(0.0, f32::from(u8::MAX)) as u8
+}
+
 fn effective_tile_detail_factor(detail_factor: f32) -> f32 {
   BASE_TILE_DETAIL_FACTOR * clamped_tile_detail_factor(detail_factor)
 }
@@ -2459,6 +2472,7 @@ fn effective_tile_detail_factor_label(detail_factor: f32) -> String {
 #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
 fn native_vector_tile_content(
   tile: &Tile,
+  style_zoom: u8,
   data: &[u8],
 ) -> Result<NativeVectorTileContent, TileRenderError> {
   let reader = mvt_reader::Reader::new(data.to_vec())
@@ -2506,6 +2520,7 @@ fn native_vector_tile_content(
         index,
         layer_name,
         tile,
+        style_zoom,
         tile_nw,
         tile_world_size,
         mvt_to_world,
@@ -2525,6 +2540,7 @@ fn native_vector_tile_content(
       index,
       layer_name,
       tile,
+      style_zoom,
       tile_nw,
       tile_world_size,
       mvt_to_world,
@@ -2546,6 +2562,7 @@ fn append_native_vector_layer(
   layer_index: usize,
   layer_name: &str,
   tile: &Tile,
+  style_zoom: u8,
   tile_origin: PixelCoordinate,
   tile_world_size: f32,
   mvt_to_world: f32,
@@ -2558,10 +2575,15 @@ fn append_native_vector_layer(
   for feature in features {
     let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
     let feature_kind = feature_string_property(&feature, &["kind"]);
-    let feature_kind_detail = feature_string_property(&feature, &["kind_detail"]);
+    let feature_kind_detail = label_feature_kind_detail(
+      layer_name,
+      feature_string_property(&feature, &["kind_detail"]),
+      feature_kind,
+      feature_class,
+    );
     let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
-    let population_rank = feature_i64_property(&feature, "population_rank");
-    let is_capital = feature_has_property(&feature, "capital");
+    let population_rank = label_population_rank(&feature, feature_class);
+    let is_capital = feature_is_capital(&feature);
 
     match &feature.geometry {
       geo_types::Geometry::Polygon(polygon) => {
@@ -2596,7 +2618,7 @@ fn append_native_vector_layer(
           line,
           layer_name,
           line_class,
-          tile.zoom,
+          style_zoom,
           tile_origin,
           mvt_to_world,
           style_pixel_to_world,
@@ -2611,7 +2633,7 @@ fn append_native_vector_layer(
             line,
             layer_name,
             line_class,
-            tile.zoom,
+            style_zoom,
             tile_origin,
             mvt_to_world,
             style_pixel_to_world,
@@ -2668,9 +2690,68 @@ fn feature_string_property<'a>(
   })
 }
 
-fn feature_i64_property(feature: &mvt_reader::feature::Feature, key: &str) -> Option<i64> {
-  let properties = feature.properties.as_ref()?;
-  match properties.get(key)? {
+fn label_feature_kind_detail<'a>(
+  layer_name: &str,
+  feature_kind_detail: Option<&'a str>,
+  feature_kind: Option<&'a str>,
+  feature_class: &'a str,
+) -> Option<&'a str> {
+  feature_kind_detail.or(feature_kind).or_else(|| {
+    if layer_name != "place" {
+      return None;
+    }
+    match feature_class {
+      "country" | "city" | "locality" | "town" | "village" => Some(feature_class),
+      "hamlet" => Some("village"),
+      "suburb" | "neighbourhood" | "quarter" => Some("locality"),
+      _ => None,
+    }
+  })
+}
+
+fn label_population_rank(
+  feature: &mvt_reader::feature::Feature,
+  feature_class: &str,
+) -> Option<i64> {
+  feature
+    .properties
+    .as_ref()
+    .and_then(|properties| properties.get("population_rank"))
+    .and_then(feature_value_as_i64)
+    .or_else(|| {
+      feature
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.get("rank"))
+        .and_then(feature_value_as_i64)
+        .map(|rank| normalized_openfreemap_place_rank(feature_class, rank))
+    })
+}
+
+fn normalized_openfreemap_place_rank(feature_class: &str, rank: i64) -> i64 {
+  if !matches!(feature_class, "city" | "locality") {
+    return rank;
+  }
+
+  match rank {
+    i64::MIN..=3 => 13,
+    4..=7 => 14,
+    8..=11 => 15,
+    12..=14 => 16,
+    _ => 17,
+  }
+}
+
+fn feature_is_capital(feature: &mvt_reader::feature::Feature) -> bool {
+  feature
+    .properties
+    .as_ref()
+    .and_then(|properties| properties.get("capital"))
+    .is_some_and(feature_value_is_capital)
+}
+
+fn feature_value_as_i64(value: &mvt_reader::feature::Value) -> Option<i64> {
+  match value {
     mvt_reader::feature::Value::UInt(value) => i64::try_from(*value).ok(),
     mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
       Some(*value)
@@ -2679,11 +2760,22 @@ fn feature_i64_property(feature: &mvt_reader::feature::Feature, key: &str) -> Op
   }
 }
 
-fn feature_has_property(feature: &mvt_reader::feature::Feature, key: &str) -> bool {
-  feature
-    .properties
-    .as_ref()
-    .is_some_and(|properties| properties.contains_key(key))
+fn feature_value_is_capital(value: &mvt_reader::feature::Value) -> bool {
+  match value {
+    mvt_reader::feature::Value::Bool(value) => *value,
+    mvt_reader::feature::Value::UInt(value) => (1..=4).contains(value),
+    mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
+      (1..=4).contains(value)
+    }
+    mvt_reader::feature::Value::String(value) => {
+      let value = value.to_ascii_lowercase();
+      matches!(value.as_str(), "yes" | "true" | "capital")
+        || value
+          .parse::<i64>()
+          .is_ok_and(|rank| (1..=4).contains(&rank))
+    }
+    _ => false,
+  }
 }
 
 fn polygon_feature_class<'a>(
@@ -3088,5 +3180,29 @@ mod tests {
     assert_eq!(effective_tile_detail_factor(0.5), 1.0);
     assert_eq!(effective_tile_detail_factor(1.0), 2.0);
     assert_eq!(effective_tile_detail_factor(2.0), 4.0);
+  }
+
+  #[test]
+  fn native_vector_style_zoom_removes_detail_zoom_offset() {
+    assert_eq!(native_vector_style_zoom(13, 0.5), 13);
+    assert_eq!(native_vector_style_zoom(13, 1.0), 12);
+    assert_eq!(native_vector_style_zoom(13, 2.0), 11);
+  }
+
+  #[test]
+  fn openfreemap_city_rank_maps_to_place_size_buckets() {
+    assert_eq!(normalized_openfreemap_place_rank("city", 2), 13);
+    assert_eq!(normalized_openfreemap_place_rank("city", 11), 15);
+    assert_eq!(normalized_openfreemap_place_rank("city", 15), 17);
+  }
+
+  #[test]
+  fn openfreemap_capital_rank_distinguishes_capitals_from_admin_centers() {
+    assert!(feature_value_is_capital(&mvt_reader::feature::Value::UInt(
+      2
+    )));
+    assert!(!feature_value_is_capital(
+      &mvt_reader::feature::Value::UInt(6)
+    ));
   }
 }
