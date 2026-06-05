@@ -197,6 +197,10 @@ Apply these patches in order from the repository root:
 193. `193-clean-up-viewport-renderer-wording.patch`
 194. `194-rename-screenshot-target-bevy.patch`
 195. `195-despawn-untracked-bevy-tile-sprites.patch`
+196. `196-draw-timeline-overlay-in-bevy-map.patch`
+197. `197-align-polygon-fill-wrap-offsets.patch`
+198. `198-use-local-polygon-fill-mesh-coordinates.patch`
+199. `199-use-shared-wrap-offset-for-bevy-line-segments.patch`
 
 Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
 The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

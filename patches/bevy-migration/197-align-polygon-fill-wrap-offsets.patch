@@ -1,0 +1,55 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 32d6423..1f80fb0 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -198,6 +198,7 @@ Apply these patches in order from the repository root:
+ 194. `194-rename-screenshot-target-bevy.patch`
+ 195. `195-despawn-untracked-bevy-tile-sprites.patch`
+ 196. `196-draw-timeline-overlay-in-bevy-map.patch`
++197. `197-align-polygon-fill-wrap-offsets.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_geometry.rs b/src/bin/mapvas/bevy_geometry.rs
+index 84359a5..2e1d861 100644
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -442,8 +442,9 @@ fn update_polygon_fills(
+   >,
+ ) {
+   for (fill, mut transform, mut visibility) in fills.iter_mut() {
+-    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, GEOMETRY_FILL_Z);
+-    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
++    let wrap_offset = polygon_fill_wrap_offset(fill.bounds, viewport, fill.wrap_offset);
++    *transform = polygon_fill_transform(viewport, window, wrap_offset, GEOMETRY_FILL_Z);
++    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, wrap_offset) {
+       Visibility::Visible
+     } else {
+       Visibility::Hidden
+@@ -460,8 +461,9 @@ fn update_highlight_polygon_fills(
+   >,
+ ) {
+   for (fill, mut transform, mut visibility) in fills.iter_mut() {
+-    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, HIGHLIGHT_FILL_Z);
+-    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
++    let wrap_offset = polygon_fill_wrap_offset(fill.bounds, viewport, fill.wrap_offset);
++    *transform = polygon_fill_transform(viewport, window, wrap_offset, HIGHLIGHT_FILL_Z);
++    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, wrap_offset) {
+       Visibility::Visible
+     } else {
+       Visibility::Hidden
+@@ -493,6 +495,14 @@ fn update_point_fills(
+   }
+ }
+ 
++fn polygon_fill_wrap_offset(
++  bounds: GeometryBounds,
++  viewport: MapViewport,
++  copy_offset: f32,
++) -> f32 {
++  world_offset(bounds.min_x, viewport_left_x(viewport)) + copy_offset
++}
++
+ fn polygon_fill_transform(
+   viewport: MapViewport,
+   window: &Window,
