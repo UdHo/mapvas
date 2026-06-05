@@ -1,0 +1,35 @@
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -16,6 +16,7 @@
+ use crate::bevy_map::NativeMapViewport;
+ 
+ const POINT_RADIUS: f32 = 4.0;
++const GEOMETRY_STROKE_WIDTH: f32 = 4.0;
+ const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
+ const GEOMETRY_FILL_Z: f32 = -5.0;
+ 
+@@ -23,7 +24,9 @@
+ 
+ impl Plugin for NativeGeometryPlugin {
+   fn build(&self, app: &mut App) {
+-    app.add_systems(Update, draw_native_geometry);
++    app
++      .add_systems(Startup, configure_native_geometry_gizmos)
++      .add_systems(Update, draw_native_geometry);
+   }
+ }
+ 
+@@ -83,6 +86,13 @@
+   mesh: Mesh,
+   color: Color,
+   bounds: GeometryBounds,
++}
++
++fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
++  let (config, _) = config_store.config_mut::<DefaultGizmoConfigGroup>();
++  config.line.width = GEOMETRY_STROKE_WIDTH;
++  config.line.joints = GizmoLineJoint::Round(4);
++  config.depth_bias = -1.0;
+ }
+ 
+ impl NativeGeometryLayer {

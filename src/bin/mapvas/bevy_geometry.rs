@@ -1,23 +1,39 @@
-use bevy::{prelude::*, window::PrimaryWindow};
-use mapvas::map::{
-  coordinates::{CANVAS_SIZE, PixelCoordinate},
-  geometry_collection::{DEFAULT_STYLE, Geometry, Style},
-  mapvas_egui::{GeometrySnapshot, MapViewport},
+use bevy::{
+  asset::RenderAssetUsages,
+  mesh::{Indices, PrimitiveTopology},
+  prelude::*,
+  window::PrimaryWindow,
+};
+use mapvas::{
+  config::{Config, HeadingStyle},
+  map::{
+    coordinates::{CANVAS_SIZE, PixelCoordinate},
+    geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+    viewport::{GeometrySnapshot, MapViewport},
+  },
 };
 
-use crate::bevy_tiles::NativeMapViewport;
+use crate::bevy_map::NativeMapViewport;
 
 const POINT_RADIUS: f32 = 4.0;
-const HEADING_LENGTH: f32 = 16.0;
+const GEOMETRY_STROKE_WIDTH: f32 = 4.0;
 const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
+const GEOMETRY_FILL_Z: f32 = -5.0;
 
 pub struct NativeGeometryPlugin;
 
 impl Plugin for NativeGeometryPlugin {
   fn build(&self, app: &mut App) {
-    app.add_systems(Update, draw_native_geometry);
+    app
+      .init_gizmo_group::<NativeGeometryGizmos>()
+      .add_systems(Startup, configure_native_geometry_gizmos)
+      .add_systems(Update, draw_native_geometry);
   }
 }
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+#[reflect(Default)]
+struct NativeGeometryGizmos;
 
 #[derive(Clone, Copy, Default)]
 struct GeometryStats {
@@ -36,24 +52,57 @@ pub struct NativeGeometryLayer {
   geometries: Vec<Geometry<PixelCoordinate>>,
   snapshot_stats: GeometryStats,
   draw_stats: GeometryStats,
+  fill_entities: Vec<Entity>,
+  fill_snapshot_version: u64,
+  heading_style: HeadingStyle,
 }
 
 impl Default for NativeGeometryLayer {
   fn default() -> Self {
     Self {
-      enabled: false,
+      enabled: true,
       replace_egui_geometry: true,
       snapshot_version: 0,
       geometries: Vec::new(),
       snapshot_stats: GeometryStats::default(),
       draw_stats: GeometryStats::default(),
+      fill_entities: Vec::new(),
+      fill_snapshot_version: 0,
+      heading_style: HeadingStyle::default(),
     }
   }
 }
 
+#[derive(Clone, Copy)]
+struct GeometryBounds {
+  min_x: f32,
+  min_y: f32,
+  max_x: f32,
+  max_y: f32,
+}
+
+#[derive(Component)]
+struct NativePolygonFill {
+  bounds: GeometryBounds,
+  wrap_offset: f32,
+}
+
+struct PolygonFillSpec {
+  mesh: Mesh,
+  color: Color,
+  bounds: GeometryBounds,
+}
+
+fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+  let (config, _) = config_store.config_mut::<NativeGeometryGizmos>();
+  config.line.width = GEOMETRY_STROKE_WIDTH;
+  config.line.joints = GizmoLineJoint::Round(4);
+  config.depth_bias = -1.0;
+}
+
 impl NativeGeometryLayer {
   pub fn ui(&mut self, ui: &mut egui::Ui) {
-    ui.collapsing("Native Geometry Preview", |ui| {
+    ui.collapsing("Native Geometry Layer", |ui| {
       ui.checkbox(&mut self.enabled, "visible");
       ui.checkbox(&mut self.replace_egui_geometry, "replace egui geometry");
 
@@ -85,6 +134,10 @@ impl NativeGeometryLayer {
     self.geometries = snapshot.geometries;
   }
 
+  pub fn update_config(&mut self, config: &Config) {
+    self.heading_style = config.heading_style;
+  }
+
   #[must_use]
   pub fn needs_snapshot(&self, version: u64) -> bool {
     self.snapshot_version != version
@@ -97,32 +150,44 @@ impl NativeGeometryLayer {
 }
 
 fn draw_native_geometry(
+  mut commands: Commands,
   mut layer: ResMut<NativeGeometryLayer>,
   viewport: Res<NativeMapViewport>,
   windows: Query<&Window, With<PrimaryWindow>>,
-  mut gizmos: Gizmos,
+  mut meshes: ResMut<Assets<Mesh>>,
+  mut materials: ResMut<Assets<ColorMaterial>>,
+  mut fills: Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+  mut gizmos: Gizmos<NativeGeometryGizmos>,
 ) {
   let mut draw_stats = GeometryStats::default();
   if !layer.enabled {
+    set_fill_visibility(&mut fills, false);
     layer.draw_stats = draw_stats;
     return;
   }
   let Some(viewport) = viewport.get() else {
+    set_fill_visibility(&mut fills, false);
     layer.draw_stats = draw_stats;
     return;
   };
   let Ok(window) = windows.single() else {
+    set_fill_visibility(&mut fills, false);
     layer.draw_stats = draw_stats;
     return;
   };
 
+  rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+  update_polygon_fills(viewport, window, &mut fills);
+
   let left_x = viewport_left_x(viewport);
+  let heading_style = layer.heading_style;
   for geometry in &layer.geometries {
     draw_geometry(
       geometry,
       viewport,
       window,
       left_x,
+      heading_style,
       &mut gizmos,
       &mut draw_stats,
     );
@@ -130,12 +195,228 @@ fn draw_native_geometry(
   layer.draw_stats = draw_stats;
 }
 
+fn set_fill_visibility(
+  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+  visible: bool,
+) {
+  for (_, _, mut visibility) in fills.iter_mut() {
+    *visibility = if visible {
+      Visibility::Visible
+    } else {
+      Visibility::Hidden
+    };
+  }
+}
+
+fn rebuild_polygon_fills_if_needed(
+  commands: &mut Commands,
+  meshes: &mut Assets<Mesh>,
+  materials: &mut Assets<ColorMaterial>,
+  layer: &mut NativeGeometryLayer,
+) {
+  if layer.fill_snapshot_version == layer.snapshot_version {
+    return;
+  }
+
+  for entity in layer.fill_entities.drain(..) {
+    commands.entity(entity).despawn();
+  }
+
+  let fill_specs = polygon_fill_specs(&layer.geometries);
+  let mut fill_entities = Vec::new();
+  for spec in fill_specs {
+    let mesh = meshes.add(spec.mesh);
+    let material = materials.add(ColorMaterial::from(spec.color));
+    for wrap_offset in [-CANVAS_SIZE, 0.0, CANVAS_SIZE] {
+      let entity = commands
+        .spawn((
+          Mesh2d(mesh.clone()),
+          MeshMaterial2d(material.clone()),
+          Transform::default(),
+          NativePolygonFill {
+            bounds: spec.bounds,
+            wrap_offset,
+          },
+        ))
+        .id();
+      fill_entities.push(entity);
+    }
+  }
+
+  layer.fill_entities = fill_entities;
+  layer.fill_snapshot_version = layer.snapshot_version;
+}
+
+fn update_polygon_fills(
+  viewport: MapViewport,
+  window: &Window,
+  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+) {
+  for (fill, mut transform, mut visibility) in fills.iter_mut() {
+    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset);
+    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
+      Visibility::Visible
+    } else {
+      Visibility::Hidden
+    };
+  }
+}
+
+fn polygon_fill_transform(viewport: MapViewport, window: &Window, wrap_offset: f32) -> Transform {
+  Transform::from_xyz(
+    viewport.transform.trans.x + wrap_offset * viewport.transform.zoom - window.width() / 2.0,
+    window.height() / 2.0 - viewport.transform.trans.y,
+    GEOMETRY_FILL_Z,
+  )
+  .with_scale(Vec3::new(
+    viewport.transform.zoom,
+    -viewport.transform.zoom,
+    1.0,
+  ))
+}
+
+fn polygon_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PolygonFillSpec> {
+  let mut fills = Vec::new();
+  for geometry in geometries {
+    collect_polygon_fill_specs(geometry, &mut fills);
+  }
+  fills
+}
+
+fn collect_polygon_fill_specs(
+  geometry: &Geometry<PixelCoordinate>,
+  fills: &mut Vec<PolygonFillSpec>,
+) {
+  match geometry {
+    Geometry::GeometryCollection(geometries, _) => {
+      for geometry in geometries {
+        collect_polygon_fill_specs(geometry, fills);
+      }
+    }
+    Geometry::Polygon(coords, metadata) => {
+      let fill_color = metadata
+        .style
+        .as_ref()
+        .unwrap_or(&DEFAULT_STYLE)
+        .fill_color()
+        .gamma_multiply(0.7);
+      if fill_color.a() == 0 {
+        return;
+      }
+      let Some(bounds) = bounds_from_coords(coords) else {
+        return;
+      };
+      let Some(mesh) = polygon_fill_mesh(coords) else {
+        return;
+      };
+      fills.push(PolygonFillSpec {
+        mesh,
+        color: color32_to_bevy(fill_color),
+        bounds,
+      });
+    }
+    Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
+  }
+}
+
+fn polygon_fill_mesh(coords: &[PixelCoordinate]) -> Option<Mesh> {
+  let vertices = polygon_vertices(coords);
+  if vertices.len() < 3 {
+    return None;
+  }
+
+  let mut indices = Vec::with_capacity((vertices.len() - 2) * 3);
+  let mut earcut = earcut::Earcut::new();
+  earcut.earcut(
+    vertices.iter().map(|coord| [coord.x, coord.y]),
+    &[],
+    &mut indices,
+  );
+  if indices.is_empty() {
+    return None;
+  }
+
+  let positions = vertices
+    .iter()
+    .map(|coord| [coord.x, coord.y, 0.0])
+    .collect::<Vec<_>>();
+  let normals = vec![[0.0, 0.0, 1.0]; vertices.len()];
+  let uvs = vec![[0.0, 0.0]; vertices.len()];
+
+  Some(
+    Mesh::new(
+      PrimitiveTopology::TriangleList,
+      RenderAssetUsages::default(),
+    )
+    .with_inserted_indices(Indices::U32(indices))
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs),
+  )
+}
+
+fn polygon_vertices(coords: &[PixelCoordinate]) -> Vec<PixelCoordinate> {
+  let mut vertices = coords
+    .iter()
+    .copied()
+    .filter(PixelCoordinate::is_valid)
+    .collect::<Vec<_>>();
+  if vertices
+    .first()
+    .zip(vertices.last())
+    .is_some_and(|(first, last)| first.x == last.x && first.y == last.y)
+  {
+    vertices.pop();
+  }
+  vertices
+}
+
+fn bounds_from_coords(coords: &[PixelCoordinate]) -> Option<GeometryBounds> {
+  let mut coords = coords.iter().copied().filter(PixelCoordinate::is_valid);
+  let first = coords.next()?;
+  let mut bounds = GeometryBounds {
+    min_x: first.x,
+    min_y: first.y,
+    max_x: first.x,
+    max_y: first.y,
+  };
+
+  for coord in coords {
+    bounds.min_x = bounds.min_x.min(coord.x);
+    bounds.min_y = bounds.min_y.min(coord.y);
+    bounds.max_x = bounds.max_x.max(coord.x);
+    bounds.max_y = bounds.max_y.max(coord.y);
+  }
+
+  Some(bounds)
+}
+
+fn bounds_intersects_viewport(
+  bounds: GeometryBounds,
+  viewport: MapViewport,
+  wrap_offset: f32,
+) -> bool {
+  let inv = viewport.transform.invert();
+  let min_world = inv.apply(viewport.rect.min.into());
+  let max_world = inv.apply(viewport.rect.max.into());
+  let min_y = min_world.y.min(max_world.y);
+  let max_y = min_world.y.max(max_world.y);
+  if bounds.max_y < min_y || bounds.min_y > max_y {
+    return false;
+  }
+
+  let min_x = min_world.x.min(max_world.x);
+  let max_x = min_world.x.max(max_world.x);
+  bounds.max_x + wrap_offset >= min_x && bounds.min_x + wrap_offset <= max_x
+}
+
 fn draw_geometry(
   geometry: &Geometry<PixelCoordinate>,
   viewport: MapViewport,
   window: &Window,
   left_x: f32,
-  gizmos: &mut Gizmos,
+  heading_style: HeadingStyle,
+  gizmos: &mut Gizmos<NativeGeometryGizmos>,
   stats: &mut GeometryStats,
 ) {
   if !geometry_intersects_viewport(geometry, viewport, left_x) {
@@ -145,7 +426,15 @@ fn draw_geometry(
   match geometry {
     Geometry::GeometryCollection(geometries, _) => {
       for geometry in geometries {
-        draw_geometry(geometry, viewport, window, left_x, gizmos, stats);
+        draw_geometry(
+          geometry,
+          viewport,
+          window,
+          left_x,
+          heading_style,
+          gizmos,
+          stats,
+        );
       }
     }
     Geometry::Point(coord, metadata) => {
@@ -160,7 +449,7 @@ fn draw_geometry(
       let center = screen_to_bevy(screen, window);
       gizmos.circle_2d(center, POINT_RADIUS, color);
       if let Some(heading) = metadata.heading {
-        draw_heading(gizmos, center, heading, color);
+        draw_heading(gizmos, center, heading, color, heading_style);
       }
 
       stats.geometries += 1;
@@ -201,7 +490,7 @@ fn draw_lines(
   window: &Window,
   left_x: f32,
   color: Color,
-  gizmos: &mut Gizmos,
+  gizmos: &mut Gizmos<NativeGeometryGizmos>,
 ) -> usize {
   if coords.len() < 2 {
     return 0;
@@ -233,7 +522,7 @@ fn draw_segment(
   window: &Window,
   left_x: f32,
   color: Color,
-  gizmos: &mut Gizmos,
+  gizmos: &mut Gizmos<NativeGeometryGizmos>,
 ) -> bool {
   let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
     return false;
@@ -253,10 +542,92 @@ fn draw_segment(
   true
 }
 
-fn draw_heading(gizmos: &mut Gizmos, center: Vec2, heading_degrees: f32, color: Color) {
+fn draw_heading(
+  gizmos: &mut Gizmos<NativeGeometryGizmos>,
+  center: Vec2,
+  heading_degrees: f32,
+  color: Color,
+  style: HeadingStyle,
+) {
+  let (forward, right) = heading_vectors(heading_degrees);
+
+  match style {
+    HeadingStyle::Arrow => {
+      let length = POINT_RADIUS + 8.0;
+      let half_width = 2.0;
+      let tip = center + forward * length;
+      let base_left = center + right * half_width;
+      let base_right = center - right * half_width;
+      draw_line_loop(gizmos, &[tip, base_left, base_right], color);
+    }
+    HeadingStyle::Line => {
+      gizmos.line_2d(center, center + forward * (POINT_RADIUS + 6.0), color);
+    }
+    HeadingStyle::Chevron => {
+      let length = POINT_RADIUS + 4.0;
+      let tip = center + forward * length;
+      let back = forward * (length * 0.55);
+      let wing = right * (length * 0.35);
+      gizmos.line_2d(tip - back + wing, tip, color);
+      gizmos.line_2d(tip, tip - back - wing, color);
+    }
+    HeadingStyle::Needle => {
+      let length = POINT_RADIUS + 8.0;
+      let tip = center + forward * length;
+      gizmos.line_2d(center, tip, color);
+      let head_base = tip - forward * 2.0;
+      gizmos.line_2d(tip, head_base + right, color);
+      gizmos.line_2d(tip, head_base - right, color);
+    }
+    HeadingStyle::Sector => {
+      let radius = POINT_RADIUS + 4.0;
+      let sector_angle = 0.6;
+      let heading_rad = (heading_degrees - 90.0).to_radians();
+      let mut points = Vec::with_capacity(10);
+      points.push(center);
+      for index in 0..=8 {
+        #[allow(clippy::cast_precision_loss)]
+        let angle = heading_rad - sector_angle / 2.0 + sector_angle * index as f32 / 8.0;
+        let direction = Vec2::new(angle.cos(), -angle.sin());
+        points.push(center + direction * radius);
+      }
+      draw_heading_lines(gizmos, &points, color);
+      if let Some(last) = points.last().copied() {
+        gizmos.line_2d(last, center, color);
+      }
+    }
+    HeadingStyle::Rectangle => {
+      let half_length = (POINT_RADIUS + 6.0) / 2.0;
+      let half_width = 1.5;
+      let corners = [
+        center + forward * half_length + right * half_width,
+        center + forward * half_length - right * half_width,
+        center - forward * half_length - right * half_width,
+        center - forward * half_length + right * half_width,
+      ];
+      draw_line_loop(gizmos, &corners, color);
+    }
+  }
+}
+
+fn heading_vectors(heading_degrees: f32) -> (Vec2, Vec2) {
   let heading_rad = (heading_degrees - 90.0).to_radians();
-  let direction = Vec2::new(heading_rad.cos(), -heading_rad.sin());
-  gizmos.line_2d(center, center + direction * HEADING_LENGTH, color);
+  let forward = Vec2::new(heading_rad.cos(), -heading_rad.sin());
+  let right = Vec2::new(forward.y, -forward.x);
+  (forward, right)
+}
+
+fn draw_line_loop(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
+  draw_heading_lines(gizmos, points, color);
+  if let (Some(first), Some(last)) = (points.first(), points.last()) {
+    gizmos.line_2d(*last, *first, color);
+  }
+}
+
+fn draw_heading_lines(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
+  for segment in points.windows(2) {
+    gizmos.line_2d(segment[0], segment[1], color);
+  }
 }
 
 fn coordinate_to_screen(

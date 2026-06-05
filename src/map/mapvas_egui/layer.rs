@@ -1,7 +1,4 @@
-use crate::map::{
-  coordinates::{BoundingBox, PixelCoordinate, Transform},
-  geometry_collection::Geometry,
-};
+use crate::map::coordinates::{BoundingBox, Transform};
 use egui::{Pos2, Rect, Ui};
 
 /// Allows to display results of commands that return coordinates.
@@ -23,6 +20,7 @@ mod tile_layer;
 /// Timeline overlay for temporal visualization.
 mod timeline_layer;
 
+pub use crate::map::viewport::GeometrySnapshot;
 pub use commands::{CommandLayer, ParameterUpdate};
 pub use screenshot::ScreenshotLayer;
 pub use shape_layer::ShapeLayer;
@@ -36,16 +34,11 @@ pub struct SubLayerInfo {
   pub shape_count: usize,
 }
 
-#[derive(Clone, Default)]
-pub struct GeometrySnapshot {
-  pub version: u64,
-  pub geometries: Vec<Geometry<PixelCoordinate>>,
-}
-
 /// A layer represents everything that can be summarized as a logical unit on the map.
 /// E.g. a layer to draw the map tiles and one to draw the shapes.
 pub trait Layer {
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
+  fn draw_interaction_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _rect: Rect) {}
   fn clear(&mut self) {}
   fn name(&self) -> &str;
   fn visible(&self) -> bool;

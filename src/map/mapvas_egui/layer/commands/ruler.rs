@@ -15,6 +15,7 @@ pub struct Ruler {
   destination: Option<PixelCoordinate>,
   locked: bool,
   visible: bool,
+  version: u64,
 }
 
 const ORIGIN: &str = "origin";
@@ -27,12 +28,14 @@ impl Default for Ruler {
       destination: None,
       locked: false,
       visible: true,
+      version: 0,
     }
   }
 }
 
 impl Command for Ruler {
   fn update_paramters(&mut self, parameters: ParameterUpdate) {
+    let previous = (self.origin, self.destination);
     match parameters {
       ParameterUpdate::Update(key, origin) if key == ORIGIN => self.origin = origin,
       ParameterUpdate::Update(key, destination) if key == DESTINATION => {
@@ -47,6 +50,9 @@ impl Command for Ruler {
         update_closest(mouse_pos, trans, delta, &mut points);
       }
       ParameterUpdate::Update(_, _) => {}
+    }
+    if previous != (self.origin, self.destination) {
+      self.version = self.version.wrapping_add(1);
     }
   }
 
@@ -80,6 +86,10 @@ impl Command for Ruler {
     let drawable: Rc<dyn Drawable> =
       Rc::new(Geometry::GeometryCollection(geom, Metadata::default()));
     Box::new(once(drawable))
+  }
+
+  fn geometry_version(&self) -> u64 {
+    self.version
   }
 
   fn locked(&mut self) -> &mut bool {

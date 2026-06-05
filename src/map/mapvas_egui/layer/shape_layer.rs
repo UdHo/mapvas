@@ -381,6 +381,93 @@ impl ShapeLayer {
     self.cache_version = self.version;
   }
 
+  fn prepare_interaction_frame(&mut self, ui: &egui::Ui, transform: &Transform) -> bool {
+    self.current_transform = *transform;
+    self.handle_new_shapes();
+
+    if !self.visible() {
+      return false;
+    }
+
+    if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+      self.update_hover_highlighting(mouse_pos, transform);
+    }
+
+    true
+  }
+
+  fn draw_detail_popup(&mut self, ui: &mut Ui) {
+    let Some((click_pos, click_world_coord, detail_info, creation_time)) =
+      &self.pending_detail_popup
+    else {
+      return;
+    };
+
+    let click_pos = *click_pos;
+    let click_world_coord = *click_world_coord;
+    let detail_info = detail_info.clone();
+    let creation_time = *creation_time;
+
+    let current_time = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_secs_f64();
+    let time_since_creation = current_time - creation_time;
+
+    let screen_pos = if time_since_creation < 0.5 {
+      click_pos
+    } else if self.current_transform.is_invalid() {
+      click_pos
+    } else {
+      let pixel_pos = self.current_transform.apply(click_world_coord);
+      egui::pos2(pixel_pos.x, pixel_pos.y)
+    };
+
+    let mut show_popup = true;
+
+    egui::Window::new("Geometry Info")
+      .id(egui::Id::new("geometry_detail_context_menu"))
+      .open(&mut show_popup)
+      .collapsible(false)
+      .resizable(false)
+      .movable(false)
+      .title_bar(false)
+      .frame(egui::Frame::popup(ui.style()))
+      .fixed_pos(screen_pos)
+      .show(ui.ctx(), |ui| {
+        ui.set_min_width(280.0);
+        ui.set_max_width(400.0);
+
+        for line in detail_info.lines() {
+          if line.starts_with("📍")
+            || line.starts_with("📏")
+            || line.starts_with("⬟")
+            || line.starts_with("📦")
+          {
+            ui.strong(line);
+          } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
+            ui.label(line);
+          } else if line.starts_with("Label:") || line.starts_with("Timestamp:") {
+            ui.small(line);
+          } else {
+            ui.label(line);
+          }
+        }
+      });
+
+    if show_popup {
+      ui.ctx().input(|i| {
+        let ignore_clicks = time_since_creation < 0.2;
+
+        if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
+          self.pending_detail_popup = None;
+        }
+      });
+    } else {
+      self.pending_detail_popup = None;
+    }
+  }
+
   /// Receive any geometry tiles that finished rendering on background threads.
   fn collect_new_geo_tile_data(&mut self, ui: &egui::Ui) {
     for (tile, image) in self.geo_tile_receiver.try_iter() {
@@ -590,22 +677,25 @@ impl Layer for ShapeLayer {
     self.headless = true;
   }
 
+  fn draw_interaction_overlay(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+    profile_scope!("ShapeLayer::draw_interaction_overlay");
+
+    if !self.prepare_interaction_frame(ui, transform) {
+      return;
+    }
+
+    self.collect_new_geo_tile_data(ui);
+    self.sync_geometry_cache();
+    self.draw_highlight_overlay(ui, transform, rect);
+    self.draw_detail_popup(ui);
+  }
+
   #[allow(clippy::too_many_lines)]
   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
     profile_scope!("ShapeLayer::draw");
 
-    // Store current transform for popup positioning
-    self.current_transform = *transform;
-
-    self.handle_new_shapes();
-
-    if !self.visible() {
+    if !self.prepare_interaction_frame(ui, transform) {
       return;
-    }
-
-    // Track mouse position and find closest geometry for hover highlighting
-    if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
-      self.update_hover_highlighting(mouse_pos, transform);
     }
 
     // Receive any tiles that finished rendering on background threads.
@@ -751,82 +841,7 @@ impl Layer for ShapeLayer {
 
     // Handle pending detail popup from double-click as lightweight positioned window
     // This needs to be in draw() so it shows regardless of sidebar state
-    if let Some((click_pos, click_world_coord, detail_info, creation_time)) =
-      &self.pending_detail_popup
-    {
-      // Extract values to avoid borrow checker issues
-      let click_pos = *click_pos;
-      let click_world_coord = *click_world_coord;
-      let detail_info = detail_info.clone();
-      let creation_time = *creation_time;
-
-      // Calculate how long the popup has been visible
-      let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64();
-      let time_since_creation = current_time - creation_time;
-
-      // For the first 500ms, use click position for better UX
-      // After that, track the click world coordinate so popup follows map movement
-      let screen_pos = if time_since_creation < 0.5 {
-        click_pos
-      } else if self.current_transform.is_invalid() {
-        // Fallback to original click position if transform is invalid
-        click_pos
-      } else {
-        // Convert click world coordinate to current screen position
-        let pixel_pos = self.current_transform.apply(click_world_coord);
-        egui::pos2(pixel_pos.x, pixel_pos.y)
-      };
-
-      let mut show_popup = true;
-
-      egui::Window::new("Geometry Info")
-        .id(egui::Id::new("geometry_detail_context_menu"))
-        .open(&mut show_popup)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .title_bar(false)
-        .frame(egui::Frame::popup(ui.style()))
-        .fixed_pos(screen_pos)
-        .show(ui.ctx(), |ui| {
-          ui.set_min_width(280.0);
-          ui.set_max_width(400.0);
-
-          // Split detail info into lines and format nicely
-          for line in detail_info.lines() {
-            if line.starts_with("📍")
-              || line.starts_with("📏")
-              || line.starts_with("⬟")
-              || line.starts_with("📦")
-            {
-              ui.strong(line);
-            } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
-              ui.label(line);
-            } else if line.starts_with("Label:") || line.starts_with("Timestamp:") {
-              ui.small(line);
-            } else {
-              ui.label(line);
-            }
-          }
-        });
-
-      if show_popup {
-        // Also close on any click or escape key, but ignore clicks for a short period after creation
-        ui.ctx().input(|i| {
-          // Ignore clicks for 200ms after popup creation to prevent immediate closure
-          let ignore_clicks = time_since_creation < 0.2;
-
-          if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
-            self.pending_detail_popup = None;
-          }
-        });
-      } else {
-        self.pending_detail_popup = None; // Clear if window was closed
-      }
-    }
+    self.draw_detail_popup(ui);
   }
 
   fn bounding_box(&self) -> Option<BoundingBox> {

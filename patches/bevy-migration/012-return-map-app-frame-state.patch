@@ -1,0 +1,80 @@
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -11,6 +11,7 @@
+       MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
+       set_style_config, style_config,
+     },
++    viewport::MapViewport,
+   },
+   profile_scope,
+   remote::Remote,
+@@ -33,6 +34,12 @@
+   transparent_map_background: bool,
+ }
+ 
++pub struct MapAppOutput {
++  pub viewport: Option<MapViewport>,
++  pub current_config: Config,
++  pub geometry_snapshot_version: u64,
++}
++
+ impl MapApp {
+   #[allow(clippy::needless_pass_by_value)]
+   pub fn new(
+@@ -163,8 +170,8 @@
+ 
+ impl MapApp {
+   #[allow(clippy::too_many_lines)]
+-  pub fn show(&mut self, ui: &mut egui::Ui) {
+-    self.show_with_map_layer_controls(ui, &mut |_| {});
++  pub fn show(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
++    self.show_with_map_layer_controls(ui, &mut |_| {})
+   }
+ 
+   #[allow(clippy::too_many_lines)]
+@@ -172,7 +179,7 @@
+     &mut self,
+     ui: &mut egui::Ui,
+     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+-  ) {
++  ) -> MapAppOutput {
+     let ctx_owned = ui.ctx().clone();
+     let ctx = &ctx_owned;
+     profile_scope!("MapApp::update");
+@@ -376,6 +383,12 @@
+     if self.map.has_pending_work() {
+       ctx.request_repaint_after(std::time::Duration::from_millis(16));
+     }
++
++    MapAppOutput {
++      viewport: self.map.viewport(),
++      current_config: self.settings_dialog.borrow().get_current_config(),
++      geometry_snapshot_version: self.map.geometry_snapshot_version(),
++    }
+   }
+ 
+   pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -105,15 +105,14 @@
+             native_tiles.ui(ui);
+             native_geometry.ui(ui);
+           };
+-          app.show_with_map_layer_controls(ui, &mut map_layer_controls);
++          let output = app.show_with_map_layer_controls(ui, &mut map_layer_controls);
++          viewport = output.viewport;
++          current_config = Some(output.current_config);
++          if native_geometry.needs_snapshot(output.geometry_snapshot_version) {
++            geometry_snapshot = Some(app.geometry_snapshot());
++          }
+         }
+-        viewport = app.viewport();
+         native_tiles.draw_overlay(ui, viewport);
+-        current_config = Some(app.current_config());
+-        let geometry_snapshot_version = app.geometry_snapshot_version();
+-        if native_geometry.needs_snapshot(geometry_snapshot_version) {
+-          geometry_snapshot = Some(app.geometry_snapshot());
+-        }
+       }
+     });
+   native_viewport.set(viewport);

@@ -1,0 +1,56 @@
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -95,6 +95,22 @@
+     }
+     None
+   }
++
++  fn update_commands(&mut self) {
++    self.recv.try_iter().for_each(|update| {
++      for command in self
++        .commands
++        .iter_mut()
++        .filter(|command| !command.is_locked())
++      {
++        command.update_paramters(update.clone());
++      }
++    });
++
++    for command in &mut self.commands {
++      command.run();
++    }
++  }
+ }
+ 
+ #[derive(Clone)]
+@@ -195,26 +211,16 @@
+ }
+ 
+ impl Layer for CommandLayer {
++  fn process_pending_events(&mut self) {
++    self.update_commands();
++  }
++
+   fn draw(
+     &mut self,
+     ui: &mut egui::Ui,
+     transform: &crate::map::coordinates::Transform,
+     _rect: egui::Rect,
+   ) {
+-    self.recv.try_iter().for_each(|update| {
+-      for command in self
+-        .commands
+-        .iter_mut()
+-        .filter(|command| !command.is_locked())
+-      {
+-        command.update_paramters(update.clone());
+-      }
+-    });
+-
+-    for command in &mut self.commands {
+-      command.run();
+-    }
+-
+     if self.visible() {
+       for command in self.commands.iter().filter(|command| command.is_visible()) {
+         let drawable = command.result();

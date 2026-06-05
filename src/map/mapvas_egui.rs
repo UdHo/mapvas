@@ -31,7 +31,8 @@ mod helpers;
 pub mod timeline_widget;
 
 pub mod layer;
-pub use layer::{GeometrySnapshot, ParameterUpdate};
+pub use super::viewport::{GeometrySnapshot, MapViewport};
+pub use layer::ParameterUpdate;
 
 #[derive(Debug, Clone)]
 pub struct GeometryInfo {
@@ -41,12 +42,6 @@ pub struct GeometryInfo {
   pub wgs84: WGS84Coordinate,
   pub metadata: Metadata,
   pub details: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct MapViewport {
-  pub transform: Transform,
-  pub rect: Rect,
 }
 
 pub struct Map {
@@ -621,6 +616,8 @@ impl Widget for &mut Map {
         for layer in layer_guard.iter_mut() {
           layer.process_pending_events();
           if self.native_geometry_rendering && layer.is_native_geometry_source() {
+            profile_scope!("Layer::draw_interaction_overlay", layer.name());
+            layer.draw_interaction_overlay(ui, &self.transform, rect);
             continue;
           }
           profile_scope!("Layer::draw", layer.name());

@@ -1,0 +1,138 @@
+--- /dev/null
++++ b/src/map/viewport.rs
+@@ -0,0 +1,18 @@
++use egui::Rect;
++
++use super::{
++  coordinates::{PixelCoordinate, Transform},
++  geometry_collection::Geometry,
++};
++
++#[derive(Debug, Clone, Copy)]
++pub struct MapViewport {
++  pub transform: Transform,
++  pub rect: Rect,
++}
++
++#[derive(Clone, Default)]
++pub struct GeometrySnapshot {
++  pub version: u64,
++  pub geometries: Vec<Geometry<PixelCoordinate>>,
++}
+--- a/src/map.rs
++++ b/src/map.rs
+@@ -12,3 +12,5 @@
+ pub mod tile_loader;
+ /// Tile rendering abstraction for raster and vector tiles.
+ pub mod tile_renderer;
++/// Shared map viewport data used by UI and native renderers.
++pub mod viewport;
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -31,7 +31,8 @@
+ pub mod timeline_widget;
+ 
+ pub mod layer;
+-pub use layer::{GeometrySnapshot, ParameterUpdate};
++pub use super::viewport::{GeometrySnapshot, MapViewport};
++pub use layer::ParameterUpdate;
+ 
+ #[derive(Debug, Clone)]
+ pub struct GeometryInfo {
+@@ -43,12 +44,6 @@
+   pub details: String,
+ }
+ 
+-#[derive(Debug, Clone, Copy)]
+-pub struct MapViewport {
+-  pub transform: Transform,
+-  pub rect: Rect,
+-}
+-
+ pub struct Map {
+   transform: Transform,
+   layers: Rc<Mutex<Vec<Box<dyn Layer>>>>,
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -1,7 +1,4 @@
+-use crate::map::{
+-  coordinates::{BoundingBox, PixelCoordinate, Transform},
+-  geometry_collection::Geometry,
+-};
++use crate::map::coordinates::{BoundingBox, Transform};
+ use egui::{Pos2, Rect, Ui};
+ 
+ /// Allows to display results of commands that return coordinates.
+@@ -23,6 +20,7 @@
+ /// Timeline overlay for temporal visualization.
+ mod timeline_layer;
+ 
++pub use crate::map::viewport::GeometrySnapshot;
+ pub use commands::{CommandLayer, ParameterUpdate};
+ pub use screenshot::ScreenshotLayer;
+ pub use shape_layer::ShapeLayer;
+@@ -36,12 +34,6 @@
+   pub shape_count: usize,
+ }
+ 
+-#[derive(Clone, Default)]
+-pub struct GeometrySnapshot {
+-  pub version: u64,
+-  pub geometries: Vec<Geometry<PixelCoordinate>>,
+-}
+-
+ /// A layer represents everything that can be summarized as a logical unit on the map.
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -88,12 +88,12 @@
+   }
+ 
+   #[must_use]
+-  pub fn viewport(&self) -> Option<crate::map::mapvas_egui::MapViewport> {
++  pub fn viewport(&self) -> Option<crate::map::viewport::MapViewport> {
+     self.map.viewport()
+   }
+ 
+   #[must_use]
+-  pub fn geometry_snapshot(&self) -> crate::map::mapvas_egui::GeometrySnapshot {
++  pub fn geometry_snapshot(&self) -> crate::map::viewport::GeometrySnapshot {
+     self.map.geometry_snapshot()
+   }
+ 
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -6,7 +6,7 @@
+ use bevy_egui::{egui, input::EguiWantsInput};
+ use mapvas::map::{
+   coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, Transform},
+-  mapvas_egui::MapViewport,
++  viewport::MapViewport,
+ };
+ 
+ const MAX_ZOOM: f32 = 524_288.0;
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -19,9 +19,9 @@
+       CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform as MapTransform,
+       generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
+     },
+-    mapvas_egui::MapViewport,
+     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
++    viewport::MapViewport,
+   },
+   task_tracker::{TaskCategory, TaskGuard},
+ };
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -9,7 +9,7 @@
+   map::{
+     coordinates::{CANVAS_SIZE, PixelCoordinate},
+     geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+-    mapvas_egui::{GeometrySnapshot, MapViewport},
++    viewport::{GeometrySnapshot, MapViewport},
+   },
+ };
+ 

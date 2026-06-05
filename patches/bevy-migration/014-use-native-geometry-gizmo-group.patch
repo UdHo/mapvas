@@ -1,0 +1,90 @@
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -25,11 +25,16 @@
+ impl Plugin for NativeGeometryPlugin {
+   fn build(&self, app: &mut App) {
+     app
++      .init_gizmo_group::<NativeGeometryGizmos>()
+       .add_systems(Startup, configure_native_geometry_gizmos)
+       .add_systems(Update, draw_native_geometry);
+   }
+ }
+ 
++#[derive(Default, Reflect, GizmoConfigGroup)]
++#[reflect(Default)]
++struct NativeGeometryGizmos;
++
+ #[derive(Clone, Copy, Default)]
+ struct GeometryStats {
+   geometries: usize,
+@@ -89,7 +94,7 @@
+ }
+ 
+ fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+-  let (config, _) = config_store.config_mut::<DefaultGizmoConfigGroup>();
++  let (config, _) = config_store.config_mut::<NativeGeometryGizmos>();
+   config.line.width = GEOMETRY_STROKE_WIDTH;
+   config.line.joints = GizmoLineJoint::Round(4);
+   config.depth_bias = -1.0;
+@@ -152,7 +157,7 @@
+   mut meshes: ResMut<Assets<Mesh>>,
+   mut materials: ResMut<Assets<ColorMaterial>>,
+   mut fills: Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+-  mut gizmos: Gizmos,
++  mut gizmos: Gizmos<NativeGeometryGizmos>,
+ ) {
+   let mut draw_stats = GeometryStats::default();
+   if !layer.enabled {
+@@ -411,7 +416,7 @@
+   window: &Window,
+   left_x: f32,
+   heading_style: HeadingStyle,
+-  gizmos: &mut Gizmos,
++  gizmos: &mut Gizmos<NativeGeometryGizmos>,
+   stats: &mut GeometryStats,
+ ) {
+   if !geometry_intersects_viewport(geometry, viewport, left_x) {
+@@ -485,7 +490,7 @@
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos,
++  gizmos: &mut Gizmos<NativeGeometryGizmos>,
+ ) -> usize {
+   if coords.len() < 2 {
+     return 0;
+@@ -517,7 +522,7 @@
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos,
++  gizmos: &mut Gizmos<NativeGeometryGizmos>,
+ ) -> bool {
+   let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+     return false;
+@@ -538,7 +543,7 @@
+ }
+ 
+ fn draw_heading(
+-  gizmos: &mut Gizmos,
++  gizmos: &mut Gizmos<NativeGeometryGizmos>,
+   center: Vec2,
+   heading_degrees: f32,
+   color: Color,
+@@ -612,14 +617,14 @@
+   (forward, right)
+ }
+ 
+-fn draw_line_loop(gizmos: &mut Gizmos, points: &[Vec2], color: Color) {
++fn draw_line_loop(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
+   draw_heading_lines(gizmos, points, color);
+   if let (Some(first), Some(last)) = (points.first(), points.last()) {
+     gizmos.line_2d(*last, *first, color);
+   }
+ }
+ 
+-fn draw_heading_lines(gizmos: &mut Gizmos, points: &[Vec2], color: Color) {
++fn draw_heading_lines(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
+   for segment in points.windows(2) {
+     gizmos.line_2d(segment[0], segment[1], color);
+   }

@@ -12,3 +12,5 @@ pub mod mapvas_egui;
 pub mod tile_loader;
 /// Tile rendering abstraction for raster and vector tiles.
 pub mod tile_renderer;
+/// Shared map viewport data used by UI and native renderers.
+pub mod viewport;

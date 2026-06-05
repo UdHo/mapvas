@@ -1,0 +1,54 @@
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -19,14 +19,20 @@
+ struct MapvasBevyState {
+   runtime: tokio::runtime::Runtime,
+   runtime_monitor: Option<RuntimeMonitor>,
++  initial_config: Config,
+   app: Option<MapApp>,
+ }
+ 
+ impl MapvasBevyState {
+-  fn new(runtime: tokio::runtime::Runtime, runtime_monitor: RuntimeMonitor) -> Self {
++  fn new(
++    runtime: tokio::runtime::Runtime,
++    runtime_monitor: RuntimeMonitor,
++    initial_config: Config,
++  ) -> Self {
+     Self {
+       runtime,
+       runtime_monitor: Some(runtime_monitor),
++      initial_config,
+       app: None,
+     }
+   }
+@@ -38,7 +44,7 @@
+ 
+     egui_extras::install_image_loaders(&egui_ctx);
+ 
+-    let config = Config::new();
++    let config = self.initial_config.clone();
+     init_style_config(config.vector_style_file.as_deref());
+ 
+     let (map, remote, data_holder) = Map::new_without_tiles(egui_ctx, config.clone());
+@@ -140,13 +146,17 @@
+   let runtime = build_runtime();
+   let runtime_handle = runtime.handle().clone();
+   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
+-  let native_tile_config = Config::new();
++  let config = Config::new();
+ 
+   App::new()
+-    .insert_non_send_resource(MapvasBevyState::new(runtime, runtime_monitor))
++    .insert_non_send_resource(MapvasBevyState::new(
++      runtime,
++      runtime_monitor,
++      config.clone(),
++    ))
+     .init_resource::<NativeGeometryLayer>()
+     .insert_resource(NativeTileRuntime(runtime_handle))
+-    .insert_resource(NativeTileLayer::new(native_tile_config))
++    .insert_resource(NativeTileLayer::new(config))
+     .add_plugins(
+       DefaultPlugins
+         .set(WindowPlugin {

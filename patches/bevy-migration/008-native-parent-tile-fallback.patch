@@ -1,0 +1,82 @@
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -566,22 +566,33 @@
+   };
+ 
+   let visible_tiles = layer.visible_tiles(viewport);
+-  let visible_set: HashSet<Tile> = visible_tiles.iter().copied().collect();
+   let runtime_handle = runtime.0.clone();
+ 
+   for tile in &visible_tiles {
+     if !layer.loaded_tiles.contains_key(tile) {
+       layer.request_tile(*tile, TilePriority::Current, runtime_handle.clone());
+-      continue;
+     }
++  }
+ 
+-    let Some(tile_rect) = tile_screen_rect(viewport, *tile) else {
++  let mut tiles_to_draw = visible_tiles
++    .iter()
++    .filter_map(|tile| loaded_tile_or_parent(&layer, *tile))
++    .collect::<Vec<_>>();
++  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
++  tiles_to_draw.dedup();
++  tiles_to_draw.reverse();
++
++  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
++  for tile in &tiles_to_draw {
++    let tile = *tile;
++
++    let Some(tile_rect) = tile_screen_rect(viewport, tile) else {
+       continue;
+     };
+-    let transform = transform_for_screen_rect(tile_rect, window);
++    let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
+     let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
+ 
+-    let entry = layer.loaded_tiles.get_mut(tile).expect("tile was checked");
++    let entry = layer.loaded_tiles.get_mut(&tile).expect("tile was checked");
+     if let Some(entity) = entry.entity {
+       if let Ok((mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
+         *sprite_transform = transform;
+@@ -602,7 +613,7 @@
+   layer.request_preload_tiles(&visible_tiles, runtime_handle);
+ 
+   for (tile, entry) in &mut layer.loaded_tiles {
+-    if visible_set.contains(tile) {
++    if draw_set.contains(tile) {
+       continue;
+     }
+     if let Some(entity) = entry.entity
+@@ -613,6 +624,15 @@
+   }
+ }
+ 
++fn loaded_tile_or_parent(layer: &NativeTileLayer, mut tile: Tile) -> Option<Tile> {
++  loop {
++    if layer.loaded_tiles.contains_key(&tile) {
++      return Some(tile);
++    }
++    tile = tile.parent()?;
++  }
++}
++
+ fn color_image_to_bevy(image: egui::ColorImage) -> Image {
+   let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
+   for pixel in image.pixels {
+@@ -659,12 +679,13 @@
+   None
+ }
+ 
+-fn transform_for_screen_rect(rect: egui::Rect, window: &Window) -> Transform {
++fn transform_for_screen_rect(rect: egui::Rect, window: &Window, tile_zoom: u8) -> Transform {
+   let center = rect.center();
++  let z = -10.0 + f32::from(tile_zoom) * 0.001;
+   Transform::from_xyz(
+     center.x - window.width() / 2.0,
+     window.height() / 2.0 - center.y,
+-    -10.0,
++    z,
+   )
+ }
+ 

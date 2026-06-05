@@ -6,7 +6,7 @@ use bevy::{
 use bevy_egui::{egui, input::EguiWantsInput};
 use mapvas::map::{
   coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, Transform},
-  mapvas_egui::MapViewport,
+  viewport::MapViewport,
 };
 
 const MAX_ZOOM: f32 = 524_288.0;
@@ -18,8 +18,25 @@ pub struct NativeMapPlugin;
 impl Plugin for NativeMapPlugin {
   fn build(&self, app: &mut App) {
     app
+      .init_resource::<NativeMapViewport>()
       .init_resource::<NativeMapControl>()
       .add_systems(Update, native_map_input);
+  }
+}
+
+#[derive(Resource, Default)]
+pub struct NativeMapViewport {
+  viewport: Option<MapViewport>,
+}
+
+impl NativeMapViewport {
+  pub fn set(&mut self, viewport: Option<MapViewport>) {
+    self.viewport = viewport;
+  }
+
+  #[must_use]
+  pub fn get(&self) -> Option<MapViewport> {
+    self.viewport
   }
 }
 
@@ -108,9 +125,15 @@ fn native_map_input(
 
   let cursor = cursor_pos(window);
   let cursor_in_viewport = cursor.is_some_and(|pos| viewport.rect.contains(pos));
+  let egui_popup_open = egui_wants_input.is_popup_open();
   let mut changed = false;
 
-  if buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
+  if egui_popup_open {
+    control.dragging = false;
+    control.last_cursor_pos = cursor;
+  }
+
+  if !egui_popup_open && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
     control.dragging = true;
     control.last_cursor_pos = cursor;
   }
@@ -119,6 +142,7 @@ fn native_map_input(
     control.last_cursor_pos = cursor;
   }
   if control.dragging
+    && !egui_popup_open
     && buttons.pressed(MouseButton::Left)
     && let (Some(last), Some(current)) = (control.last_cursor_pos, cursor)
   {
@@ -133,7 +157,8 @@ fn native_map_input(
     }
   }
 
-  if cursor_in_viewport
+  if !egui_popup_open
+    && cursor_in_viewport
     && scroll.delta.y != 0.0
     && let Some(cursor) = cursor
   {
