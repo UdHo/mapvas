@@ -19,6 +19,12 @@ Apply these patches in order from the repository root:
 15. `015-process-command-layer-before-draw.patch`
 16. `016-native-command-geometry-snapshots.patch`
 17. `017-suspend-native-map-input-for-egui-popups.patch`
+18. `018-native-point-fill-meshes.patch`
+19. `019-native-highlight-snapshots.patch`
+20. `020-native-highlight-polygon-fills.patch`
+21. `021-split-highlight-and-geometry-snapshot-versions.patch`
+22. `022-avoid-full-snapshots-for-highlight-only-updates.patch`
+23. `023-disjoint-native-fill-queries.patch`
 
 Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
 The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

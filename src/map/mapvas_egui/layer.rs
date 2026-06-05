@@ -155,9 +155,24 @@ pub trait Layer {
     GeometrySnapshot::default()
   }
 
+  /// Return snapshot metadata and transient overlays without re-collecting base geometry.
+  fn geometry_snapshot_without_geometries(&self) -> GeometrySnapshot {
+    GeometrySnapshot {
+      version: self.geometry_snapshot_version(),
+      geometry_version: self.geometry_base_snapshot_version(),
+      geometries: Vec::new(),
+      highlighted_geometries: Vec::new(),
+    }
+  }
+
   /// Return the version used to decide whether a geometry snapshot needs refreshing.
   fn geometry_snapshot_version(&self) -> u64 {
     0
+  }
+
+  /// Return the version for base geometry, excluding transient highlight-only changes.
+  fn geometry_base_snapshot_version(&self) -> u64 {
+    self.geometry_snapshot_version()
   }
 
   /// Whether this layer is a geometry source that can be drawn by a native renderer.

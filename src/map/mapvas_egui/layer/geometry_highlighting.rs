@@ -21,6 +21,7 @@ pub struct GeometryHighlighter {
   next_geometry_id: u64,
   geometry_id_map: HashMap<(String, usize, Vec<usize>), u64>,
   just_highlighted: bool,
+  version: u64,
 }
 
 impl GeometryHighlighter {
@@ -30,6 +31,7 @@ impl GeometryHighlighter {
       next_geometry_id: 1,
       geometry_id_map: HashMap::new(),
       just_highlighted: false,
+      version: 0,
     }
   }
 
@@ -51,14 +53,25 @@ impl GeometryHighlighter {
 
   /// Highlight a geometry by its unique ID
   pub fn highlight_geometry_by_id(&mut self, geometry_id: u64) {
+    if self.highlighted_geometry_id != Some(geometry_id) {
+      self.version = self.version.wrapping_add(1);
+    }
     self.highlighted_geometry_id = Some(geometry_id);
     self.just_highlighted = true;
   }
 
   /// Clear highlighting
   pub fn clear_highlighting(&mut self) {
+    if self.highlighted_geometry_id.is_some() {
+      self.version = self.version.wrapping_add(1);
+    }
     self.highlighted_geometry_id = None;
     self.just_highlighted = false;
+  }
+
+  #[must_use]
+  pub fn version(&self) -> u64 {
+    self.version
   }
 
   /// Check if any geometry is highlighted

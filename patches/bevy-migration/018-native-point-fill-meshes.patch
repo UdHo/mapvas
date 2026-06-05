@@ -1,0 +1,219 @@
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -19,6 +19,7 @@
+ const GEOMETRY_STROKE_WIDTH: f32 = 4.0;
+ const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
+ const GEOMETRY_FILL_Z: f32 = -5.0;
++const POINT_FILL_Z: f32 = -4.0;
+ 
+ pub struct NativeGeometryPlugin;
+ 
+@@ -54,6 +55,8 @@
+   draw_stats: GeometryStats,
+   fill_entities: Vec<Entity>,
+   fill_snapshot_version: u64,
++  point_fill_entities: Vec<Entity>,
++  point_fill_snapshot_version: u64,
+   heading_style: HeadingStyle,
+ }
+ 
+@@ -68,6 +71,8 @@
+       draw_stats: GeometryStats::default(),
+       fill_entities: Vec::new(),
+       fill_snapshot_version: 0,
++      point_fill_entities: Vec::new(),
++      point_fill_snapshot_version: 0,
+       heading_style: HeadingStyle::default(),
+     }
+   }
+@@ -87,12 +92,22 @@
+   wrap_offset: f32,
+ }
+ 
++#[derive(Component)]
++struct NativePointFill {
++  coord: PixelCoordinate,
++}
++
+ struct PolygonFillSpec {
+   mesh: Mesh,
+   color: Color,
+   bounds: GeometryBounds,
+ }
+ 
++struct PointFillSpec {
++  coord: PixelCoordinate,
++  color: Color,
++}
++
+ fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+   let (config, _) = config_store.config_mut::<NativeGeometryGizmos>();
+   config.line.width = GEOMETRY_STROKE_WIDTH;
+@@ -157,29 +172,35 @@
+   mut meshes: ResMut<Assets<Mesh>>,
+   mut materials: ResMut<Assets<ColorMaterial>>,
+   mut fills: Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
++  mut point_fills: Query<(&NativePointFill, &mut Transform, &mut Visibility)>,
+   mut gizmos: Gizmos<NativeGeometryGizmos>,
+ ) {
+   let mut draw_stats = GeometryStats::default();
+   if !layer.enabled {
+     set_fill_visibility(&mut fills, false);
++    set_point_fill_visibility(&mut point_fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   }
+   let Some(viewport) = viewport.get() else {
+     set_fill_visibility(&mut fills, false);
++    set_point_fill_visibility(&mut point_fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   };
+   let Ok(window) = windows.single() else {
+     set_fill_visibility(&mut fills, false);
++    set_point_fill_visibility(&mut point_fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   };
+ 
+   rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+   update_polygon_fills(viewport, window, &mut fills);
++  rebuild_point_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+ 
+   let left_x = viewport_left_x(viewport);
++  update_point_fills(viewport, window, left_x, &mut point_fills);
+   let heading_style = layer.heading_style;
+   for geometry in &layer.geometries {
+     draw_geometry(
+@@ -208,6 +229,19 @@
+   }
+ }
+ 
++fn set_point_fill_visibility(
++  fills: &mut Query<(&NativePointFill, &mut Transform, &mut Visibility)>,
++  visible: bool,
++) {
++  for (_, _, mut visibility) in fills.iter_mut() {
++    *visibility = if visible {
++      Visibility::Visible
++    } else {
++      Visibility::Hidden
++    };
++  }
++}
++
+ fn rebuild_polygon_fills_if_needed(
+   commands: &mut Commands,
+   meshes: &mut Assets<Mesh>,
+@@ -245,6 +279,41 @@
+ 
+   layer.fill_entities = fill_entities;
+   layer.fill_snapshot_version = layer.snapshot_version;
++}
++
++fn rebuild_point_fills_if_needed(
++  commands: &mut Commands,
++  meshes: &mut Assets<Mesh>,
++  materials: &mut Assets<ColorMaterial>,
++  layer: &mut NativeGeometryLayer,
++) {
++  if layer.point_fill_snapshot_version == layer.snapshot_version {
++    return;
++  }
++
++  for entity in layer.point_fill_entities.drain(..) {
++    commands.entity(entity).despawn();
++  }
++
++  let mesh = meshes.add(Circle::new(POINT_RADIUS).mesh().resolution(16));
++  let fill_specs = point_fill_specs(&layer.geometries);
++  let mut point_fill_entities = Vec::new();
++  for spec in fill_specs {
++    let material = materials.add(ColorMaterial::from(spec.color));
++    let entity = commands
++      .spawn((
++        Mesh2d(mesh.clone()),
++        MeshMaterial2d(material),
++        Transform::default(),
++        Visibility::Hidden,
++        NativePointFill { coord: spec.coord },
++      ))
++      .id();
++    point_fill_entities.push(entity);
++  }
++
++  layer.point_fill_entities = point_fill_entities;
++  layer.point_fill_snapshot_version = layer.snapshot_version;
+ }
+ 
+ fn update_polygon_fills(
+@@ -259,6 +328,27 @@
+     } else {
+       Visibility::Hidden
+     };
++  }
++}
++
++fn update_point_fills(
++  viewport: MapViewport,
++  window: &Window,
++  left_x: f32,
++  fills: &mut Query<(&NativePointFill, &mut Transform, &mut Visibility)>,
++) {
++  for (fill, mut transform, mut visibility) in fills.iter_mut() {
++    let Some(screen) = coordinate_to_screen(fill.coord, viewport, left_x) else {
++      *visibility = Visibility::Hidden;
++      continue;
++    };
++    if viewport.rect.contains(screen) {
++      let center = screen_to_bevy(screen, window);
++      *transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
++      *visibility = Visibility::Visible;
++    } else {
++      *visibility = Visibility::Hidden;
++    }
+   }
+ }
+ 
+@@ -283,6 +373,14 @@
+   fills
+ }
+ 
++fn point_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PointFillSpec> {
++  let mut fills = Vec::new();
++  for geometry in geometries {
++    collect_point_fill_specs(geometry, &mut fills);
++  }
++  fills
++}
++
+ fn collect_polygon_fill_specs(
+   geometry: &Geometry<PixelCoordinate>,
+   fills: &mut Vec<PolygonFillSpec>,
+@@ -316,6 +414,26 @@
+       });
+     }
+     Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
++  }
++}
++
++fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Vec<PointFillSpec>) {
++  match geometry {
++    Geometry::GeometryCollection(geometries, _) => {
++      for geometry in geometries {
++        collect_point_fill_specs(geometry, fills);
++      }
++    }
++    Geometry::Point(coord, metadata) => {
++      if !coord.is_valid() {
++        return;
++      }
++      fills.push(PointFillSpec {
++        coord: *coord,
++        color: style_color(metadata.style.as_ref()),
++      });
++    }
++    Geometry::LineString(_, _) | Geometry::Polygon(_, _) | Geometry::Heatmap(_, _) => {}
+   }
+ }
+ 

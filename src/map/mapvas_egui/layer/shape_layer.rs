@@ -650,6 +650,52 @@ impl ShapeLayer {
       })
       .collect()
   }
+
+  fn highlighted_geometry_snapshot(&self) -> Vec<Geometry<PixelCoordinate>> {
+    let Some((layer_id, shape_idx, nested_path)) =
+      self.geometry_highlighter.get_highlighted_geometry()
+    else {
+      return Vec::new();
+    };
+    if !nested_path.is_empty()
+      || !*self.layer_visibility.get(&layer_id).unwrap_or(&true)
+      || !*self
+        .geometry_visibility
+        .get(&(layer_id.clone(), shape_idx))
+        .unwrap_or(&true)
+    {
+      return Vec::new();
+    }
+    let Some(shape) = self.shape_map.get(&layer_id).and_then(|s| s.get(shape_idx)) else {
+      return Vec::new();
+    };
+    if let Some(current_time) = self.temporal_current_time
+      && !self.is_geometry_visible_at_time(shape, current_time)
+    {
+      return Vec::new();
+    }
+    if !self.geometry_matches_filter(shape) {
+      return Vec::new();
+    }
+
+    let default_style = Style::default();
+    self
+      .filter_nested_visibility(&layer_id, shape_idx, &[], shape)
+      .map(|geometry| {
+        geometry
+          .flat_iterate_with_merged_style(&default_style)
+          .filter(Geometry::is_visible)
+          .collect::<Vec<_>>()
+      })
+      .unwrap_or_default()
+  }
+
+  fn base_geometry_snapshot_version(&self) -> u64 {
+    self
+      .version
+      .wrapping_mul(31)
+      .wrapping_add(u64::from(self.visible()))
+  }
 }
 
 const NAME: &str = "Shape Layer";
@@ -677,7 +723,7 @@ impl Layer for ShapeLayer {
     self.headless = true;
   }
 
-  fn draw_interaction_overlay(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+  fn draw_interaction_overlay(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
     profile_scope!("ShapeLayer::draw_interaction_overlay");
 
     if !self.prepare_interaction_frame(ui, transform) {
@@ -686,7 +732,6 @@ impl Layer for ShapeLayer {
 
     self.collect_new_geo_tile_data(ui);
     self.sync_geometry_cache();
-    self.draw_highlight_overlay(ui, transform, rect);
     self.draw_detail_popup(ui);
   }
 
@@ -865,11 +910,14 @@ impl Layer for ShapeLayer {
   }
 
   fn geometry_snapshot(&self) -> GeometrySnapshot {
+    let geometry_version = self.base_geometry_snapshot_version();
     let version = self.geometry_snapshot_version();
     if !self.visible() {
       return GeometrySnapshot {
         version,
+        geometry_version,
         geometries: Vec::new(),
+        highlighted_geometries: Vec::new(),
       };
     }
 
@@ -914,15 +962,36 @@ impl Layer for ShapeLayer {
 
     GeometrySnapshot {
       version,
+      geometry_version,
       geometries,
+      highlighted_geometries: self.highlighted_geometry_snapshot(),
+    }
+  }
+
+  fn geometry_snapshot_without_geometries(&self) -> GeometrySnapshot {
+    let geometry_version = self.base_geometry_snapshot_version();
+    let version = self.geometry_snapshot_version();
+    GeometrySnapshot {
+      version,
+      geometry_version,
+      geometries: Vec::new(),
+      highlighted_geometries: if self.visible() {
+        self.highlighted_geometry_snapshot()
+      } else {
+        Vec::new()
+      },
     }
   }
 
   fn geometry_snapshot_version(&self) -> u64 {
     self
-      .version
-      .wrapping_mul(2)
-      .wrapping_add(u64::from(self.visible()))
+      .base_geometry_snapshot_version()
+      .wrapping_mul(31)
+      .wrapping_add(self.geometry_highlighter.version())
+  }
+
+  fn geometry_base_snapshot_version(&self) -> u64 {
+    self.base_geometry_snapshot_version()
   }
 
   fn is_native_geometry_source(&self) -> bool {

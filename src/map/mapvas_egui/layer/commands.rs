@@ -249,7 +249,9 @@ impl Layer for CommandLayer {
     if !self.visible() {
       return GeometrySnapshot {
         version,
+        geometry_version: version,
         geometries: Vec::new(),
+        highlighted_geometries: Vec::new(),
       };
     }
 
@@ -263,7 +265,9 @@ impl Layer for CommandLayer {
 
     GeometrySnapshot {
       version,
+      geometry_version: version,
       geometries,
+      highlighted_geometries: Vec::new(),
     }
   }
 

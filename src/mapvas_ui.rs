@@ -105,6 +105,14 @@ impl MapApp {
   }
 
   #[must_use]
+  pub fn geometry_snapshot_since(
+    &self,
+    geometry_version: u64,
+  ) -> crate::map::viewport::GeometrySnapshot {
+    self.map.geometry_snapshot_since(geometry_version)
+  }
+
+  #[must_use]
   pub fn geometry_snapshot_version(&self) -> u64 {
     self.map.geometry_snapshot_version()
   }

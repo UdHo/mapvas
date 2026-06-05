@@ -115,7 +115,8 @@ fn mapvas_ui_system(
           viewport = output.viewport;
           current_config = Some(output.current_config);
           if native_geometry.needs_snapshot(output.geometry_snapshot_version) {
-            geometry_snapshot = Some(app.geometry_snapshot());
+            geometry_snapshot =
+              Some(app.geometry_snapshot_since(native_geometry.geometry_version()));
           }
         }
         native_tiles.draw_overlay(ui, viewport);
