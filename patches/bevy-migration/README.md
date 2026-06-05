@@ -196,6 +196,7 @@ Apply these patches in order from the repository root:
 192. `192-clean-up-bevy-renderer-wording.patch`
 193. `193-clean-up-viewport-renderer-wording.patch`
 194. `194-rename-screenshot-target-bevy.patch`
+195. `195-despawn-untracked-bevy-tile-sprites.patch`
 
 Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
 The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
