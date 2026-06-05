@@ -48,6 +48,9 @@ const OSM_ATTRIBUTION_MARGIN: f32 = 8.0;
 const OSM_ATTRIBUTION_FONT_SIZE: f32 = 11.0;
 const OSM_ATTRIBUTION_BACKGROUND_Z: f32 = 50.0;
 const OSM_ATTRIBUTION_TEXT_Z: f32 = 51.0;
+const BASE_TILE_DETAIL_FACTOR: f32 = 2.0;
+const MIN_TILE_DETAIL_FACTOR: f32 = 0.5;
+const MAX_TILE_DETAIL_FACTOR: f32 = 2.0;
 const NATIVE_VECTOR_BACKGROUND_Z: f32 = -30.0;
 const NATIVE_VECTOR_LAND_Z: f32 = -29.0;
 const NATIVE_VECTOR_WATER_Z: f32 = -28.0;
@@ -205,6 +208,7 @@ pub struct BevyTileLayer {
   tile_source: TileSource,
   visible: bool,
   native_vector_tiles_enabled: bool,
+  tile_detail_factor: f32,
   loaded_tiles: HashMap<Tile, BevyTileEntry>,
   loaded_native_vector_tiles: HashMap<Tile, BevyNativeVectorTileEntry>,
   in_flight_tiles: HashSet<Tile>,
@@ -243,6 +247,7 @@ impl BevyTileLayer {
       tile_source: TileSource::All,
       visible: true,
       native_vector_tiles_enabled: true,
+      tile_detail_factor: 1.0,
       loaded_tiles: HashMap::new(),
       loaded_native_vector_tiles: HashMap::new(),
       in_flight_tiles: HashSet::new(),
@@ -326,6 +331,25 @@ impl BevyTileLayer {
         self.clear_tiles();
       }
 
+      let mut tile_detail_factor = self.tile_detail_factor;
+      ui.horizontal(|ui| {
+        ui.label("tile detail factor");
+        if ui
+          .add(
+            egui::Slider::new(
+              &mut tile_detail_factor,
+              MIN_TILE_DETAIL_FACTOR..=MAX_TILE_DETAIL_FACTOR,
+            )
+            .step_by(0.05)
+            .custom_formatter(|value, _| tile_detail_factor_label(value as f32)),
+          )
+          .changed()
+        {
+          self.tile_detail_factor = clamped_tile_detail_factor(tile_detail_factor);
+          self.clear_tiles();
+        }
+      });
+
       if self
         .tile_loader()
         .is_some_and(|loader| loader.tile_type() == TileType::Vector)
@@ -368,6 +392,10 @@ impl BevyTileLayer {
       ui.horizontal(|ui| {
         ui.label("Request zoom:");
         ui.label(self.current_request_zoom.to_string());
+      });
+      ui.horizontal(|ui| {
+        ui.label("Effective detail:");
+        ui.label(effective_tile_detail_factor_label(self.tile_detail_factor));
       });
       ui.horizontal(|ui| {
         ui.label("Max zoom:");
@@ -457,14 +485,15 @@ impl BevyTileLayer {
     };
 
     let calculated_zoom = tile_zoom_for_transform(&viewport.transform);
+    let detail_zoom = tile_zoom_with_detail_factor(viewport.transform, self.tile_detail_factor);
     let max_zoom = tile_loader.max_zoom();
     let tile_type = tile_loader.tile_type();
     let request_zoom = if tile_type == TileType::Vector && self.native_vector_tiles_enabled {
-      calculated_zoom.min(max_zoom)
-    } else if tile_type == TileType::Vector && calculated_zoom > max_zoom {
-      calculated_zoom.min(19)
+      detail_zoom.min(max_zoom)
+    } else if tile_type == TileType::Vector && detail_zoom > max_zoom {
+      detail_zoom.min(19)
     } else {
-      calculated_zoom.min(max_zoom)
+      detail_zoom.min(max_zoom)
     };
     self.current_ideal_zoom = calculated_zoom;
     self.current_request_zoom = request_zoom;
@@ -1860,6 +1889,35 @@ fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
   }
 }
 
+fn tile_zoom_with_detail_factor(
+  transform: mapvas::map::coordinates::Transform,
+  detail_factor: f32,
+) -> u8 {
+  let mut detail_transform = transform;
+  detail_transform.zoom *= effective_tile_detail_factor(detail_factor);
+  tile_zoom_for_transform(&detail_transform)
+}
+
+fn effective_tile_detail_factor(detail_factor: f32) -> f32 {
+  BASE_TILE_DETAIL_FACTOR * clamped_tile_detail_factor(detail_factor)
+}
+
+fn clamped_tile_detail_factor(detail_factor: f32) -> f32 {
+  if detail_factor.is_finite() {
+    detail_factor.clamp(MIN_TILE_DETAIL_FACTOR, MAX_TILE_DETAIL_FACTOR)
+  } else {
+    1.0
+  }
+}
+
+fn tile_detail_factor_label(detail_factor: f32) -> String {
+  format!("{:.2}x", clamped_tile_detail_factor(detail_factor))
+}
+
+fn effective_tile_detail_factor_label(detail_factor: f32) -> String {
+  format!("{:.2}x", effective_tile_detail_factor(detail_factor))
+}
+
 #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
 fn native_vector_tile_meshes(
   tile: &Tile,
@@ -2351,4 +2409,41 @@ fn native_vector_color(color: tiny_skia::Color) -> Color {
     f32::from(color.blue()) / 255.0,
     f32::from(color.alpha()) / 255.0,
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn tile_detail_factor_maps_to_adjacent_zoom_levels() {
+    let mut transform = mapvas::map::coordinates::Transform::default();
+    transform.zoom = 2f32.powi(10);
+
+    assert_eq!(tile_zoom_with_detail_factor(transform, 0.5), 12);
+    assert_eq!(tile_zoom_with_detail_factor(transform, 1.0), 13);
+    assert_eq!(tile_zoom_with_detail_factor(transform, 2.0), 14);
+  }
+
+  #[test]
+  fn tile_detail_factor_is_clamped_to_supported_range() {
+    assert_eq!(clamped_tile_detail_factor(0.25), 0.5);
+    assert_eq!(clamped_tile_detail_factor(2.5), 2.0);
+    assert_eq!(clamped_tile_detail_factor(f32::NAN), 1.0);
+  }
+
+  #[test]
+  fn tile_detail_factor_label_formats_float_factor() {
+    assert_eq!(tile_detail_factor_label(0.5), "0.50x");
+    assert_eq!(tile_detail_factor_label(1.0), "1.00x");
+    assert_eq!(tile_detail_factor_label(1.25), "1.25x");
+    assert_eq!(tile_detail_factor_label(2.0), "2.00x");
+  }
+
+  #[test]
+  fn effective_tile_detail_factor_includes_base_factor() {
+    assert_eq!(effective_tile_detail_factor(0.5), 1.0);
+    assert_eq!(effective_tile_detail_factor(1.0), 2.0);
+    assert_eq!(effective_tile_detail_factor(2.0), 4.0);
+  }
 }
