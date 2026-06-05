@@ -1,0 +1,44 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -129,6 +129,7 @@ Apply these patches in order from the repository root:
+ 125. `125-introduce-tile-image.patch`
+ 126. `126-return-tile-image-from-tile-renderers.patch`
+ 127. `127-keep-tile-image-egui-conversion-in-egui-layer.patch`
++128. `128-remove-egui-rect-adapter-from-map-viewport.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -402,7 +402,7 @@ impl Map {
+ 
+   pub fn focus_all_layers(&mut self) {
+     if let Some(viewport) = self.last_viewport {
+-      self.show_bounding_box(viewport.egui_rect());
++      self.show_bounding_box(viewport.rect.into());
+     }
+   }
+ 
+diff --git a/src/map/viewport.rs b/src/map/viewport.rs
+--- a/src/map/viewport.rs
++++ b/src/map/viewport.rs
+@@ -1,5 +1,3 @@
+-use egui::Rect;
+-
+ use super::{
+   coordinates::{PixelCoordinate, PixelPosition, PixelRect, Transform},
+   geometry_collection::Geometry,
+@@ -41,11 +39,6 @@ impl MapViewport {
+   pub fn contains(&self, pos: PixelPosition) -> bool {
+     self.rect.contains(pos)
+   }
+-
+-  #[must_use]
+-  pub fn egui_rect(&self) -> Rect {
+-    self.rect.into()
+-  }
+ }
+ 
+ #[derive(Clone, Default)]

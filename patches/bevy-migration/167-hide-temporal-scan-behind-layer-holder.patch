@@ -1,0 +1,103 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 10e25b6..94b8c25 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -168,6 +168,7 @@ Apply these patches in order from the repository root:
+ 164. `164-split-egui-layer-overlay-trait.patch`
+ 165. `165-move-egui-draw-hook-to-egui-layer.patch`
+ 166. `166-move-egui-controls-to-egui-layer.patch`
++167. `167-hide-temporal-scan-behind-layer-holder.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index d257e97..fa4d825 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1215,6 +1215,13 @@ pub trait MapLayerReader {
+ 
+ pub trait MapLayerHolder {
+   fn get_reader(&self) -> Box<dyn MapLayerReader + '_>;
++  /// Read temporal range from map layers without exposing the egui layer reader.
++  fn layer_temporal_range(
++    &self,
++  ) -> (
++    Option<chrono::DateTime<chrono::Utc>>,
++    Option<chrono::DateTime<chrono::Utc>>,
++  );
+   /// Render the timeline's egui sidebar controls.
+   fn timeline_egui_controls(&self, ui: &mut egui::Ui);
+   /// Read temporal range from the timeline (used by the temporal-controls scan).
+@@ -1246,6 +1253,36 @@ impl MapLayerHolder for MapLayerHolderImpl {
+     ))
+   }
+ 
++  fn layer_temporal_range(
++    &self,
++  ) -> (
++    Option<chrono::DateTime<chrono::Utc>>,
++    Option<chrono::DateTime<chrono::Utc>>,
++  ) {
++    let layers = self
++      .layers
++      .lock()
++      .unwrap_or_else(std::sync::PoisonError::into_inner);
++
++    layers.iter().map(|layer| layer.get_temporal_range()).fold(
++      (None, None),
++      |(earliest, latest), (layer_start, layer_end)| {
++        (
++          match (earliest, layer_start) {
++            (Some(current), Some(layer_start)) => Some(current.min(layer_start)),
++            (None, Some(layer_start)) => Some(layer_start),
++            (current, None) => current,
++          },
++          match (latest, layer_end) {
++            (Some(current), Some(layer_end)) => Some(current.max(layer_end)),
++            (None, Some(layer_end)) => Some(layer_end),
++            (current, None) => current,
++          },
++        )
++      },
++    )
++  }
++
+   fn timeline_egui_controls(&self, ui: &mut egui::Ui) {
+     self.timeline.borrow_mut().ui_egui_controls(ui);
+   }
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 20c9fe1..5129a8f 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -735,25 +735,13 @@ impl TemporalControls {
+     let mut earliest: Option<DateTime<Utc>> = None;
+     let mut latest: Option<DateTime<Utc>> = None;
+ 
+-    // We need to access the actual geometries to extract temporal data
+-    // Since the layer system doesn't directly expose geometries, we'll use a different approach
+-    // For now, we'll extract temporal range through the shapelayer if possible
+-
+-    // Scan for temporal data by accessing the layers
+-    let mut layer_reader = map_content.get_reader();
+-    for layer in layer_reader.get_layers() {
+-      // Get temporal range directly from the layer trait method
+-      let (layer_earliest, layer_latest) = layer.get_temporal_range();
+-
+-      if let Some(layer_earliest) = layer_earliest {
+-        earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
+-      }
+-
+-      if let Some(layer_latest) = layer_latest {
+-        latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
+-      }
++    let (layer_earliest, layer_latest) = map_content.layer_temporal_range();
++    if let Some(layer_earliest) = layer_earliest {
++      earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
++    }
++    if let Some(layer_latest) = layer_latest {
++      latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
+     }
+-    drop(layer_reader);
+ 
+     let (tl_earliest, tl_latest) = map_content.timeline_temporal_range();
+     if let Some(tl_earliest) = tl_earliest {

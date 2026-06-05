@@ -1,0 +1,99 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -787,12 +787,12 @@
+   ) {
+     for layer in layers.iter_mut() {
+       layer.process_pending_events();
+-      profile_scope!("Layer::draw", layer.name());
+-      layer.draw(ui, transform, rect);
++      profile_scope!("Layer::draw_egui", layer.name());
++      layer.draw_egui(ui, transform, rect);
+     }
+ 
+-    profile_scope!("Layer::draw", "Timeline");
+-    timeline.borrow_mut().draw(ui, transform, rect);
++    profile_scope!("Layer::draw_egui", "Timeline");
++    timeline.borrow_mut().draw_egui(ui, transform, rect);
+     for layer in layers.iter() {
+       layer.draw_attribution(ui, rect);
+     }
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -37,7 +37,7 @@
+ /// A layer represents everything that can be summarized as a logical unit on the map.
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
+   fn draw_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _rect: Rect) {}
+   fn handle_hover(&mut self, _pos: Option<Pos2>, _transform: &Transform) {}
+   fn clear(&mut self) {}
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -228,7 +228,7 @@
+     self.update_commands();
+   }
+ 
+-  fn draw(
++  fn draw_egui(
+     &mut self,
+     ui: &mut egui::Ui,
+     transform: &crate::map::coordinates::Transform,
+--- a/src/map/mapvas_egui/layer/screenshot.rs
++++ b/src/map/mapvas_egui/layer/screenshot.rs
+@@ -120,7 +120,7 @@
+     self.handle_screenshots();
+   }
+ 
+-  fn draw(
++  fn draw_egui(
+     &mut self,
+     ui: &mut egui::Ui,
+     _transform: &crate::map::coordinates::Transform,
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -781,8 +781,8 @@
+   }
+ 
+   #[allow(clippy::too_many_lines)]
+-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+-    profile_scope!("ShapeLayer::draw");
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
++    profile_scope!("ShapeLayer::draw_egui");
+ 
+     if !self.prepare_egui_draw_frame(ui, transform) {
+       return;
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -720,8 +720,8 @@
+     clippy::cast_sign_loss,
+     clippy::too_many_lines
+   )]
+-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+-    profile_scope!("TileLayer::draw");
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
++    profile_scope!("TileLayer::draw_egui");
+     self.collect_new_tile_data(ui);
+     if self.tile_loader_index != self.tile_loader_old_index {
+       log::info!(
+--- a/src/map/mapvas_egui/layer/timeline_layer.rs
++++ b/src/map/mapvas_egui/layer/timeline_layer.rs
+@@ -207,7 +207,7 @@
+ }
+ 
+ impl Layer for TimelineLayer {
+-  fn draw(&mut self, ui: &mut Ui, _transform: &Transform, rect: Rect) {
++  fn draw_egui(&mut self, ui: &mut Ui, _transform: &Transform, rect: Rect) {
+     if !self.properties.visible {
+       return;
+     }
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -102,6 +102,7 @@
+ 98. `098-remove-map-render-mode-state.patch`
+ 99. `099-construct-native-mapapp-directly.patch`
+ 100. `100-type-map-construction-options.patch`
++101. `101-rename-layer-draw-egui.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,143 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -86,7 +86,7 @@
+ 
+ impl Map {
+   #[must_use]
+-  pub fn new(
++  pub fn new_egui(
+     ctx: egui::Context,
+     cfg: crate::config::Config,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+--- a/src/headless.rs
++++ b/src/headless.rs
+@@ -88,7 +88,7 @@
+     let (mut map, remote, data_holder) = if self.no_map {
+       Map::new_egui_without_tiles(ctx, self.config.clone())
+     } else {
+-      Map::new(ctx, self.config.clone())
++      Map::new_egui(ctx, self.config.clone())
+     };
+     map.set_headless();
+ 
+--- a/tests/highlight_snapshot_tests.rs
++++ b/tests/highlight_snapshot_tests.rs
+@@ -12,7 +12,7 @@
+ fn create_test_app_with_geometries() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Use nested folders KML to have both collections and individual geometries
+--- a/tests/grid_snapshot_tests.rs
++++ b/tests/grid_snapshot_tests.rs
+@@ -12,7 +12,7 @@
+ fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Parse the GeoJSON content and inject it as a map event
+@@ -34,7 +34,7 @@
+ fn create_test_app_grid_mode() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+   MapApp::new(map, remote, data_holder, config, None)
+ }
+--- a/tests/popup_snapshot_tests.rs
++++ b/tests/popup_snapshot_tests.rs
+@@ -12,7 +12,7 @@
+ fn create_test_app_with_popup_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Read and parse the test KML file with MultiGeometry
+--- a/tests/popup_double_click_tests.rs
++++ b/tests/popup_double_click_tests.rs
+@@ -11,7 +11,7 @@
+ fn create_test_app_with_nested_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Create nested KML content with multiple levels
+--- a/tests/ui_tests.rs
++++ b/tests/ui_tests.rs
+@@ -6,7 +6,7 @@
+ fn create_test_app() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   MapApp::new(map, remote, data_holder, config, None)
+ }
+ 
+--- a/tests/temporal_snapshot_tests.rs
++++ b/tests/temporal_snapshot_tests.rs
+@@ -12,7 +12,7 @@
+ fn create_test_app_with_temporal_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Read and parse the temporal KML file
+@@ -37,7 +37,7 @@
+ fn create_test_app_with_unix_epoch_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Read and parse the unix epoch KML file
+@@ -381,7 +381,7 @@
+ fn create_test_app_with_debug_range_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Read and parse the debug range KML file (2-minute span)
+@@ -406,7 +406,7 @@
+ fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   // Read and parse the unix epoch KML file without timezone
+@@ -518,7 +518,7 @@
+ 
+   let config = Config::default();
+   let ctx = egui::Context::default();
+-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
++  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
+   map.set_headless();
+ 
+   let mut parser = KmlParser::new();
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -116,6 +116,7 @@
+ 112. `112-use-repaint-signal-in-shape-layer.patch`
+ 113. `113-drop-egui-context-from-native-map-constructor.patch`
+ 114. `114-borrow-egui-context-in-bevy-initialize.patch`
++115. `115-rename-default-map-constructor-egui.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

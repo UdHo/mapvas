@@ -1,6 +1,5 @@
 use std::{str::FromStr, sync::LazyLock};
 
-use egui::Color32;
 use log::{debug, error, info};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -76,7 +75,7 @@ impl Parser for GrepParser {
           coordinates[0].into(),
           Metadata {
             label: label.clone().map(std::convert::Into::into),
-            style: Some(Style::default().with_color(self.color.into())),
+            style: Some(Style::default().with_color(self.color)),
             heading: None,
             time_data: None,
           },
@@ -87,7 +86,7 @@ impl Parser for GrepParser {
               coordinates.into_iter().map(Into::into).collect(),
               Metadata {
                 label: label.clone().map(std::convert::Into::into),
-                style: Some(Style::default().with_color(self.color.into())),
+                style: Some(Style::default().with_color(self.color)),
                 heading: None,
                 time_data: None,
               },
@@ -99,8 +98,8 @@ impl Parser for GrepParser {
                 label: label.clone().map(std::convert::Into::into),
                 style: Some(
                   Style::default()
-                    .with_color(self.color.into())
-                    .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+                    .with_color(self.color)
+                    .with_fill_color(self.color.gamma_multiply(0.4)),
                 ),
                 heading: None,
                 time_data: None,
@@ -117,7 +116,7 @@ impl Parser for GrepParser {
             c.into_iter().map(Into::into).collect(),
             Metadata {
               label: label.clone().map(std::convert::Into::into),
-              style: Some(Style::default().with_color(self.color.into())),
+              style: Some(Style::default().with_color(self.color)),
               heading: None,
               time_data: None,
             },
@@ -131,7 +130,7 @@ impl Parser for GrepParser {
             c.into_iter().map(Into::into).collect(),
             Metadata {
               label: label.clone().map(std::convert::Into::into),
-              style: Some(Style::default().with_color(self.color.into())),
+              style: Some(Style::default().with_color(self.color)),
               heading: None,
               time_data: None,
             },
@@ -187,8 +186,8 @@ impl GrepParser {
         .map_err(|()| error!("Failed parsing {color}"));
     }
     for (_, [hex]) in HEX_COLOR_RE.captures_iter(line).map(|c| c.extract()) {
-      if let Some(color32) = StyleParser::parse_hex_color(hex) {
-        self.color = Color::from(color32);
+      if let Some(color) = StyleParser::parse_hex_color(hex) {
+        self.color = color;
       }
     }
   }
@@ -488,31 +487,28 @@ mod tests {
   fn parse_hex_color_sets_color() {
     let mut p = parser();
     p.parse_color("color #ff0000 here");
-    assert_eq!(p.color, Color::from(Color32::RED));
+    assert_eq!(p.color, Color::RED);
   }
 
   #[test]
   fn parse_hex_color_short_form() {
     let mut p = parser();
     p.parse_color("#f00");
-    assert_eq!(p.color, Color::from(Color32::RED));
+    assert_eq!(p.color, Color::RED);
   }
 
   #[test]
   fn parse_hex_color_with_alpha() {
     let mut p = parser();
     p.parse_color("#ff000080");
-    assert_eq!(
-      p.color,
-      Color::from(Color32::from_rgba_unmultiplied(255, 0, 0, 128))
-    );
+    assert_eq!(p.color, Color::from_rgba_unmultiplied(255, 0, 0, 128));
   }
 
   #[test]
   fn parse_hex_color_in_coordinate_line() {
     let mut p = parser();
     let event = p.parse_line("#00ff00 52.5, 13.4");
-    assert_eq!(p.color, Color::from(Color32::GREEN));
+    assert_eq!(p.color, Color::GREEN);
     assert!(event.is_some());
   }
 

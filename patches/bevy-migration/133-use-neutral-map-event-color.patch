@@ -1,0 +1,405 @@
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -134,6 +134,7 @@
+ 130. `130-use-egui-tile-pixel-conversion-helpers.patch`
+ 131. `131-use-pixel-position-for-layer-hover.patch`
+ 132. `132-remove-egui-coordinate-adapters.patch`
++133. `133-use-neutral-map-event-color.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+--- a/src/map/map_event.rs
++++ b/src/map/map_event.rs
+@@ -2,22 +2,45 @@
+   coordinates::{PixelCoordinate, WGS84Coordinate},
+   geometry_collection::Geometry,
+ };
+-use egui::Color32;
+ use serde::{Deserialize, Serialize};
+ use std::{path::PathBuf, str::FromStr};
+ 
+-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+-pub struct Color(pub Color32);
++#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(transparent)]
++pub struct Color([u8; 4]);
+ 
+-impl From<Color32> for Color {
+-  fn from(value: egui::Color32) -> Self {
+-    Color(value)
++impl Color {
++  pub const BLACK: Self = Self::from_rgb(0, 0, 0);
++  pub const BLUE: Self = Self::from_rgb(0, 0, 255);
++  pub const BROWN: Self = Self::from_rgb(165, 42, 42);
++  pub const DARK_BLUE: Self = Self::from_rgb(0, 0, 0x8B);
++  pub const DARK_GREEN: Self = Self::from_rgb(0, 0x64, 0);
++  pub const DARK_RED: Self = Self::from_rgb(0x8B, 0, 0);
++  pub const GRAY: Self = Self::from_rgb(160, 160, 160);
++  pub const GREEN: Self = Self::from_rgb(0, 255, 0);
++  pub const RED: Self = Self::from_rgb(255, 0, 0);
++  pub const WHITE: Self = Self::from_rgb(255, 255, 255);
++  pub const YELLOW: Self = Self::from_rgb(255, 255, 0);
++
++  #[must_use]
++  pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
++    Self::from_rgba_unmultiplied(r, g, b, 255)
+   }
++
++  #[must_use]
++  pub const fn from_rgba_unmultiplied(r: u8, g: u8, b: u8, a: u8) -> Self {
++    Self([r, g, b, a])
++  }
++
++  #[must_use]
++  pub const fn to_rgba_unmultiplied(self) -> [u8; 4] {
++    self.0
++  }
+ }
+ 
+ impl Default for Color {
+   fn default() -> Self {
+-    Color(egui::Color32::BLUE)
++    Color::BLUE
+   }
+ }
+ 
+@@ -26,28 +49,22 @@
+   fn from_str(input: &str) -> Result<Color, Self::Err> {
+     let lowercase = input.to_lowercase();
+     match lowercase.as_str() {
+-      "blue" => Ok(Color32::BLUE.into()),
+-      "darkblue" => Ok(Color32::DARK_BLUE.into()),
+-      "red" => Ok(Color32::RED.into()),
+-      "darkred" => Ok(Color32::DARK_RED.into()),
+-      "green" => Ok(Color32::GREEN.into()),
+-      "darkgreen" => Ok(Color32::DARK_GREEN.into()),
+-      "yellow" => Ok(Color32::YELLOW.into()),
+-      "black" => Ok(Color32::BLACK.into()),
+-      "white" => Ok(Color32::WHITE.into()),
+-      "grey" | "gray" => Ok(Color32::GRAY.into()),
+-      "brown" => Ok(Color32::BROWN.into()),
++      "blue" => Ok(Color::BLUE),
++      "darkblue" => Ok(Color::DARK_BLUE),
++      "red" => Ok(Color::RED),
++      "darkred" => Ok(Color::DARK_RED),
++      "green" => Ok(Color::GREEN),
++      "darkgreen" => Ok(Color::DARK_GREEN),
++      "yellow" => Ok(Color::YELLOW),
++      "black" => Ok(Color::BLACK),
++      "white" => Ok(Color::WHITE),
++      "grey" | "gray" => Ok(Color::GRAY),
++      "brown" => Ok(Color::BROWN),
+       _ => Err(()),
+     }
+   }
+ }
+ 
+-impl From<Color> for egui::Color32 {
+-  fn from(value: Color) -> Self {
+-    value.0
+-  }
+-}
+-
+ #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
+ pub enum FillStyle {
+   #[default]
+@@ -121,30 +138,30 @@
+   #[test]
+   fn color_from_str_all_variants() {
+     let cases = [
+-      ("blue", Color32::BLUE),
+-      ("darkblue", Color32::DARK_BLUE),
+-      ("red", Color32::RED),
+-      ("darkred", Color32::DARK_RED),
+-      ("green", Color32::GREEN),
+-      ("darkgreen", Color32::DARK_GREEN),
+-      ("yellow", Color32::YELLOW),
+-      ("black", Color32::BLACK),
+-      ("white", Color32::WHITE),
+-      ("grey", Color32::GRAY),
+-      ("gray", Color32::GRAY),
+-      ("brown", Color32::BROWN),
++      ("blue", Color::BLUE),
++      ("darkblue", Color::DARK_BLUE),
++      ("red", Color::RED),
++      ("darkred", Color::DARK_RED),
++      ("green", Color::GREEN),
++      ("darkgreen", Color::DARK_GREEN),
++      ("yellow", Color::YELLOW),
++      ("black", Color::BLACK),
++      ("white", Color::WHITE),
++      ("grey", Color::GRAY),
++      ("gray", Color::GRAY),
++      ("brown", Color::BROWN),
+     ];
+     for (name, expected) in cases {
+       let color = Color::from_str(name).unwrap();
+-      assert_eq!(color.0, expected, "Color '{name}' should match");
++      assert_eq!(color, expected, "Color '{name}' should match");
+     }
+   }
+ 
+   #[test]
+   fn color_from_str_case_insensitive() {
+-    assert_eq!(Color::from_str("Blue").unwrap().0, Color32::BLUE);
+-    assert_eq!(Color::from_str("DARKRED").unwrap().0, Color32::DARK_RED);
+-    assert_eq!(Color::from_str("GREEN").unwrap().0, Color32::GREEN);
++    assert_eq!(Color::from_str("Blue").unwrap(), Color::BLUE);
++    assert_eq!(Color::from_str("DARKRED").unwrap(), Color::DARK_RED);
++    assert_eq!(Color::from_str("GREEN").unwrap(), Color::GREEN);
+   }
+ 
+   #[test]
+@@ -156,10 +173,16 @@
+ 
+   #[test]
+   fn color_default_is_blue() {
+-    assert_eq!(Color::default().0, Color32::BLUE);
++    assert_eq!(Color::default(), Color::BLUE);
+   }
+ 
+   #[test]
++  fn color_preserves_rgba_bytes() {
++    let color = Color::from_rgba_unmultiplied(1, 2, 3, 4);
++    assert_eq!(color.to_rgba_unmultiplied(), [1, 2, 3, 4]);
++  }
++
++  #[test]
+   fn fillstyle_from_str_all_variants() {
+     assert_eq!(FillStyle::from_str("solid").unwrap(), FillStyle::Solid);
+     assert_eq!(
+--- a/src/map/mapvas_egui/layer/commands/external_cmd.rs
++++ b/src/map/mapvas_egui/layer/commands/external_cmd.rs
+@@ -1261,8 +1261,6 @@
+ 
+ #[cfg(test)]
+ mod tests {
+-
+-  use egui::Color32;
+ 
+   use crate::{
+     map::{
+@@ -1304,7 +1302,7 @@
+       .into(),
+       coordinate_template: "{lat},{lon}".to_string(),
+       coordinates_template: "{lat},{lon}:".to_string(),
+-      parser: Parsers::TTJson(TTJsonParser::new().with_color(Color(Color32::DARK_GREEN))),
++      parser: Parsers::TTJson(TTJsonParser::new().with_color(Color::DARK_GREEN)),
+     };
+ 
+     let cmd = ExternalCommand::new(ExCommand::Curl(curl));
+@@ -1383,9 +1381,7 @@
+       .into(),
+       coordinate_template: "{lat},{lon}".to_string(),
+       coordinates_template: "{lat},{lon}:".to_string(),
+-      parser: Parsers::Grep(
+-        crate::parser::GrepParser::new(false).with_color(Color(Color32::DARK_GREEN)),
+-      ),
++      parser: Parsers::Grep(crate::parser::GrepParser::new(false).with_color(Color::DARK_GREEN)),
+       executable: "echo".to_string(),
+       args_templates: vec!["{origin}\n {destination}\n {via}".to_string()],
+     };
+--- a/src/parser/grep.rs
++++ b/src/parser/grep.rs
+@@ -76,7 +76,7 @@
+           coordinates[0].into(),
+           Metadata {
+             label: label.clone().map(std::convert::Into::into),
+-            style: Some(Style::default().with_color(self.color.into())),
++            style: Some(Style::default().with_color(self.color32())),
+             heading: None,
+             time_data: None,
+           },
+@@ -87,7 +87,7 @@
+               coordinates.into_iter().map(Into::into).collect(),
+               Metadata {
+                 label: label.clone().map(std::convert::Into::into),
+-                style: Some(Style::default().with_color(self.color.into())),
++                style: Some(Style::default().with_color(self.color32())),
+                 heading: None,
+                 time_data: None,
+               },
+@@ -99,8 +99,8 @@
+                 label: label.clone().map(std::convert::Into::into),
+                 style: Some(
+                   Style::default()
+-                    .with_color(self.color.into())
+-                    .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
++                    .with_color(self.color32())
++                    .with_fill_color(self.color32().gamma_multiply(0.4)),
+                 ),
+                 heading: None,
+                 time_data: None,
+@@ -117,7 +117,7 @@
+             c.into_iter().map(Into::into).collect(),
+             Metadata {
+               label: label.clone().map(std::convert::Into::into),
+-              style: Some(Style::default().with_color(self.color.into())),
++              style: Some(Style::default().with_color(self.color32())),
+               heading: None,
+               time_data: None,
+             },
+@@ -131,7 +131,7 @@
+             c.into_iter().map(Into::into).collect(),
+             Metadata {
+               label: label.clone().map(std::convert::Into::into),
+-              style: Some(Style::default().with_color(self.color.into())),
++              style: Some(Style::default().with_color(self.color32())),
+               heading: None,
+               time_data: None,
+             },
+@@ -170,6 +170,10 @@
+     self
+   }
+ 
++  fn color32(&self) -> Color32 {
++    StyleParser::event_color_to_color32(self.color)
++  }
++
+   #[must_use]
+   pub fn with_label_pattern(mut self, label_pattern: &str) -> Self {
+     self.label_re = Some(Regex::new(label_pattern).expect("Label pattern regex must compile"));
+@@ -188,7 +192,7 @@
+     }
+     for (_, [hex]) in HEX_COLOR_RE.captures_iter(line).map(|c| c.extract()) {
+       if let Some(color32) = StyleParser::parse_hex_color(hex) {
+-        self.color = Color::from(color32);
++        self.color = StyleParser::color32_to_event_color(color32);
+       }
+     }
+   }
+@@ -488,31 +492,28 @@
+   fn parse_hex_color_sets_color() {
+     let mut p = parser();
+     p.parse_color("color #ff0000 here");
+-    assert_eq!(p.color, Color::from(Color32::RED));
++    assert_eq!(p.color, Color::RED);
+   }
+ 
+   #[test]
+   fn parse_hex_color_short_form() {
+     let mut p = parser();
+     p.parse_color("#f00");
+-    assert_eq!(p.color, Color::from(Color32::RED));
++    assert_eq!(p.color, Color::RED);
+   }
+ 
+   #[test]
+   fn parse_hex_color_with_alpha() {
+     let mut p = parser();
+     p.parse_color("#ff000080");
+-    assert_eq!(
+-      p.color,
+-      Color::from(Color32::from_rgba_unmultiplied(255, 0, 0, 128))
+-    );
++    assert_eq!(p.color, Color::from_rgba_unmultiplied(255, 0, 0, 128));
+   }
+ 
+   #[test]
+   fn parse_hex_color_in_coordinate_line() {
+     let mut p = parser();
+     let event = p.parse_line("#00ff00 52.5, 13.4");
+-    assert_eq!(p.color, Color::from(Color32::GREEN));
++    assert_eq!(p.color, Color::GREEN);
+     assert!(event.is_some());
+   }
+ 
+--- a/src/parser/style.rs
++++ b/src/parser/style.rs
+@@ -1,13 +1,27 @@
+ use egui::Color32;
+ use serde_json::{Map, Value};
+ 
+-use crate::map::geometry_collection::{Metadata, Style, TimeData};
++use crate::map::{
++  geometry_collection::{Metadata, Style, TimeData},
++  map_event::Color,
++};
+ use chrono::{DateTime, Utc};
+ 
+ /// Shared style parsing utilities for JSON-based parsers
+ pub struct StyleParser;
+ 
+ impl StyleParser {
++  #[must_use]
++  pub fn event_color_to_color32(color: Color) -> Color32 {
++    let [r, g, b, a] = color.to_rgba_unmultiplied();
++    Color32::from_rgba_unmultiplied(r, g, b, a)
++  }
++
++  #[must_use]
++  pub fn color32_to_event_color(color: Color32) -> Color {
++    Color::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
++  }
++
+   /// Extract metadata and style from JSON properties/object
+   pub fn extract_metadata_from_json(properties: Option<&Value>) -> Metadata {
+     let mut metadata = Metadata::default();
+--- a/src/parser/tt_json.rs
++++ b/src/parser/tt_json.rs
+@@ -1,4 +1,3 @@
+-use egui::Color32;
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::map::{
+@@ -7,7 +6,7 @@
+   map_event::{Color, Layer, MapEvent},
+ };
+ 
+-use super::Parser;
++use super::{Parser, style::StyleParser};
+ 
+ #[derive(Debug, Serialize, Deserialize, Clone)]
+ pub struct TTJsonParser {
+@@ -41,6 +40,10 @@
+     self
+   }
+ 
++  fn color32(&self) -> egui::Color32 {
++    StyleParser::event_color_to_color32(self.color)
++  }
++
+   fn convert_routes(&self, routes: &[Route]) -> MapEvent {
+     let mut res = vec![];
+     for route in routes {
+@@ -61,7 +64,7 @@
+               points,
+               Metadata {
+                 label: Some(format!("Leg {i}").into()),
+-                style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
++                style: Some(Style::default().with_color(self.color32())),
+                 heading: None,
+                 time_data: None,
+               },
+@@ -91,8 +94,8 @@
+         label: Some("Range boundary".into()),
+         style: Some(
+           Style::default()
+-            .with_color(Into::<Color32>::into(self.color))
+-            .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
++            .with_color(self.color32())
++            .with_fill_color(self.color32().gamma_multiply(0.4)),
+         ),
+         heading: None,
+         time_data: None,
+@@ -105,8 +108,8 @@
+           label: Some("Range center".into()),
+           style: Some(
+             Style::default()
+-              .with_color(Into::<Color32>::into(self.color))
+-              .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
++              .with_color(self.color32())
++              .with_fill_color(self.color32().gamma_multiply(0.4)),
+           ),
+           heading: None,
+           time_data: None,
+@@ -275,7 +278,7 @@
+ 
+   #[test]
+   fn with_color_builder() {
+-    let parser = TTJsonParser::new().with_color(Color::from(egui::Color32::RED));
+-    assert_eq!(parser.color, Color::from(egui::Color32::RED));
++    let parser = TTJsonParser::new().with_color(Color::RED);
++    assert_eq!(parser.color, Color::RED);
+   }
+ }

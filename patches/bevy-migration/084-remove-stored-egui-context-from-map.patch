@@ -1,0 +1,95 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -42,7 +42,6 @@
+   layers: Rc<Mutex<Vec<Box<dyn Layer>>>>,
+   timeline: Rc<RefCell<TimelineLayer>>,
+   recv: Rc<Receiver<MapEvent>>,
+-  ctx: egui::Context,
+   layer_sender: Sender<MapEvent>,
+   command_sender: Sender<ParameterUpdate>,
+   repaint: RepaintSignal,
+@@ -183,7 +182,6 @@
+         layers,
+         timeline,
+         recv: recv.into(),
+-        ctx,
+         layer_sender: shape_layer_sender,
+         command_sender,
+         repaint,
+@@ -324,7 +322,12 @@
+     }
+   }
+ 
+-  fn handle_keys(&mut self, events: impl Iterator<Item = egui::Event>, rect: Rect) {
++  fn handle_keys(
++    &mut self,
++    ctx: &egui::Context,
++    events: impl Iterator<Item = egui::Event>,
++    rect: Rect,
++  ) {
+     for event in events {
+       if let egui::Event::Key {
+         key,
+@@ -362,7 +365,7 @@
+ 
+           egui::Key::V => self.paste(),
+           egui::Key::C => self.copy(),
+-          egui::Key::S => self.request_screenshot(),
++          egui::Key::S => self.request_screenshot(ctx),
+           _ => {
+             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
+           }
+@@ -636,8 +639,8 @@
+     // TODO
+   }
+ 
+-  pub fn request_screenshot(&mut self) {
+-    let has_text_focus = self.ctx.memory(|mem| mem.focused().is_some());
++  pub fn request_screenshot(&mut self, ctx: &egui::Context) {
++    let has_text_focus = ctx.memory(|mem| mem.focused().is_some());
+     if !has_text_focus {
+       let path = helpers::current_time_screenshot_name();
+       if self.render_mode.uses_native_rendering() {
+@@ -669,7 +672,7 @@
+         .cloned()
+         .collect::<Vec<_>>()
+     });
+-    self.handle_keys(events.into_iter(), rect);
++    self.handle_keys(ui.ctx(), events.into_iter(), rect);
+ 
+     if response.double_clicked()
+       && let Some(pos) = response.hover_pos()
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -130,8 +130,8 @@
+     self.map.copy();
+   }
+ 
+-  pub fn request_map_screenshot(&mut self) {
+-    self.map.request_screenshot();
++  pub fn request_map_screenshot(&mut self, ctx: &egui::Context) {
++    self.map.request_screenshot(ctx);
+   }
+ 
+   #[must_use]
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -133,7 +133,7 @@
+             NativeMapShortcut::FocusAll => app.focus_map(),
+             NativeMapShortcut::Paste => app.paste_map(),
+             NativeMapShortcut::Copy => app.copy_map(),
+-            NativeMapShortcut::Screenshot => app.request_map_screenshot(),
++            NativeMapShortcut::Screenshot => app.request_map_screenshot(&egui_ctx),
+           }
+         }
+         app.handle_map_hover(native_map.hover_pos());
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -85,6 +85,7 @@
+ 81. `081-replace-native-layer-overlay-hook.patch`
+ 82. `082-require-repaint-for-native-map-constructor.patch`
+ 83. `083-use-native-viewport-resource-for-map-input.patch`
++84. `084-remove-stored-egui-context-from-map.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

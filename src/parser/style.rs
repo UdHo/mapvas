@@ -1,7 +1,9 @@
-use egui::Color32;
 use serde_json::{Map, Value};
 
-use crate::map::geometry_collection::{Metadata, Style, TimeData};
+use crate::map::{
+  geometry_collection::{Metadata, Style, TimeData},
+  map_event::Color,
+};
 use chrono::{DateTime, Utc};
 
 /// Shared style parsing utilities for JSON-based parsers
@@ -102,7 +104,7 @@ impl StyleParser {
   }
 
   /// Parse color string (hex, rgb, named colors)
-  pub fn parse_color(color_str: &str) -> Option<Color32> {
+  pub fn parse_color(color_str: &str) -> Option<Color> {
     let color_str = color_str.trim();
 
     if let Some(hex) = color_str.strip_prefix('#') {
@@ -114,51 +116,51 @@ impl StyleParser {
     }
 
     match color_str.to_lowercase().as_str() {
-      "red" => Some(Color32::RED),
-      "green" => Some(Color32::GREEN),
-      "blue" => Some(Color32::BLUE),
-      "yellow" => Some(Color32::YELLOW),
-      "black" => Some(Color32::BLACK),
-      "white" => Some(Color32::WHITE),
-      "gray" | "grey" => Some(Color32::GRAY),
+      "red" => Some(Color::RED),
+      "green" => Some(Color::GREEN),
+      "blue" => Some(Color::BLUE),
+      "yellow" => Some(Color::YELLOW),
+      "black" => Some(Color::BLACK),
+      "white" => Some(Color::WHITE),
+      "gray" | "grey" => Some(Color::GRAY),
       _ => None,
     }
   }
 
   /// Parse hex color string
-  pub fn parse_hex_color(hex: &str) -> Option<Color32> {
+  pub fn parse_hex_color(hex: &str) -> Option<Color> {
     match hex.len() {
       3 => {
         let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
         let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
         let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-        Some(Color32::from_rgb(r, g, b))
+        Some(Color::from_rgb(r, g, b))
       }
       6 => {
         let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        Some(Color32::from_rgb(r, g, b))
+        Some(Color::from_rgb(r, g, b))
       }
       8 => {
         let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
         let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-        Some(Color32::from_rgba_unmultiplied(r, g, b, a))
+        Some(Color::from_rgba_unmultiplied(r, g, b, a))
       }
       _ => None,
     }
   }
 
   /// Parse `rgb()` color string
-  pub fn parse_rgb_color(rgb: &str) -> Option<Color32> {
+  pub fn parse_rgb_color(rgb: &str) -> Option<Color> {
     let parts: Vec<&str> = rgb.split(',').map(str::trim).collect();
     if parts.len() >= 3 {
       let r = parts[0].parse::<u8>().ok()?;
       let g = parts[1].parse::<u8>().ok()?;
       let b = parts[2].parse::<u8>().ok()?;
-      Some(Color32::from_rgb(r, g, b))
+      Some(Color::from_rgb(r, g, b))
     } else {
       None
     }
@@ -291,17 +293,17 @@ mod tests {
   use serde_json::json;
 
   #[rstest]
-  #[case("#ff0000", Some(Color32::RED))]
-  #[case("#f00", Some(Color32::RED))]
-  #[case("#ff000080", Some(Color32::from_rgba_unmultiplied(255, 0, 0, 128)))]
-  #[case("rgb(255, 0, 0)", Some(Color32::RED))]
-  #[case("rgb(0, 255, 0)", Some(Color32::GREEN))]
-  #[case("red", Some(Color32::RED))]
-  #[case("blue", Some(Color32::BLUE))]
-  #[case("green", Some(Color32::GREEN))]
+  #[case("#ff0000", Some(Color::RED))]
+  #[case("#f00", Some(Color::RED))]
+  #[case("#ff000080", Some(Color::from_rgba_unmultiplied(255, 0, 0, 128)))]
+  #[case("rgb(255, 0, 0)", Some(Color::RED))]
+  #[case("rgb(0, 255, 0)", Some(Color::GREEN))]
+  #[case("red", Some(Color::RED))]
+  #[case("blue", Some(Color::BLUE))]
+  #[case("green", Some(Color::GREEN))]
   #[case("invalid", None)]
   #[case("#gg0000", None)]
-  fn test_color_parsing(#[case] input: &str, #[case] expected: Option<Color32>) {
+  fn test_color_parsing(#[case] input: &str, #[case] expected: Option<Color>) {
     assert_eq!(StyleParser::parse_color(input), expected);
   }
 
@@ -319,8 +321,8 @@ mod tests {
       assert!(style.is_some());
 
       if let Some(style) = style {
-        assert_eq!(style.color(), Color32::RED);
-        assert_eq!(style.fill_color(), Color32::GREEN);
+        assert_eq!(style.color(), Color::RED);
+        assert_eq!(style.fill_color(), Color::GREEN);
       }
     }
   }
@@ -340,7 +342,7 @@ mod tests {
     assert!(metadata.style.is_some());
 
     if let Some(style) = &metadata.style {
-      assert_eq!(style.color(), Color32::RED);
+      assert_eq!(style.color(), Color::RED);
     }
   }
 

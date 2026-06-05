@@ -1,0 +1,171 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 28c5969..0cc1924 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -147,6 +147,7 @@ Apply these patches in order from the repository root:
+ 143. `143-use-pixel-rect-for-egui-tile-paint-helpers.patch`
+ 144. `144-use-pixel-rect-for-shape-tile-paint.patch`
+ 145. `145-pass-egui-map-frame-through-layer-trait.patch`
++146. `146-thread-egui-map-frame-through-map-widget.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index fae6be4..13777ae 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -20,7 +20,7 @@ use crate::{
+ };
+ use arboard::Clipboard;
+ use egui::{InputState, PointerButton, Rect, Response, Sense, Ui};
+-use helpers::{pixel_to_pos, point_to_coordinate, pos_to_pixel, rect_to_pixel, show_box};
++use helpers::{pixel_to_pos, point_to_coordinate, pos_to_pixel, show_box};
+ use layer::{EguiMapFrame, Layer, TimelineLayer};
+ use log::{debug, warn};
+ 
+@@ -331,7 +331,7 @@ impl Map {
+     &mut self,
+     ctx: &egui::Context,
+     events: impl Iterator<Item = egui::Event>,
+-    rect: Rect,
++    frame: EguiMapFrame,
+   ) {
+     for event in events {
+       if let egui::Event::Key {
+@@ -358,14 +358,14 @@ impl Map {
+           }
+ 
+           egui::Key::Minus => {
+-            zoom_with_center(&mut self.transform, 0.9, pos_to_pixel(rect.center()));
++            zoom_with_center(&mut self.transform, 0.9, frame.pixel_rect.center());
+           }
+           egui::Key::Plus | egui::Key::Equals => {
+-            zoom_with_center(&mut self.transform, 1. / 0.9, pos_to_pixel(rect.center()));
++            zoom_with_center(&mut self.transform, 1. / 0.9, frame.pixel_rect.center());
+           }
+ 
+           egui::Key::F => {
+-            self.show_bounding_box(rect_to_pixel(rect));
++            self.show_bounding_box(frame.pixel_rect);
+           }
+ 
+           egui::Key::V => self.paste(),
+@@ -663,7 +663,7 @@ impl Map {
+     std::mem::take(&mut self.shutdown_requested)
+   }
+ 
+-  fn handle_egui_map_input(&mut self, ui: &Ui, response: &Response, rect: Rect) {
++  fn handle_egui_map_input(&mut self, ui: &Ui, response: &Response, frame: EguiMapFrame) {
+     self.handle_dropped_files(ui.ctx());
+     self.handle_mouse_wheel(ui, response);
+ 
+@@ -674,7 +674,7 @@ impl Map {
+         .cloned()
+         .collect::<Vec<_>>()
+     });
+-    self.handle_keys(ui.ctx(), events.into_iter(), rect);
++    self.handle_keys(ui.ctx(), events.into_iter(), frame);
+ 
+     if response.double_clicked()
+       && let Some(pos) = response.hover_pos()
+@@ -725,8 +725,9 @@ impl Map {
+     }
+   }
+ 
+-  fn prepare_native_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
++  fn prepare_native_layer_frame(&mut self, ui: &mut Ui, frame: EguiMapFrame) {
+     profile_scope!("Map::prepare_native_layer_frame");
++    let rect = frame.rect;
+     if !ui.is_rect_visible(rect) {
+       return;
+     }
+@@ -740,16 +741,12 @@ impl Map {
+     for layer in layer_guard.iter_mut() {
+       layer.process_pending_events();
+     }
+-    Self::draw_egui_layer_overlays(
+-      layer_guard.as_mut_slice(),
+-      ui,
+-      &self.transform,
+-      EguiMapFrame::from_rect(rect),
+-    );
++    Self::draw_egui_layer_overlays(layer_guard.as_mut_slice(), ui, &self.transform, frame);
+   }
+ 
+-  fn draw_egui_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
++  fn draw_egui_layer_frame(&mut self, ui: &mut Ui, frame: EguiMapFrame) {
+     profile_scope!("Map::draw_egui_layers");
++    let rect = frame.rect;
+     if !ui.is_rect_visible(rect) {
+       return;
+     }
+@@ -765,7 +762,7 @@ impl Map {
+       &self.timeline,
+       ui,
+       &self.transform,
+-      EguiMapFrame::from_rect(rect),
++      frame,
+     );
+   }
+ 
+@@ -807,9 +804,9 @@ impl Map {
+     ui.allocate_exact_size(size, sense)
+   }
+ 
+-  fn initialize_transform_if_needed(&mut self, rect: Rect) {
++  fn initialize_transform_if_needed(&mut self, frame: EguiMapFrame) {
+     if self.transform.is_invalid() {
+-      let pixel_rect = rect_to_pixel(rect);
++      let pixel_rect = frame.pixel_rect;
+       fit_to_screen(&mut self.transform, pixel_rect);
+       set_coordinate_to_pixel(
+         PixelCoordinate { x: 500., y: 500. },
+@@ -825,8 +822,8 @@ impl Map {
+     }
+   }
+ 
+-  fn update_frame_viewport(&mut self, rect: Rect) {
+-    let pixel_rect = rect_to_pixel(rect);
++  fn update_frame_viewport(&mut self, frame: EguiMapFrame) {
++    let pixel_rect = frame.pixel_rect;
+     fit_to_screen(&mut self.transform, pixel_rect);
+     self.last_viewport = Some(MapViewport {
+       transform: self.transform,
+@@ -837,12 +834,13 @@ impl Map {
+   pub fn ui_egui(&mut self, ui: &mut Ui) -> Response {
+     profile_scope!("Map::ui_egui");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::click_and_drag());
++    let frame = EguiMapFrame::from_rect(rect);
+ 
+-    self.initialize_transform_if_needed(rect);
+-    self.handle_egui_map_input(ui, &response, rect);
+-    self.update_frame_viewport(rect);
+-    self.draw_egui_layer_frame(ui, rect);
+-    self.handle_map_events(rect_to_pixel(rect));
++    self.initialize_transform_if_needed(frame);
++    self.handle_egui_map_input(ui, &response, frame);
++    self.update_frame_viewport(frame);
++    self.draw_egui_layer_frame(ui, frame);
++    self.handle_map_events(frame.pixel_rect);
+ 
+     response
+   }
+@@ -850,13 +848,14 @@ impl Map {
+   pub fn ui_native(&mut self, ui: &mut Ui) -> Response {
+     profile_scope!("Map::ui_native");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::hover());
++    let frame = EguiMapFrame::from_rect(rect);
+ 
+-    self.initialize_transform_if_needed(rect);
++    self.initialize_transform_if_needed(frame);
+     self.show_native_command_context_menu(ui.ctx());
+     self.right_click_open_requested = false;
+-    self.update_frame_viewport(rect);
+-    self.prepare_native_layer_frame(ui, rect);
+-    self.handle_map_events(rect_to_pixel(rect));
++    self.update_frame_viewport(frame);
++    self.prepare_native_layer_frame(ui, frame);
++    self.handle_map_events(frame.pixel_rect);
+ 
+     response
+   }

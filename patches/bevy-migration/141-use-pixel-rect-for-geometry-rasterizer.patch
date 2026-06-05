@@ -1,0 +1,78 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 01df7d4..39fa541 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -142,6 +142,7 @@ Apply these patches in order from the repository root:
+ 138. `138-share-neutral-viewport-fit-helpers.patch`
+ 139. `139-use-pixel-rect-for-shape-geo-tiles.patch`
+ 140. `140-use-pixel-rect-for-egui-tile-selection.patch`
++141. `141-use-pixel-rect-for-geometry-rasterizer.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/geometry_rasterizer.rs b/src/map/mapvas_egui/layer/geometry_rasterizer.rs
+index 90f110e..7aca34a 100644
+--- a/src/map/mapvas_egui/layer/geometry_rasterizer.rs
++++ b/src/map/mapvas_egui/layer/geometry_rasterizer.rs
+@@ -1,12 +1,12 @@
+ use crate::{
+   config::HeadingStyle,
+   map::{
+-    coordinates::{Coordinate, PixelCoordinate, Transform},
++    coordinates::{Coordinate, PixelCoordinate, PixelRect, Transform},
+     geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+     mapvas_egui::helpers::color_to_color32,
+   },
+ };
+-use egui::{Color32, Rect};
++use egui::Color32;
+ use tiny_skia::{
+   Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform as SkiaTransform,
+ };
+@@ -22,7 +22,7 @@ fn color32_to_skia(c: Color32) -> tiny_skia::Color {
+ }
+ 
+ /// Convert a `PixelCoordinate` to screen-relative position within the pixmap.
+-fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: Rect) -> (f32, f32) {
++fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: PixelRect) -> (f32, f32) {
+   let pos = transform.apply(coord.as_pixel_coordinate());
+   (pos.x - rect.min.x, pos.y - rect.min.y)
+ }
+@@ -35,7 +35,7 @@ fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: Rect) -> (f32
+ pub fn rasterize_geometries<'a>(
+   geometries: impl Iterator<Item = &'a Geometry<PixelCoordinate>>,
+   transform: &Transform,
+-  rect: Rect,
++  rect: PixelRect,
+   heading_style: HeadingStyle,
+ ) -> Option<Pixmap> {
+   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+@@ -59,7 +59,7 @@ fn rasterize_geometry(
+   pixmap: &mut Pixmap,
+   geometry: &Geometry<PixelCoordinate>,
+   transform: &Transform,
+-  rect: Rect,
++  rect: PixelRect,
+   heading_style: HeadingStyle,
+ ) {
+   for el in geometry
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index fe079c9..2338e6f 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -153,9 +153,12 @@ fn rasterize_geo_tile_to_image(
+     });
+ 
+   #[allow(clippy::cast_precision_loss)]
+-  let tile_rect = egui::Rect::from_min_max(
+-    egui::pos2(0.0, 0.0),
+-    egui::pos2(GEO_TILE_PIXEL_SIZE as f32, GEO_TILE_PIXEL_SIZE as f32),
++  let tile_rect = PixelRect::from_min_size(
++    PixelPosition { x: 0.0, y: 0.0 },
++    PixelPosition {
++      x: GEO_TILE_PIXEL_SIZE as f32,
++      y: GEO_TILE_PIXEL_SIZE as f32,
++    },
+   );
+ 
+   let pixmap = geometry_rasterizer::rasterize_geometries(

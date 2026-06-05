@@ -1,0 +1,32 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -95,7 +95,7 @@
+   }
+ 
+   #[must_use]
+-  pub fn new_without_tiles(
++  pub fn new_egui_without_tiles(
+     ctx: egui::Context,
+     cfg: crate::config::Config,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+--- a/src/headless.rs
++++ b/src/headless.rs
+@@ -86,7 +86,7 @@
+       });
+     }
+     let (mut map, remote, data_holder) = if self.no_map {
+-      Map::new_without_tiles(ctx, self.config.clone())
++      Map::new_egui_without_tiles(ctx, self.config.clone())
+     } else {
+       Map::new(ctx, self.config.clone())
+     };
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -112,6 +112,7 @@
+ 108. `108-remove-map-widget-impl.patch`
+ 109. `109-decouple-native-screenshot-from-egui-context.patch`
+ 110. `110-rename-timeline-controls-egui.patch`
++111. `111-rename-egui-without-tiles-constructor.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

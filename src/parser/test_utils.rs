@@ -1,4 +1,5 @@
 use crate::map::{
+  color::Color,
   coordinates::{PixelCoordinate, WGS84Coordinate},
   geometry_collection::{Geometry, Metadata, Style},
   map_event::{Layer, MapEvent},
@@ -135,12 +136,12 @@ pub struct StyleBuilder;
 
 impl StyleBuilder {
   #[must_use]
-  pub fn with_color(color: egui::Color32) -> Style {
+  pub fn with_color(color: Color) -> Style {
     Style::default().with_color(color)
   }
 
   #[must_use]
-  pub fn with_colors(color: egui::Color32, fill_color: egui::Color32) -> Style {
+  pub fn with_colors(color: Color, fill_color: Color) -> Style {
     Style::default()
       .with_color(color)
       .with_fill_color(fill_color)

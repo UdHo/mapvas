@@ -1,0 +1,211 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -123,6 +123,7 @@ Apply these patches in order from the repository root:
+ 119. `119-return-pixel-position-from-native-cursor-helper.patch`
+ 120. `120-use-pixel-position-for-native-geometry-screen-space.patch`
+ 121. `121-use-pixel-position-for-native-tile-screen-space.patch`
++122. `122-use-map-viewport-pixel-accessors.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_geometry.rs b/src/bin/mapvas/bevy_geometry.rs
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -500,7 +500,7 @@ fn update_point_fills(
+       *visibility = Visibility::Hidden;
+       continue;
+     };
+-    if viewport.rect.contains(screen.into()) {
++    if viewport.contains(screen) {
+       let center = screen_to_bevy(screen, window);
+       *transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
+       *visibility = Visibility::Visible;
+@@ -719,8 +719,8 @@ fn bounds_intersects_viewport(
+   wrap_offset: f32,
+ ) -> bool {
+   let inv = viewport.transform.invert();
+-  let min_world = inv.apply(viewport.rect.min.into());
+-  let max_world = inv.apply(viewport.rect.max.into());
++  let min_world = inv.apply(viewport.min());
++  let max_world = inv.apply(viewport.max());
+   let min_y = min_world.y.min(max_world.y);
+   let max_y = min_world.y.max(max_world.y);
+   if bounds.max_y < min_y || bounds.min_y > max_y {
+@@ -763,7 +763,7 @@ fn draw_geometry(
+       let Some(screen) = coordinate_to_screen(*coord, viewport, left_x) else {
+         return;
+       };
+-      if !viewport.rect.contains(screen.into()) {
++      if !viewport.contains(screen) {
+         return;
+       }
+ 
+@@ -795,7 +795,7 @@ fn draw_geometry(
+         let Some(screen) = coordinate_to_screen(*coord, viewport, left_x) else {
+           continue;
+         };
+-        if !viewport.rect.contains(screen.into()) {
++        if !viewport.contains(screen) {
+           continue;
+         }
+         gizmos.circle_2d(screen_to_bevy(screen, window), 1.5, color);
+@@ -885,7 +885,7 @@ fn draw_highlighted_geometry(
+       let Some(screen) = coordinate_to_screen(*coord, viewport, left_x) else {
+         return;
+       };
+-      if !viewport.rect.contains(screen.into()) {
++      if !viewport.contains(screen) {
+         return;
+       }
+       gizmos.circle_2d(
+@@ -1092,8 +1092,8 @@ fn geometry_intersects_viewport(
+   }
+ 
+   let inv = viewport.transform.invert();
+-  let min_world = inv.apply(viewport.rect.min.into());
+-  let max_world = inv.apply(viewport.rect.max.into());
++  let min_world = inv.apply(viewport.min());
++  let max_world = inv.apply(viewport.max());
+   let min_y = min_world.y.min(max_world.y);
+   let max_y = min_world.y.max(max_world.y);
+   if bbox.max_y() < min_y || bbox.min_y() > max_y {
+@@ -1116,7 +1116,7 @@ fn viewport_left_x(viewport: MapViewport) -> f32 {
+   let inv = viewport.transform.invert();
+   inv
+     .apply(PixelPosition {
+-      x: viewport.rect.min.x,
++      x: viewport.min().x,
+       y: 0.0,
+     })
+     .x
+diff --git a/src/bin/mapvas/bevy_map.rs b/src/bin/mapvas/bevy_map.rs
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -100,7 +100,7 @@ impl NativeMapControl {
+         stat_row(
+           ui,
+           "Map rect:",
+-          format!("{:.0}x{:.0}", viewport.rect.width(), viewport.rect.height()),
++          format!("{:.0}x{:.0}", viewport.width(), viewport.height()),
+         );
+       } else {
+         ui.label("No viewport yet");
+@@ -147,7 +147,7 @@ fn native_map_input(
+   };
+ 
+   let cursor = cursor_pos(window);
+-  let cursor_in_viewport = cursor.is_some_and(|pos| viewport.rect.contains(pos.into()));
++  let cursor_in_viewport = cursor.is_some_and(|pos| viewport.contains(pos));
+   let egui_popup_open = egui_wants_input.is_popup_open();
+   control.hover_pos = if !egui_popup_open && cursor_in_viewport {
+     cursor
+@@ -328,7 +328,7 @@ fn pixel_distance(a: PixelPosition, b: PixelPosition) -> f32 {
+ }
+ 
+ fn center(viewport: MapViewport) -> PixelPosition {
+-  viewport.rect.center().into()
++  viewport.center()
+ }
+ 
+ fn zoom_with_center(transform: &mut Transform, delta: f32, center: PixelPosition) -> bool {
+diff --git a/src/bin/mapvas/bevy_tiles.rs b/src/bin/mapvas/bevy_tiles.rs
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -17,8 +17,8 @@ use mapvas::{
+   config::{Config, TileProvider, TileType},
+   map::{
+     coordinates::{
+-      CANVAS_SIZE, PixelPosition, Tile, TileCoordinate, TilePriority, Transform as MapTransform,
+-      generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
++      CANVAS_SIZE, PixelPosition, Tile, TileCoordinate, TilePriority, generate_preload_tiles,
++      tile_zoom_for_transform, tiles_in_box,
+     },
+     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
+@@ -347,8 +347,8 @@ impl NativeTileLayer {
+     self.current_max_zoom = max_zoom;
+ 
+     let inv = viewport.transform.invert();
+-    let vp_min = inv.apply(viewport.rect.min.into());
+-    let vp_max = inv.apply(viewport.rect.max.into());
++    let vp_min = inv.apply(viewport.min());
++    let vp_max = inv.apply(viewport.max());
+     let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
+     let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
+ 
+@@ -1202,7 +1202,7 @@ fn tile_screen_rect(viewport: MapViewport, tile: Tile) -> Option<egui::Rect> {
+ 
+ fn coordinate_tile_rects(viewport: MapViewport, tile: Tile) -> Vec<egui::Rect> {
+   let (nw, se) = tile.position();
+-  let left_x = viewport_left_x(viewport.rect, &viewport.transform);
++  let left_x = viewport_left_x(viewport);
+   let dx = tile_world_offset(nw.x, left_x);
+   let mut tile_rects = Vec::with_capacity(3);
+ 
+@@ -1262,11 +1262,11 @@ fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
+   }
+ }
+ 
+-fn viewport_left_x(rect: egui::Rect, transform: &MapTransform) -> f32 {
+-  let inv = transform.invert();
++fn viewport_left_x(viewport: MapViewport) -> f32 {
++  let inv = viewport.transform.invert();
+   inv
+     .apply(PixelPosition {
+-      x: rect.min.x,
++      x: viewport.min().x,
+       y: 0.0,
+     })
+     .x
+diff --git a/src/map/viewport.rs b/src/map/viewport.rs
+--- a/src/map/viewport.rs
++++ b/src/map/viewport.rs
+@@ -1,7 +1,7 @@
+ use egui::Rect;
+ 
+ use super::{
+-  coordinates::{PixelCoordinate, Transform},
++  coordinates::{PixelCoordinate, PixelPosition, Transform},
+   geometry_collection::Geometry,
+ };
+ 
+@@ -11,6 +11,38 @@ pub struct MapViewport {
+   pub rect: Rect,
+ }
+ 
++impl MapViewport {
++  #[must_use]
++  pub fn width(&self) -> f32 {
++    self.rect.width()
++  }
++
++  #[must_use]
++  pub fn height(&self) -> f32 {
++    self.rect.height()
++  }
++
++  #[must_use]
++  pub fn center(&self) -> PixelPosition {
++    self.rect.center().into()
++  }
++
++  #[must_use]
++  pub fn min(&self) -> PixelPosition {
++    self.rect.min.into()
++  }
++
++  #[must_use]
++  pub fn max(&self) -> PixelPosition {
++    self.rect.max.into()
++  }
++
++  #[must_use]
++  pub fn contains(&self, pos: PixelPosition) -> bool {
++    self.rect.contains(pos.into())
++  }
++}
++
+ #[derive(Clone, Default)]
+ pub struct GeometrySnapshot {
+   pub version: u64,

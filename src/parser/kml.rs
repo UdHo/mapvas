@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::map::{
+  color::Color,
   coordinates::{PixelCoordinate, WGS84Coordinate},
   geometry_collection::{Geometry, Metadata, Style, TimeData, TimeSpan},
   map_event::{Layer, MapEvent},
 };
 use chrono::{DateTime, Utc};
-use egui::Color32;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct KmlParser {
@@ -36,7 +36,7 @@ impl KmlParser {
     }
   }
 
-  fn parse_kml_color(color_str: &str) -> Option<Color32> {
+  fn parse_kml_color(color_str: &str) -> Option<Color> {
     if color_str.len() != 8 {
       return None;
     }
@@ -46,7 +46,7 @@ impl KmlParser {
     let green = u8::from_str_radix(&color_str[4..6], 16).ok()?;
     let red = u8::from_str_radix(&color_str[6..8], 16).ok()?;
 
-    Some(Color32::from_rgba_unmultiplied(red, green, blue, alpha))
+    Some(Color::from_rgba_unmultiplied(red, green, blue, alpha))
   }
 
   fn collect_document_styles(&mut self, kml: &kml::Kml<f64>) {
@@ -618,7 +618,7 @@ mod tests {
       assert_eq!(leaf_geometries.len(), 1, "Should have 1 point geometry");
 
       let expected_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
-      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_style = Style::default().with_color(crate::map::color::Color::BLUE);
       let expected_metadata = Metadata::default()
         .with_label("Simple Point".to_string())
         .with_style(expected_style);
@@ -671,7 +671,7 @@ mod tests {
           crate::map::coordinates::WGS84Coordinate::new(52.2, 10.2),
         ),
       ];
-      let expected_style = Style::default().with_color(egui::Color32::BLUE);
+      let expected_style = Style::default().with_color(crate::map::color::Color::BLUE);
       let expected_metadata = Metadata::default()
         .with_label("Simple Line".to_string())
         .with_style(expected_style);
@@ -846,7 +846,7 @@ mod tests {
       );
 
       let nested_point_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
-      let nested_point_style = Style::default().with_color(egui::Color32::BLUE);
+      let nested_point_style = Style::default().with_color(crate::map::color::Color::BLUE);
       let nested_point_metadata = Metadata::default()
         .with_label("Nested Point".to_string())
         .with_style(nested_point_style.clone());
@@ -888,7 +888,7 @@ mod tests {
     let coord3 = PixelCoordinate::new(10.1, 20.0);
 
     let metadata = Metadata::default().with_label("Test Point".to_string());
-    let style = Style::default().with_color(egui::Color32::RED);
+    let style = Style::default().with_color(crate::map::color::Color::RED);
     let metadata_with_style = Metadata::default()
       .with_label("Test Point".to_string())
       .with_style(style);
@@ -1034,11 +1034,11 @@ mod tests {
     // KML uses ABGR color format
     assert_eq!(
       KmlParser::parse_kml_color("ff0000ff"),
-      Some(Color32::from_rgba_unmultiplied(255, 0, 0, 255))
+      Some(Color::from_rgba_unmultiplied(255, 0, 0, 255))
     );
     assert_eq!(
       KmlParser::parse_kml_color("ff00ff00"),
-      Some(Color32::from_rgba_unmultiplied(0, 255, 0, 255))
+      Some(Color::from_rgba_unmultiplied(0, 255, 0, 255))
     );
     assert!(KmlParser::parse_kml_color("invalid").is_none());
     assert!(KmlParser::parse_kml_color("ff00").is_none());

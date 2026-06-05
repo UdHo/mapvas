@@ -1,0 +1,367 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 2f22f2f..f7f3432 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -191,6 +191,7 @@ Apply these patches in order from the repository root:
+ 187. `187-remove-legacy-native-wrappers.patch`
+ 188. `188-make-egui-mapapp-constructor-explicit.patch`
+ 189. `189-remove-generic-mapapp-constructor.patch`
++190. `190-make-egui-mapapp-show-explicit.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/headless.rs b/src/headless.rs
+index 0d1d489..a8362fa 100644
+--- a/src/headless.rs
++++ b/src/headless.rs
+@@ -108,7 +108,7 @@ impl HeadlessRenderer {
+       .with_max_steps(200)
+       .build_ui_state(
+         |ui, app: &mut MapApp| {
+-          app.show(ui);
++          app.show_egui(ui);
+         },
+         app,
+       );
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 1b78521..6182ee1 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -235,10 +235,15 @@ impl MapApp {
+ 
+ impl MapApp {
+   #[allow(clippy::too_many_lines)]
+-  pub fn show(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
++  pub fn show_egui(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
+     self.show_with_map_layer_controls(ui, &mut |_| {}, None)
+   }
+ 
++  #[allow(clippy::too_many_lines)]
++  pub fn show(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
++    self.show_egui(ui)
++  }
++
+   pub fn show_bevy(
+     &mut self,
+     ui: &mut egui::Ui,
+diff --git a/tests/grid_snapshot_tests.rs b/tests/grid_snapshot_tests.rs
+index 563d0ad..b379216 100644
+--- a/tests/grid_snapshot_tests.rs
++++ b/tests/grid_snapshot_tests.rs
+@@ -45,7 +45,7 @@ async fn grid_mode_basic_functionality() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -88,7 +88,7 @@ async fn grid_mode_with_geojson_data() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -133,7 +133,7 @@ async fn grid_mode_coordinate_display_comparison() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -168,7 +168,7 @@ async fn grid_mode_empty_state() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -210,7 +210,7 @@ async fn grid_mode_ui_workflow() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -259,7 +259,7 @@ async fn grid_mode_sidebar_interactions() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+diff --git a/tests/highlight_snapshot_tests.rs b/tests/highlight_snapshot_tests.rs
+index dcdefdb..39021b7 100644
+--- a/tests/highlight_snapshot_tests.rs
++++ b/tests/highlight_snapshot_tests.rs
+@@ -40,7 +40,7 @@ async fn test_geometry_highlighting_on_double_click() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -80,7 +80,7 @@ async fn test_individual_geometry_highlighting() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+diff --git a/tests/popup_double_click_tests.rs b/tests/popup_double_click_tests.rs
+index a7c4e7e..1cb9e49 100644
+--- a/tests/popup_double_click_tests.rs
++++ b/tests/popup_double_click_tests.rs
+@@ -70,7 +70,7 @@ async fn test_double_click_popup_nested_kml() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -111,7 +111,7 @@ async fn test_popup_data_generation_functionality() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -147,7 +147,7 @@ async fn test_popup_memory_management() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+diff --git a/tests/popup_snapshot_tests.rs b/tests/popup_snapshot_tests.rs
+index dc3d33a..eefab8c 100644
+--- a/tests/popup_snapshot_tests.rs
++++ b/tests/popup_snapshot_tests.rs
+@@ -40,7 +40,7 @@ async fn test_popup_initial_state() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -66,7 +66,7 @@ async fn test_multigeometry_popup_functionality() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+diff --git a/tests/temporal_snapshot_tests.rs b/tests/temporal_snapshot_tests.rs
+index d83db5b..03b7780 100644
+--- a/tests/temporal_snapshot_tests.rs
++++ b/tests/temporal_snapshot_tests.rs
+@@ -65,7 +65,7 @@ async fn temporal_visualization_initial_state() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -108,7 +108,7 @@ async fn temporal_visualization_morning_time() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -140,7 +140,7 @@ async fn temporal_visualization_with_geometries() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -176,7 +176,7 @@ async fn temporal_visualization_timeline_expanded() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -215,7 +215,7 @@ async fn temporal_visualization_workflow() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -260,7 +260,7 @@ async fn temporal_filtering_demonstration() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -313,7 +313,7 @@ async fn unix_epoch_timeline_detection() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -348,7 +348,7 @@ async fn unix_epoch_temporal_filtering() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -434,7 +434,7 @@ async fn unix_epoch_no_timezone_parsing() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -467,7 +467,7 @@ async fn debug_range_timeline_fix() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -534,7 +534,7 @@ async fn large_file_temporal_parsing() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+diff --git a/tests/ui_tests.rs b/tests/ui_tests.rs
+index 3c2637d..25d638c 100644
+--- a/tests/ui_tests.rs
++++ b/tests/ui_tests.rs
+@@ -16,7 +16,7 @@ async fn sidebar_toggle_functionality() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -39,7 +39,7 @@ async fn sidebar_close_button_functionality() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -56,7 +56,7 @@ async fn map_layers_display() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -76,7 +76,7 @@ async fn location_search_section() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -93,7 +93,7 @@ async fn tile_layer_settings() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -118,7 +118,7 @@ async fn empty_shape_layer() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -138,7 +138,7 @@ async fn settings_dialog_button() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );
+@@ -163,7 +163,7 @@ mod pagination_tests {
+ 
+     let mut harness = Harness::new_ui_state(
+       |ui, app: &mut MapApp| {
+-        app.show(ui);
++        app.show_egui(ui);
+       },
+       app,
+     );
+@@ -182,7 +182,7 @@ async fn full_ui_integration_test() {
+ 
+   let mut harness = Harness::new_ui_state(
+     |ui, app: &mut MapApp| {
+-      app.show(ui);
++      app.show_egui(ui);
+     },
+     app,
+   );

@@ -1,0 +1,57 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index d8cb1c2..5d19395 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -159,6 +159,7 @@ Apply these patches in order from the repository root:
+ 155. `155-use-pixel-rect-for-map-input-frame.patch`
+ 156. `156-remove-frame-from-egui-overlays.patch`
+ 157. `157-stop-building-egui-frame-for-native-map.patch`
++158. `158-use-rect-for-egui-attribution.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/tile_layer.rs b/src/map/mapvas_egui/layer/tile_layer.rs
+index 65bc770..ac08fb4 100644
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -988,12 +988,12 @@ impl Layer for TileLayer {
+     self.preload_enabled = false;
+   }
+ 
+-  fn draw_egui_attribution(&self, ui: &mut Ui, frame: EguiMapFrame) {
++  fn draw_egui_attribution(&self, ui: &mut Ui, clip_rect: Rect) {
+     if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly
+       && !self.loaded_tiles.is_empty()
+       && self.tile_loader().requires_osm_attribution()
+     {
+-      draw_osm_attribution(ui, frame.rect);
++      draw_osm_attribution(ui, clip_rect);
+     }
+   }
+ }
+diff --git a/src/map/mapvas_egui/layer.rs b/src/map/mapvas_egui/layer.rs
+index 532a73b..29176ec 100644
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -143,7 +143,7 @@ pub trait Layer {
+   fn set_headless(&mut self) {}
+ 
+   /// Draw egui attribution or licensing overlays after all map content is painted.
+-  fn draw_egui_attribution(&self, _ui: &mut Ui, _frame: EguiMapFrame) {}
++  fn draw_egui_attribution(&self, _ui: &mut Ui, _clip_rect: Rect) {}
+ 
+   /// Return info about named sub-layers (e.g. each id sent via `mapcat`).
+   fn sub_layers(&self) -> Vec<SubLayerInfo> {
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index e4c3c3d..ea07d9c 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -788,7 +788,7 @@ impl Map {
+     profile_scope!("Layer::draw_egui", "Timeline");
+     timeline.borrow_mut().draw_egui(ui, transform, frame);
+     for layer in layers.iter() {
+-      layer.draw_egui_attribution(ui, frame);
++      layer.draw_egui_attribution(ui, frame.rect);
+     }
+     Self::draw_egui_layer_overlays(layers, ui, transform);
+   }

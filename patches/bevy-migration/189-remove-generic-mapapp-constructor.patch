@@ -1,0 +1,34 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index a565019..2f22f2f 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -190,6 +190,7 @@ Apply these patches in order from the repository root:
+ 186. `186-rename-bevy-tile-resources.patch`
+ 187. `187-remove-legacy-native-wrappers.patch`
+ 188. `188-make-egui-mapapp-constructor-explicit.patch`
++189. `189-remove-generic-mapapp-constructor.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 1bbf33e..1b78521 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -82,17 +82,6 @@ impl MapApp {
+     )
+   }
+ 
+-  #[allow(clippy::needless_pass_by_value)]
+-  pub fn new(
+-    map: Map,
+-    remote: Remote,
+-    map_content: Rc<dyn MapLayerHolder>,
+-    config: Config,
+-    runtime_monitor: Option<RuntimeMonitor>,
+-  ) -> Self {
+-    Self::new_egui(map, remote, map_content, config, runtime_monitor)
+-  }
+-
+   #[allow(clippy::needless_pass_by_value)]
+   pub fn new_bevy(
+     map: Map,

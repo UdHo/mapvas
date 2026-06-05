@@ -1,0 +1,35 @@
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -391,10 +391,6 @@
+       current_config: self.settings_dialog.borrow().get_current_config(),
+       geometry_snapshot_version: self.map.geometry_snapshot_version(),
+     }
+-  }
+-
+-  pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+-    self.show(ui);
+   }
+ }
+ 
+--- a/src/headless.rs
++++ b/src/headless.rs
+@@ -108,8 +108,7 @@
+       .with_max_steps(200)
+       .build_ui_state(
+         |ui, app: &mut MapApp| {
+-          let mut frame = eframe::Frame::_new_kittest();
+-          app.ui(ui, &mut frame);
++          app.show(ui);
+         },
+         app,
+       );
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -39,6 +39,7 @@
+ 35. `035-remove-native-rendering-setter.patch`
+ 36. `036-use-explicit-map-render-mode.patch`
+ 37. `037-hide-native-attribution-in-grid-only-mode.patch`
++38. `038-remove-eframe-mapapp-adapter.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

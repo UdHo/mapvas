@@ -1,0 +1,72 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -46,7 +46,6 @@
+ 
+ #[derive(Resource)]
+ pub struct NativeMapControl {
+-  transform: Option<Transform>,
+   dragging: bool,
+   last_cursor_pos: Option<egui::Pos2>,
+   hover_pos: Option<egui::Pos2>,
+@@ -82,7 +81,6 @@
+ impl Default for NativeMapControl {
+   fn default() -> Self {
+     Self {
+-      transform: None,
+       dragging: false,
+       last_cursor_pos: None,
+       hover_pos: None,
+@@ -118,14 +116,6 @@
+   pub fn take_actions(&mut self) -> Vec<NativeMapAction> {
+     std::mem::take(&mut self.actions)
+   }
+-
+-  pub fn sync_viewport(&mut self, viewport: Option<MapViewport>) {
+-    if let Some(viewport) = viewport {
+-      self.transform = Some(viewport.transform);
+-    } else {
+-      self.hover_pos = None;
+-    }
+-  }
+ }
+ 
+ fn native_map_input(
+@@ -151,9 +141,7 @@
+     control.hover_pos = None;
+     return;
+   };
+-  let Some(mut transform) = control.transform else {
+-    return;
+-  };
++  let mut transform = viewport.transform;
+   let Ok(window) = windows.single() else {
+     return;
+   };
+@@ -321,7 +309,6 @@
+ 
+   if changed {
+     fit_to_screen(&mut transform, &viewport.rect);
+-    control.transform = Some(transform);
+     control
+       .actions
+       .push(NativeMapAction::TransformChanged(transform));
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -177,7 +177,6 @@
+       }
+     });
+   native_viewport.set(viewport);
+-  native_map.sync_viewport(viewport);
+   if let Some(snapshot) = geometry_snapshot {
+     native_geometry.update_snapshot(snapshot);
+   }
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -92,6 +92,7 @@
+ 88. `088-route-native-file-drops-as-map-actions.patch`
+ 89. `089-extract-native-map-action-dispatch.patch`
+ 90. `090-route-native-transform-as-map-action.patch`
++91. `091-derive-native-input-transform-from-viewport.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

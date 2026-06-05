@@ -1,0 +1,128 @@
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -1,5 +1,6 @@
+ mod bevy_geometry;
+ mod bevy_map;
++mod bevy_screenshot;
+ mod bevy_tiles;
+ 
+ use bevy::{
+@@ -10,6 +11,7 @@
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+ use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapShortcut, NativeMapViewport};
++use bevy_screenshot::{NativeScreenshotPlugin, NativeScreenshotRequests};
+ use bevy_tiles::{NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
+ use mapvas::{
+   config::Config,
+@@ -87,6 +89,7 @@
+   mut native_map: ResMut<NativeMapControl>,
+   mut native_viewport: ResMut<NativeMapViewport>,
+   mut native_geometry: ResMut<NativeGeometryLayer>,
++  mut native_screenshots: ResMut<NativeScreenshotRequests>,
+   mut native_tiles: ResMut<NativeTileLayer>,
+   mut file_drops: MessageReader<FileDragAndDrop>,
+ ) -> Result {
+@@ -123,7 +126,7 @@
+             NativeMapShortcut::FocusAll => app.focus_map(),
+             NativeMapShortcut::Paste => app.paste_map(),
+             NativeMapShortcut::Copy => app.copy_map(),
+-            NativeMapShortcut::Screenshot => app.request_map_screenshot(),
++            NativeMapShortcut::Screenshot => native_screenshots.request_default(),
+           }
+         }
+         app.handle_map_hover(native_map.hover_pos());
+@@ -207,6 +210,7 @@
+     )
+     .add_plugins(EguiPlugin::default())
+     .add_plugins(NativeMapPlugin)
++    .add_plugins(NativeScreenshotPlugin)
+     .add_plugins(NativeTilePlugin)
+     .add_plugins(NativeGeometryPlugin)
+     .add_systems(Startup, setup_camera)
+--- /dev/null
++++ b/src/bin/mapvas/bevy_screenshot.rs
+@@ -0,0 +1,73 @@
++use std::path::PathBuf;
++
++use bevy::{
++  prelude::*,
++  render::view::screenshot::{Screenshot, save_to_disk},
++};
++
++pub struct NativeScreenshotPlugin;
++
++impl Plugin for NativeScreenshotPlugin {
++  fn build(&self, app: &mut App) {
++    app
++      .init_resource::<NativeScreenshotRequests>()
++      .add_systems(Update, issue_native_screenshots);
++  }
++}
++
++#[derive(Resource)]
++pub struct NativeScreenshotRequests {
++  pending_paths: Vec<PathBuf>,
++  screenshot_base_path: PathBuf,
++}
++
++impl Default for NativeScreenshotRequests {
++  fn default() -> Self {
++    Self {
++      pending_paths: Vec::new(),
++      screenshot_base_path: std::env::vars()
++        .find(|(key, _)| key == "MAPVAS_SCREENSHOT_PATH")
++        .map_or_else(|| PathBuf::from("."), |(_, value)| PathBuf::from(value)),
++    }
++  }
++}
++
++impl NativeScreenshotRequests {
++  pub fn request_default(&mut self) {
++    self.pending_paths.push(current_time_screenshot_name());
++  }
++
++  fn take_pending_absolute_paths(&mut self) -> Vec<PathBuf> {
++    let base_path = self.screenshot_base_path.clone();
++    self
++      .pending_paths
++      .drain(..)
++      .map(|path| {
++        if path.is_relative() {
++          base_path.join(path)
++        } else {
++          path
++        }
++      })
++      .collect()
++  }
++}
++
++fn issue_native_screenshots(
++  mut commands: Commands,
++  mut requests: ResMut<NativeScreenshotRequests>,
++) {
++  for path in requests.take_pending_absolute_paths() {
++    commands
++      .spawn(Screenshot::primary_window())
++      .observe(save_to_disk(path));
++  }
++}
++
++fn current_time_screenshot_name() -> PathBuf {
++  format!(
++    "mapvas_screenshot_{}.png",
++    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
++  )
++  .into()
++}
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -71,6 +71,7 @@
+ 67. `067-remove-native-egui-overlay-role.patch`
+ 68. `068-remove-native-layer-role.patch`
+ 69. `069-split-native-and-egui-layer-passes.patch`
++70. `070-native-bevy-screenshot-shortcut.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

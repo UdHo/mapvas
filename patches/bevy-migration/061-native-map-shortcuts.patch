@@ -1,0 +1,250 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -55,12 +55,21 @@
+   secondary_drag_moved: bool,
+   command_drag_update: Option<NativeCommandDrag>,
+   context_menu_request: Option<egui::Pos2>,
++  shortcuts: Vec<NativeMapShortcut>,
+ }
+ 
+ pub struct NativeCommandDrag {
+   pub pos: PixelPosition,
+   pub delta: PixelPosition,
+   pub transform: Transform,
++}
++
++pub enum NativeMapShortcut {
++  Clear,
++  FocusAll,
++  Paste,
++  Copy,
++  Screenshot,
+ }
+ 
+ impl Default for NativeMapControl {
+@@ -77,6 +86,7 @@
+       secondary_drag_moved: false,
+       command_drag_update: None,
+       context_menu_request: None,
++      shortcuts: Vec::new(),
+     }
+   }
+ }
+@@ -119,6 +129,10 @@
+     self.context_menu_request.take()
+   }
+ 
++  pub fn take_shortcuts(&mut self) -> Vec<NativeMapShortcut> {
++    std::mem::take(&mut self.shortcuts)
++  }
++
+   pub fn set_viewport(&mut self, viewport: Option<MapViewport>) {
+     self.viewport = viewport;
+     if let Some(viewport) = viewport {
+@@ -278,6 +292,21 @@
+     {
+       changed = true;
+     }
++    if keys.just_pressed(KeyCode::Delete) {
++      control.shortcuts.push(NativeMapShortcut::Clear);
++    }
++    if keys.just_pressed(KeyCode::KeyF) {
++      control.shortcuts.push(NativeMapShortcut::FocusAll);
++    }
++    if keys.just_pressed(KeyCode::KeyV) {
++      control.shortcuts.push(NativeMapShortcut::Paste);
++    }
++    if keys.just_pressed(KeyCode::KeyC) {
++      control.shortcuts.push(NativeMapShortcut::Copy);
++    }
++    if keys.just_pressed(KeyCode::KeyS) {
++      control.shortcuts.push(NativeMapShortcut::Screenshot);
++    }
+   }
+ 
+   if changed {
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -9,7 +9,7 @@
+ };
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+-use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapViewport};
++use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapShortcut, NativeMapViewport};
+ use bevy_tiles::{NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
+ use mapvas::{
+   config::Config,
+@@ -117,6 +117,15 @@
+         for path in &dropped_files {
+           app.handle_map_dropped_file(path.clone());
+         }
++        for shortcut in native_map.take_shortcuts() {
++          match shortcut {
++            NativeMapShortcut::Clear => app.clear_map(),
++            NativeMapShortcut::FocusAll => app.focus_map(),
++            NativeMapShortcut::Paste => app.paste_map(),
++            NativeMapShortcut::Copy => app.copy_map(),
++            NativeMapShortcut::Screenshot => app.request_map_screenshot(),
++          }
++        }
+         app.handle_map_hover(native_map.hover_pos());
+         if let Some(pos) = native_map.take_double_click() {
+           app.handle_map_double_click(pos);
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -91,6 +91,10 @@
+   }
+ 
+   fn uses_egui_file_drops(self) -> bool {
++    self != Self::Native
++  }
++
++  fn uses_egui_map_shortcuts(self) -> bool {
+     self != Self::Native
+   }
+ }
+@@ -360,25 +364,7 @@
+ 
+           egui::Key::V => self.paste(),
+           egui::Key::C => self.copy(),
+-          egui::Key::S => {
+-            // Don't take screenshot if any text input has focus
+-            let has_text_focus = self.ctx.memory(|mem| {
+-              if let Some(_focus_id) = mem.focused() {
+-                // If any widget has focus, assume it could be a text input to be safe
+-                // This prevents screenshots when typing in any input field
+-                true
+-              } else {
+-                false
+-              }
+-            });
+-
+-            if !has_text_focus {
+-              let _ = self
+-                .remote
+-                .screenshot
+-                .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
+-            }
+-          }
++          egui::Key::S => self.request_screenshot(),
+           _ => {
+             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
+           }
+@@ -405,6 +391,12 @@
+     }
+   }
+ 
++  pub fn focus_all_layers(&mut self) {
++    if let Some(viewport) = self.last_viewport {
++      self.show_bounding_box(viewport.rect);
++    }
++  }
++
+   fn show_layer_bounding_box(&mut self, id: &str, rect: Rect) {
+     let Ok(layer_guard) = self.layers.try_lock() else {
+       warn!("Failed to lock layers for layer bounding box calculation");
+@@ -464,7 +456,7 @@
+     );
+   }
+ 
+-  fn paste(&self) {
++  pub fn paste(&self) {
+     let sender = self.remote.layer.clone();
+     rayon::spawn(move || {
+       let Ok(mut clipboard) = Clipboard::new() else {
+@@ -595,7 +587,7 @@
+     }
+   }
+ 
+-  fn clear(&mut self) {
++  pub fn clear(&mut self) {
+     // First, discard any pending layer events to prevent them from being processed later
+     if let Ok(mut layer_guard) = self.layers.try_lock() {
+       for layer in layer_guard.iter_mut() {
+@@ -633,9 +625,19 @@
+   }
+ 
+   #[expect(clippy::unused_self)]
+-  fn copy(&self) {
++  pub fn copy(&self) {
+     // TODO
+   }
++
++  pub fn request_screenshot(&self) {
++    let has_text_focus = self.ctx.memory(|mem| mem.focused().is_some());
++    if !has_text_focus {
++      let _ = self
++        .remote
++        .screenshot
++        .send(MapEvent::Screenshot(helpers::current_time_screenshot_name()));
++    }
++  }
+ }
+ 
+ impl Widget for &mut Map {
+@@ -666,14 +668,16 @@
+       self.handle_mouse_wheel(ui, &response);
+     }
+ 
+-    let events = ui.input(|i: &InputState| {
+-      i.events
+-        .iter()
+-        .filter(|e| matches!(e, egui::Event::Key { .. }))
+-        .cloned()
+-        .collect::<Vec<_>>()
+-    });
+-    self.handle_keys(events.into_iter(), rect);
++    if self.render_mode.uses_egui_map_shortcuts() {
++      let events = ui.input(|i: &InputState| {
++        i.events
++          .iter()
++          .filter(|e| matches!(e, egui::Event::Key { .. }))
++          .cloned()
++          .collect::<Vec<_>>()
++      });
++      self.handle_keys(events.into_iter(), rect);
++    }
+ 
+     if self.render_mode.uses_egui_double_click_selection()
+       && response.double_clicked()
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -106,8 +106,28 @@
+ 
+   pub fn handle_map_dropped_file(&mut self, path: PathBuf) {
+     self.map.handle_dropped_file(path);
++  }
++
++  pub fn clear_map(&mut self) {
++    self.map.clear();
++  }
++
++  pub fn focus_map(&mut self) {
++    self.map.focus_all_layers();
++  }
++
++  pub fn paste_map(&self) {
++    self.map.paste();
+   }
+ 
++  pub fn copy_map(&self) {
++    self.map.copy();
++  }
++
++  pub fn request_map_screenshot(&self) {
++    self.map.request_screenshot();
++  }
++
+   #[must_use]
+   pub fn has_pending_work(&self) -> bool {
+     self.map.has_pending_work()
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -62,6 +62,7 @@
+ 58. `058-native-command-context-menu-rendering.patch`
+ 59. `059-native-layer-role.patch`
+ 60. `060-native-file-drop-input.patch`
++61. `061-native-map-shortcuts.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

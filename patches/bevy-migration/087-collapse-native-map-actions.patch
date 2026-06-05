@@ -1,0 +1,216 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -49,12 +49,9 @@
+   last_cursor_pos: Option<egui::Pos2>,
+   hover_pos: Option<egui::Pos2>,
+   last_left_click: Option<(egui::Pos2, f64)>,
+-  double_click: Option<egui::Pos2>,
+   secondary_drag_start: Option<egui::Pos2>,
+   secondary_drag_moved: bool,
+-  command_drag_update: Option<NativeCommandDrag>,
+-  context_menu_request: Option<egui::Pos2>,
+-  shortcuts: Vec<NativeMapShortcut>,
++  actions: Vec<NativeMapAction>,
+ }
+ 
+ pub struct NativeCommandDrag {
+@@ -63,6 +60,13 @@
+   pub transform: Transform,
+ }
+ 
++pub enum NativeMapAction {
++  CommandDrag(NativeCommandDrag),
++  ContextMenu(egui::Pos2),
++  DoubleClick(egui::Pos2),
++  Shortcut(NativeMapShortcut),
++}
++
+ pub enum NativeMapShortcut {
+   Clear,
+   FocusAll,
+@@ -79,12 +83,9 @@
+       last_cursor_pos: None,
+       hover_pos: None,
+       last_left_click: None,
+-      double_click: None,
+       secondary_drag_start: None,
+       secondary_drag_moved: false,
+-      command_drag_update: None,
+-      context_menu_request: None,
+-      shortcuts: Vec::new(),
++      actions: Vec::new(),
+     }
+   }
+ }
+@@ -115,22 +116,10 @@
+     self.hover_pos
+   }
+ 
+-  pub fn take_double_click(&mut self) -> Option<egui::Pos2> {
+-    self.double_click.take()
++  pub fn take_actions(&mut self) -> Vec<NativeMapAction> {
++    std::mem::take(&mut self.actions)
+   }
+ 
+-  pub fn take_command_drag_update(&mut self) -> Option<NativeCommandDrag> {
+-    self.command_drag_update.take()
+-  }
+-
+-  pub fn take_context_menu_request(&mut self) -> Option<egui::Pos2> {
+-    self.context_menu_request.take()
+-  }
+-
+-  pub fn take_shortcuts(&mut self) -> Vec<NativeMapShortcut> {
+-    std::mem::take(&mut self.shortcuts)
+-  }
+-
+   pub fn sync_viewport(&mut self, viewport: Option<MapViewport>) {
+     if let Some(viewport) = viewport {
+       self.transform = Some(viewport.transform);
+@@ -185,7 +174,7 @@
+         let interval = now - previous_time;
+         let distance = current.distance(previous);
+         if interval <= DOUBLE_CLICK_MAX_INTERVAL_SECS && distance <= DOUBLE_CLICK_MAX_DISTANCE {
+-          control.double_click = Some(current);
++          control.actions.push(NativeMapAction::DoubleClick(current));
+           control.last_left_click = None;
+         } else {
+           control.last_left_click = Some((current, now));
+@@ -228,14 +217,16 @@
+     let delta = current - start;
+     if delta != egui::Vec2::ZERO {
+       control.secondary_drag_moved = true;
+-      control.command_drag_update = Some(NativeCommandDrag {
+-        pos: current.into(),
+-        delta: PixelPosition {
+-          x: delta.x,
+-          y: delta.y,
+-        },
+-        transform,
+-      });
++      control
++        .actions
++        .push(NativeMapAction::CommandDrag(NativeCommandDrag {
++          pos: current.into(),
++          delta: PixelPosition {
++            x: delta.x,
++            y: delta.y,
++          },
++          transform,
++        }));
+     }
+   }
+   if buttons.just_released(MouseButton::Right) {
+@@ -244,7 +235,9 @@
+       && !egui_popup_open
+       && cursor_in_viewport
+     {
+-      control.context_menu_request = Some(cursor.unwrap_or(start));
++      control
++        .actions
++        .push(NativeMapAction::ContextMenu(cursor.unwrap_or(start)));
+     }
+     control.secondary_drag_moved = false;
+   } else if !buttons.pressed(MouseButton::Right) {
+@@ -292,19 +285,29 @@
+       changed = true;
+     }
+     if keys.just_pressed(KeyCode::Delete) {
+-      control.shortcuts.push(NativeMapShortcut::Clear);
++      control
++        .actions
++        .push(NativeMapAction::Shortcut(NativeMapShortcut::Clear));
+     }
+     if keys.just_pressed(KeyCode::KeyF) {
+-      control.shortcuts.push(NativeMapShortcut::FocusAll);
++      control
++        .actions
++        .push(NativeMapAction::Shortcut(NativeMapShortcut::FocusAll));
+     }
+     if keys.just_pressed(KeyCode::KeyV) {
+-      control.shortcuts.push(NativeMapShortcut::Paste);
++      control
++        .actions
++        .push(NativeMapAction::Shortcut(NativeMapShortcut::Paste));
+     }
+     if keys.just_pressed(KeyCode::KeyC) {
+-      control.shortcuts.push(NativeMapShortcut::Copy);
++      control
++        .actions
++        .push(NativeMapAction::Shortcut(NativeMapShortcut::Copy));
+     }
+     if keys.just_pressed(KeyCode::KeyS) {
+-      control.shortcuts.push(NativeMapShortcut::Screenshot);
++      control
++        .actions
++        .push(NativeMapAction::Shortcut(NativeMapShortcut::Screenshot));
+     }
+   }
+ 
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -11,7 +11,9 @@
+ };
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+-use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapShortcut, NativeMapViewport};
++use bevy_map::{
++  NativeMapAction, NativeMapControl, NativeMapPlugin, NativeMapShortcut, NativeMapViewport,
++};
+ use bevy_repaint::{NativeRepaintPlugin, NativeRepaintRequests};
+ use bevy_screenshot::{NativeScreenshotPlugin, NativeScreenshotRequests};
+ use bevy_tiles::{NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
+@@ -127,25 +129,27 @@
+         for path in &dropped_files {
+           app.handle_map_dropped_file(path.clone());
+         }
+-        for shortcut in native_map.take_shortcuts() {
+-          match shortcut {
+-            NativeMapShortcut::Clear => app.clear_map(),
+-            NativeMapShortcut::FocusAll => app.focus_map(),
+-            NativeMapShortcut::Paste => app.paste_map(),
+-            NativeMapShortcut::Copy => app.copy_map(),
+-            NativeMapShortcut::Screenshot => app.request_map_screenshot(&egui_ctx),
++        for action in native_map.take_actions() {
++          match action {
++            NativeMapAction::CommandDrag(drag) => {
++              app.handle_map_command_drag(drag.pos, drag.delta, drag.transform);
++            }
++            NativeMapAction::ContextMenu(pos) => {
++              app.open_map_context_menu(pos);
++            }
++            NativeMapAction::DoubleClick(pos) => {
++              app.handle_map_double_click(pos);
++            }
++            NativeMapAction::Shortcut(shortcut) => match shortcut {
++              NativeMapShortcut::Clear => app.clear_map(),
++              NativeMapShortcut::FocusAll => app.focus_map(),
++              NativeMapShortcut::Paste => app.paste_map(),
++              NativeMapShortcut::Copy => app.copy_map(),
++              NativeMapShortcut::Screenshot => app.request_map_screenshot(&egui_ctx),
++            },
+           }
+         }
+         app.handle_native_map_hover(native_map.hover_pos());
+-        if let Some(pos) = native_map.take_double_click() {
+-          app.handle_map_double_click(pos);
+-        }
+-        if let Some(drag) = native_map.take_command_drag_update() {
+-          app.handle_map_command_drag(drag.pos, drag.delta, drag.transform);
+-        }
+-        if let Some(pos) = native_map.take_context_menu_request() {
+-          app.open_map_context_menu(pos);
+-        }
+         {
+           let known_geometry_snapshot = KnownGeometrySnapshot {
+             snapshot_version: native_geometry.snapshot_version(),
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -88,6 +88,7 @@
+ 84. `084-remove-stored-egui-context-from-map.patch`
+ 85. `085-collapse-map-screenshot-target.patch`
+ 86. `086-make-native-hover-path-explicit.patch`
++87. `087-collapse-native-map-actions.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

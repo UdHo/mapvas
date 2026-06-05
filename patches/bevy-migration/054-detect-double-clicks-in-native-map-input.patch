@@ -1,0 +1,129 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -12,6 +12,8 @@
+ const MAX_ZOOM: f32 = 524_288.0;
+ const MIN_ZOOM: f32 = 1.0;
+ const KEY_PAN_SPEED: f32 = 500.0;
++const DOUBLE_CLICK_MAX_INTERVAL_SECS: f64 = 0.35;
++const DOUBLE_CLICK_MAX_DISTANCE: f32 = 8.0;
+ 
+ pub struct NativeMapPlugin;
+ 
+@@ -46,6 +48,8 @@
+   transform: Option<Transform>,
+   dragging: bool,
+   last_cursor_pos: Option<egui::Pos2>,
++  last_left_click: Option<(egui::Pos2, f64)>,
++  double_click: Option<egui::Pos2>,
+ }
+ 
+ impl Default for NativeMapControl {
+@@ -55,6 +59,8 @@
+       transform: None,
+       dragging: false,
+       last_cursor_pos: None,
++      last_left_click: None,
++      double_click: None,
+     }
+   }
+ }
+@@ -80,6 +86,10 @@
+     self.transform
+   }
+ 
++  pub fn take_double_click(&mut self) -> Option<egui::Pos2> {
++    self.double_click.take()
++  }
++
+   pub fn set_viewport(&mut self, viewport: Option<MapViewport>) {
+     self.viewport = viewport;
+     if let Some(viewport) = viewport {
+@@ -118,6 +128,21 @@
+   }
+ 
+   if !egui_popup_open && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
++    if let Some(current) = cursor {
++      let now = time.elapsed_secs_f64();
++      if let Some((previous, previous_time)) = control.last_left_click {
++        let interval = now - previous_time;
++        let distance = current.distance(previous);
++        if interval <= DOUBLE_CLICK_MAX_INTERVAL_SECS && distance <= DOUBLE_CLICK_MAX_DISTANCE {
++          control.double_click = Some(current);
++          control.last_left_click = None;
++        } else {
++          control.last_left_click = Some((current, now));
++        }
++      } else {
++        control.last_left_click = Some((current, now));
++      }
++    }
+     control.dragging = true;
+     control.last_cursor_pos = cursor;
+   }
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -101,6 +101,9 @@
+         if let Some(transform) = native_map.transform() {
+           app.set_map_transform(transform);
+         }
++        if let Some(pos) = native_map.take_double_click() {
++          app.handle_map_double_click(pos);
++        }
+         {
+           let known_geometry_snapshot = KnownGeometrySnapshot {
+             snapshot_version: native_geometry.snapshot_version(),
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -74,6 +74,10 @@
+   fn uses_egui_timeline(self) -> bool {
+     self != Self::Native
+   }
++
++  fn uses_egui_double_click_selection(self) -> bool {
++    self != Self::Native
++  }
+ }
+ 
+ impl Map {
+@@ -177,7 +181,7 @@
+     )
+   }
+ 
+-  fn handle_double_click(&mut self, pos: egui::Pos2) {
++  pub fn handle_double_click(&mut self, pos: egui::Pos2) {
+     log::debug!("Map: Double-click detected at {pos:?}");
+ 
+     if let Ok(mut layers) = self.layers.lock() {
+@@ -561,7 +565,8 @@
+     });
+     self.handle_keys(events.into_iter(), rect);
+ 
+-    if response.double_clicked()
++    if self.render_mode.uses_egui_double_click_selection()
++      && response.double_clicked()
+       && let Some(pos) = response.hover_pos()
+     {
+       self.handle_double_click(pos);
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -81,6 +81,10 @@
+ 
+   pub fn set_map_transform(&mut self, transform: crate::map::coordinates::Transform) {
+     self.map.set_transform(transform);
++  }
++
++  pub fn handle_map_double_click(&mut self, pos: egui::Pos2) {
++    self.map.handle_double_click(pos);
+   }
+ 
+   #[must_use]
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -55,6 +55,7 @@
+ 51. `051-remove-unused-layer-double-click-hooks.patch`
+ 52. `052-simplify-mapapp-frame-snapshot-api.patch`
+ 53. `053-remove-unused-highlighted-geometry-hook.patch`
++54. `054-detect-double-clicks-in-native-map-input.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

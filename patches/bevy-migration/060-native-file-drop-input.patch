@@ -1,0 +1,143 @@
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -2,7 +2,11 @@
+ mod bevy_map;
+ mod bevy_tiles;
+ 
+-use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
++use bevy::{
++  log::LogPlugin,
++  prelude::*,
++  window::{FileDragAndDrop, WindowResolution},
++};
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+ use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapViewport};
+@@ -84,6 +88,7 @@
+   mut native_viewport: ResMut<NativeMapViewport>,
+   mut native_geometry: ResMut<NativeGeometryLayer>,
+   mut native_tiles: ResMut<NativeTileLayer>,
++  mut file_drops: MessageReader<FileDragAndDrop>,
+ ) -> Result {
+   let egui_ctx = contexts.ctx_mut()?.clone();
+   let runtime_handle = state.runtime.handle().clone();
+@@ -91,6 +96,14 @@
+ 
+   state.initialize(egui_ctx.clone());
+ 
++  let dropped_files = file_drops
++    .read()
++    .filter_map(|event| match event {
++      FileDragAndDrop::DroppedFile { path_buf, .. } => Some(path_buf.clone()),
++      FileDragAndDrop::HoveredFile { .. } | FileDragAndDrop::HoveredFileCanceled { .. } => None,
++    })
++    .collect::<Vec<_>>();
++
+   let mut viewport = None;
+   let mut current_config = None;
+   let mut geometry_snapshot = None;
+@@ -101,6 +114,9 @@
+         if let Some(transform) = native_map.transform() {
+           app.set_map_transform(transform);
+         }
++        for path in &dropped_files {
++          app.handle_map_dropped_file(path.clone());
++        }
+         app.handle_map_hover(native_map.hover_pos());
+         if let Some(pos) = native_map.take_double_click() {
+           app.handle_map_double_click(pos);
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1,5 +1,6 @@
+ use std::{
+   cell::RefCell,
++  path::PathBuf,
+   rc::Rc,
+   sync::{Mutex, MutexGuard, mpsc::Receiver},
+ };
+@@ -86,6 +87,10 @@
+   }
+ 
+   fn uses_egui_context_menu_trigger(self) -> bool {
++    self != Self::Native
++  }
++
++  fn uses_egui_file_drops(self) -> bool {
+     self != Self::Native
+   }
+ }
+@@ -605,21 +610,24 @@
+         layer.clear();
+       }
+     }
++  }
++
++  pub fn handle_dropped_file(&self, file_path: PathBuf) {
++    let sender = self.remote.layer.clone();
++    let repaint = self.remote.repaint.clone();
++    tokio::spawn(async move {
++      let mut auto_parser = crate::parser::AutoFileParser::new(&file_path);
++      for map_event in auto_parser.parse() {
++        let _ = sender.send(map_event);
++        repaint.request_repaint();
++      }
++    });
+   }
+ 
+   fn handle_dropped_files(&self, ctx: &egui::Context) {
+     for file in ctx.input(|i| i.raw.dropped_files.clone()) {
+       if let Some(file_path) = file.path {
+-        let sender = self.remote.layer.clone();
+-        let repaint = self.remote.repaint.clone();
+-        tokio::spawn(async move {
+-          // Use auto parser for dropped files
+-          let mut auto_parser = crate::parser::AutoFileParser::new(&file_path);
+-          for map_event in auto_parser.parse() {
+-            let _ = sender.send(map_event);
+-            repaint.request_repaint();
+-          }
+-        });
++        self.handle_dropped_file(file_path);
+       }
+     }
+   }
+@@ -651,7 +659,9 @@
+       );
+     }
+ 
+-    self.handle_dropped_files(ui.ctx());
++    if self.render_mode.uses_egui_file_drops() {
++      self.handle_dropped_files(ui.ctx());
++    }
+     if !self.render_mode.uses_native_viewport_input() {
+       self.handle_mouse_wheel(ui, &response);
+     }
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -1,4 +1,4 @@
+-use std::rc::Rc;
++use std::{path::PathBuf, rc::Rc};
+ 
+ use egui::Widget as _;
+ 
+@@ -102,6 +102,10 @@
+ 
+   pub fn handle_map_hover(&mut self, pos: Option<egui::Pos2>) {
+     self.map.handle_hover(pos);
++  }
++
++  pub fn handle_map_dropped_file(&mut self, path: PathBuf) {
++    self.map.handle_dropped_file(path);
+   }
+ 
+   #[must_use]
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -61,6 +61,7 @@
+ 57. `057-native-hover-input.patch`
+ 58. `058-native-command-context-menu-rendering.patch`
+ 59. `059-native-layer-role.patch`
++60. `060-native-file-drop-input.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

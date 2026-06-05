@@ -432,8 +432,8 @@ mod tests {
 
       let expected_coord = PixelCoordinate::from(WGS84Coordinate::new(52.0, 10.0));
       let expected_style = Style::default()
-        .with_color(egui::Color32::RED)
-        .with_fill_color(egui::Color32::GREEN);
+        .with_color(crate::map::color::Color::RED)
+        .with_fill_color(crate::map::color::Color::GREEN);
       let expected_metadata = Metadata::default()
         .with_label("Test Feature".to_string())
         .with_style(expected_style);
@@ -585,10 +585,10 @@ mod tests {
         "All geometries should have parsed colors"
       );
 
-      assert_eq!(parsed_colors[0], egui::Color32::RED);
-      assert_eq!(parsed_colors[1], egui::Color32::RED);
-      assert_eq!(parsed_colors[2], egui::Color32::GREEN);
-      assert_eq!(parsed_colors[3], egui::Color32::BLUE);
+      assert_eq!(parsed_colors[0], crate::map::color::Color::RED);
+      assert_eq!(parsed_colors[1], crate::map::color::Color::RED);
+      assert_eq!(parsed_colors[2], crate::map::color::Color::GREEN);
+      assert_eq!(parsed_colors[3], crate::map::color::Color::BLUE);
     } else {
       panic!("First event should be a Layer event");
     }
@@ -610,7 +610,7 @@ mod tests {
       "First point should match"
     );
 
-    let expected_style = StyleBuilder::with_color(egui::Color32::RED);
+    let expected_style = StyleBuilder::with_color(crate::map::color::Color::RED);
     let expected_metadata = MetadataBuilder::with_label_and_style("Feature Point", expected_style);
     let expected_point2 = GeometryBuilder::point_with_metadata(52.1, 10.1, expected_metadata);
     assert_eq!(
@@ -648,7 +648,7 @@ mod tests {
       actual_layer.geometries[1], expected_point2,
       "Feature point should match with label"
     );
-    let expected_style = StyleBuilder::with_color(egui::Color32::GREEN);
+    let expected_style = StyleBuilder::with_color(crate::map::color::Color::GREEN);
     let expected_metadata = MetadataBuilder::with_style(expected_style);
     let expected_point3 = GeometryBuilder::point_with_metadata(52.2, 10.2, expected_metadata);
     assert_eq!(

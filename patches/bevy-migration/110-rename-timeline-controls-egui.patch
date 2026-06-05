@@ -1,0 +1,43 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1218,8 +1218,8 @@
+ 
+ pub trait MapLayerHolder {
+   fn get_reader(&self) -> Box<dyn MapLayerReader + '_>;
+-  /// Render the timeline's sidebar UI block.
+-  fn timeline_ui(&self, ui: &mut egui::Ui);
++  /// Render the timeline's egui sidebar controls.
++  fn timeline_egui_controls(&self, ui: &mut egui::Ui);
+   /// Read temporal range from the timeline (used by the temporal-controls scan).
+   fn timeline_temporal_range(
+     &self,
+@@ -1249,7 +1249,7 @@
+     ))
+   }
+ 
+-  fn timeline_ui(&self, ui: &mut egui::Ui) {
++  fn timeline_egui_controls(&self, ui: &mut egui::Ui) {
+     self.timeline.borrow_mut().ui_egui_controls(ui);
+   }
+ 
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -1124,7 +1124,7 @@
+                     layer.ui_egui_controls(ui);
+                   }
+                 }
+-                self.map_content.timeline_ui(ui);
++                self.map_content.timeline_egui_controls(ui);
+               });
+             });
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -111,6 +111,7 @@
+ 107. `107-use-neutral-interval-lock-reexport.patch`
+ 108. `108-remove-map-widget-impl.patch`
+ 109. `109-decouple-native-screenshot-from-egui-context.patch`
++110. `110-rename-timeline-controls-egui.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

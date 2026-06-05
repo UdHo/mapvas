@@ -1,11 +1,10 @@
 use super::super::geometry_selection;
 use super::ShapeLayer;
 use crate::map::{
-  coordinates::{Coordinate, PixelCoordinate, Transform},
+  coordinates::{Coordinate, PixelCoordinate, PixelPosition, Transform},
   geometry_collection::Geometry,
 };
 use chrono::{DateTime, Utc};
-use egui::Pos2;
 use std::fmt::Write;
 
 impl ShapeLayer {
@@ -341,7 +340,7 @@ impl ShapeLayer {
     shape_idx: usize,
     nested_path: &[usize],
     geometry: &Geometry<PixelCoordinate>,
-    click_pos: Pos2,
+    click_pos: PixelPosition,
     transform: &Transform,
     closest_distance: &mut f64,
     closest_geometry: &mut Option<(String, usize, Vec<usize>)>,

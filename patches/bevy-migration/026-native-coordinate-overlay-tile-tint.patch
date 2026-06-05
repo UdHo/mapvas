@@ -1,0 +1,54 @@
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -763,12 +763,14 @@
+     };
+     let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
+     let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
++    let tint = tile_tint(layer.coordinate_display_mode, tile);
+ 
+     let entry = layer.loaded_tiles.get_mut(&tile).expect("tile was checked");
+     if let Some(entity) = entry.entity {
+       if let Ok((mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
+         *sprite_transform = transform;
+         sprite.custom_size = Some(custom_size);
++        sprite.color = tint;
+         *visibility = Visibility::Visible;
+       } else {
+         entry.entity = None;
+@@ -778,6 +780,7 @@
+     if entry.entity.is_none() {
+       let mut sprite = Sprite::from_image(entry.image.clone());
+       sprite.custom_size = Some(custom_size);
++      sprite.color = tint;
+       entry.entity = Some(commands.spawn((sprite, transform, NativeTileSprite)).id());
+     }
+   }
+@@ -861,6 +864,18 @@
+   )
+ }
+ 
++fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
++  if mode != CoordinateDisplayMode::Overlay {
++    return Color::WHITE;
++  }
++
++  if (tile.x + tile.y).is_multiple_of(2) {
++    Color::srgba(1.0, 240.0 / 255.0, 240.0 / 255.0, 1.0)
++  } else {
++    Color::srgba(240.0 / 255.0, 240.0 / 255.0, 1.0, 1.0)
++  }
++}
++
+ fn viewport_left_x(rect: egui::Rect, transform: &MapTransform) -> f32 {
+   let inv = transform.invert();
+   inv.apply(egui::pos2(rect.min.x, 0.0).into()).x
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -27,6 +27,7 @@
+ 23. `023-disjoint-native-fill-queries.patch`
+ 24. `024-native-nested-highlight-snapshots.patch`
+ 25. `025-avoid-egui-geometry-tile-work-in-native-overlay.patch`
++26. `026-native-coordinate-overlay-tile-tint.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

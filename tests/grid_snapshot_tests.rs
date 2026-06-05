@@ -1,9 +1,8 @@
-use eframe::App;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use mapvas::{
   config::Config,
-  map::{map_event::MapEvent, mapvas_egui::Map},
+  map::{Map, map_event::MapEvent},
   mapvas_ui::MapApp,
   parser::{FileParser, GeoJsonParser},
 };
@@ -13,7 +12,7 @@ use std::io::Cursor;
 fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Parse the GeoJSON content and inject it as a map event
@@ -29,15 +28,15 @@ fn create_test_app_with_geojson_grid_mode(geojson_content: String) -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 fn create_test_app_grid_mode() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -46,8 +45,7 @@ async fn grid_mode_basic_functionality() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -90,8 +88,7 @@ async fn grid_mode_with_geojson_data() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -136,8 +133,7 @@ async fn grid_mode_coordinate_display_comparison() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -172,8 +168,7 @@ async fn grid_mode_empty_state() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -215,8 +210,7 @@ async fn grid_mode_ui_workflow() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -265,8 +259,7 @@ async fn grid_mode_sidebar_interactions() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );

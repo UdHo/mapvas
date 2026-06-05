@@ -1,0 +1,30 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -738,7 +738,6 @@
+                 layer.draw_native_overlay(ui, &self.transform, rect);
+                 continue;
+               }
+-              NativeLayerRole::EguiOverlay => {}
+               NativeLayerRole::Hidden => continue,
+             }
+           }
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -37,7 +37,6 @@
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ pub enum NativeLayerRole {
+   GeometrySource,
+-  EguiOverlay,
+   Hidden,
+ }
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -68,6 +68,7 @@
+ 64. `064-separate-native-shape-overlay-prep.patch`
+ 65. `065-change-driven-native-config-handoff.patch`
+ 66. `066-native-layer-role-hidden-by-default.patch`
++67. `067-remove-native-egui-overlay-role.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

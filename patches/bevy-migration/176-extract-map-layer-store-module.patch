@@ -1,0 +1,215 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 1050277..afe9e1b 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -177,6 +177,7 @@ Apply these patches in order from the repository root:
+ 173. `173-route-neutral-map-methods-through-layer-helpers.patch`
+ 174. `174-encapsulate-map-layer-store.patch`
+ 175. `175-hide-egui-layer-reader-behind-sidebar-controls.patch`
++176. `176-extract-map-layer-store-module.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer_store.rs b/src/map/mapvas_egui/layer_store.rs
+new file mode 100644
+index 0000000..511e6ef
+--- /dev/null
++++ b/src/map/mapvas_egui/layer_store.rs
+@@ -0,0 +1,87 @@
++use std::{rc::Rc, sync::Mutex};
++
++use super::layer::EguiLayer;
++use crate::map::layer::Layer as NeutralLayer;
++
++#[derive(Clone)]
++pub(super) struct MapLayerStore {
++  layers: Rc<Mutex<Vec<Box<dyn EguiLayer>>>>,
++}
++
++impl MapLayerStore {
++  pub(super) fn new(layers: Vec<Box<dyn EguiLayer>>) -> Self {
++    Self {
++      layers: Rc::new(Mutex::new(layers)),
++    }
++  }
++
++  pub(super) fn for_each_neutral_mut(&self, mut f: impl FnMut(&mut dyn NeutralLayer)) {
++    if let Ok(mut layers) = self.layers.lock() {
++      for layer in layers.iter_mut() {
++        f(layer.as_mut());
++      }
++    }
++  }
++
++  pub(super) fn fold_neutral<R>(
++    &self,
++    initial: R,
++    mut f: impl FnMut(R, &dyn NeutralLayer) -> R,
++  ) -> R {
++    let Ok(layers) = self.layers.lock() else {
++      return initial;
++    };
++    layers
++      .iter()
++      .fold(initial, |acc, layer| f(acc, layer.as_ref()))
++  }
++
++  pub(super) fn find_neutral<R>(
++    &self,
++    mut f: impl FnMut(&dyn NeutralLayer) -> Option<R>,
++  ) -> Option<R> {
++    let Ok(layers) = self.layers.lock() else {
++      return None;
++    };
++    layers.iter().find_map(|layer| f(layer.as_ref()))
++  }
++
++  pub(super) fn find_neutral_mut<R>(
++    &self,
++    mut f: impl FnMut(&mut dyn NeutralLayer) -> Option<R>,
++  ) -> Option<R> {
++    let Ok(mut layers) = self.layers.lock() else {
++      return None;
++    };
++    layers.iter_mut().find_map(|layer| f(layer.as_mut()))
++  }
++
++  pub(super) fn any_neutral(&self, mut predicate: impl FnMut(&dyn NeutralLayer) -> bool) -> bool {
++    self
++      .find_neutral(|layer| predicate(layer).then_some(()))
++      .is_some()
++  }
++
++  pub(super) fn try_with_egui_layers_mut(
++    &self,
++    context: &str,
++    f: impl FnOnce(&mut [Box<dyn EguiLayer>]),
++  ) {
++    let Ok(mut layers) = self.layers.try_lock().inspect_err(|e| {
++      log::error!("Failed to lock layers for {context}: {e:?}");
++    }) else {
++      return;
++    };
++    f(layers.as_mut_slice());
++  }
++
++  pub(super) fn layer_egui_controls(&self, ui: &mut egui::Ui) {
++    let mut layers = self
++      .layers
++      .lock()
++      .unwrap_or_else(std::sync::PoisonError::into_inner);
++    for layer in layers.iter_mut() {
++      layer.ui_egui_controls(ui);
++    }
++  }
++}
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index f5e612f..efdeafe 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -3,7 +3,7 @@ use std::{
+   path::PathBuf,
+   rc::Rc,
+   sync::{
+-    Arc, Mutex, RwLock,
++    Arc, RwLock,
+     mpsc::{Receiver, Sender},
+   },
+ };
+@@ -22,15 +22,16 @@ use arboard::Clipboard;
+ use egui::{InputState, PointerButton, Rect, Response, Sense, Ui};
+ use helpers::{pixel_to_pos, point_to_coordinate, pos_to_pixel, show_box};
+ use layer::{EguiLayer, EguiMapFrame, TimelineLayer};
++use layer_store::MapLayerStore;
+ use log::{debug, warn};
+ 
+ use super::{
+   coordinates::{BoundingBox, PixelPosition, PixelRect},
+-  layer::Layer as NeutralLayer,
+   map_event::MapEvent,
+ };
+ 
+ mod helpers;
++mod layer_store;
+ pub mod timeline_widget;
+ 
+ pub mod layer;
+@@ -61,78 +62,6 @@ enum ScreenshotTarget {
+   Native(Vec<PathBuf>),
+ }
+ 
+-#[derive(Clone)]
+-struct MapLayerStore {
+-  layers: Rc<Mutex<Vec<Box<dyn EguiLayer>>>>,
+-}
+-
+-impl MapLayerStore {
+-  fn new(layers: Vec<Box<dyn EguiLayer>>) -> Self {
+-    Self {
+-      layers: Rc::new(Mutex::new(layers)),
+-    }
+-  }
+-
+-  fn for_each_neutral_mut(&self, mut f: impl FnMut(&mut dyn NeutralLayer)) {
+-    if let Ok(mut layers) = self.layers.lock() {
+-      for layer in layers.iter_mut() {
+-        f(layer.as_mut());
+-      }
+-    }
+-  }
+-
+-  fn fold_neutral<R>(&self, initial: R, mut f: impl FnMut(R, &dyn NeutralLayer) -> R) -> R {
+-    let Ok(layers) = self.layers.lock() else {
+-      return initial;
+-    };
+-    layers
+-      .iter()
+-      .fold(initial, |acc, layer| f(acc, layer.as_ref()))
+-  }
+-
+-  fn find_neutral<R>(&self, mut f: impl FnMut(&dyn NeutralLayer) -> Option<R>) -> Option<R> {
+-    let Ok(layers) = self.layers.lock() else {
+-      return None;
+-    };
+-    layers.iter().find_map(|layer| f(layer.as_ref()))
+-  }
+-
+-  fn find_neutral_mut<R>(
+-    &self,
+-    mut f: impl FnMut(&mut dyn NeutralLayer) -> Option<R>,
+-  ) -> Option<R> {
+-    let Ok(mut layers) = self.layers.lock() else {
+-      return None;
+-    };
+-    layers.iter_mut().find_map(|layer| f(layer.as_mut()))
+-  }
+-
+-  fn any_neutral(&self, mut predicate: impl FnMut(&dyn NeutralLayer) -> bool) -> bool {
+-    self
+-      .find_neutral(|layer| predicate(layer).then_some(()))
+-      .is_some()
+-  }
+-
+-  fn try_with_egui_layers_mut(&self, context: &str, f: impl FnOnce(&mut [Box<dyn EguiLayer>])) {
+-    let Ok(mut layers) = self.layers.try_lock().inspect_err(|e| {
+-      log::error!("Failed to lock layers for {context}: {e:?}");
+-    }) else {
+-      return;
+-    };
+-    f(layers.as_mut_slice());
+-  }
+-
+-  fn layer_egui_controls(&self, ui: &mut egui::Ui) {
+-    let mut layers = self
+-      .layers
+-      .lock()
+-      .unwrap_or_else(std::sync::PoisonError::into_inner);
+-    for layer in layers.iter_mut() {
+-      layer.ui_egui_controls(ui);
+-    }
+-  }
+-}
+-
+ #[derive(Clone, Copy)]
+ enum MapConstructionMode {
+   Egui { include_tiles: bool },

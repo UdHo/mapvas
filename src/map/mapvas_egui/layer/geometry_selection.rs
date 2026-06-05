@@ -1,8 +1,7 @@
 use crate::map::{
-  coordinates::{PixelCoordinate, Transform},
+  coordinates::{PixelCoordinate, PixelPosition, Transform},
   geometry_collection::Geometry,
 };
-use egui::Pos2;
 
 /// Find the closest geometry to a click position within a geometry (recursively for collections)
 #[allow(clippy::too_many_arguments)]
@@ -11,7 +10,7 @@ pub fn find_closest_in_geometry<F1, F2>(
   shape_idx: usize,
   nested_path: &[usize],
   geometry: &Geometry<PixelCoordinate>,
-  click_pos: Pos2,
+  click_pos: PixelPosition,
   transform: &Transform,
   closest_distance: &mut f64,
   closest_geometry: &mut Option<(String, usize, Vec<usize>)>,
@@ -22,7 +21,7 @@ pub fn find_closest_in_geometry<F1, F2>(
   F1: Fn(&str, usize, &[usize]) -> bool + Copy,
   F2: Fn(&Geometry<PixelCoordinate>) -> bool + Copy,
 {
-  let click_pixel = transform.invert().apply(click_pos.into());
+  let click_pixel = transform.invert().apply(click_pos);
 
   if let Geometry::GeometryCollection(geometries, _) = geometry {
     // Recursively check each nested geometry

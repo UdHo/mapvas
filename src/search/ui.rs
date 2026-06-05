@@ -314,8 +314,10 @@ impl SearchUI {
         result.coordinate.lon
       );
       let style = Style::default()
-        .with_color(egui::Color32::RED)
-        .with_fill_color(egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100));
+        .with_color(crate::map::color::Color::RED)
+        .with_fill_color(crate::map::color::Color::from_rgba_unmultiplied(
+          255, 0, 0, 100,
+        ));
 
       let metadata = Metadata::default()
         .with_label(result.name.clone())

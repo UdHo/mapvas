@@ -1,0 +1,28 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -34,7 +34,6 @@
+ bevy = "0.18.1"
+ bevy_egui = "0.39.1"
+ egui ={version =  "0.33.3", features = ["serde","bytemuck"]}
+-eframe = "0.33.3"
+ egui_extras = { version = "0.33.3", features = ["all_loaders"] }
+ puffin = { version = "0.20", optional = true }
+ puffin_egui = { version = "0.30", optional = true }
+@@ -63,6 +62,7 @@
+ 
+ [dev-dependencies]
+ assert_approx_eq = "1.1.0"
++eframe = "0.33.3"
+ futures = "0.3"
+ rstest = "0.26"
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -40,6 +40,7 @@
+ 36. `036-use-explicit-map-render-mode.patch`
+ 37. `037-hide-native-attribution-in-grid-only-mode.patch`
+ 38. `038-remove-eframe-mapapp-adapter.patch`
++39. `039-move-eframe-to-dev-dependencies.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

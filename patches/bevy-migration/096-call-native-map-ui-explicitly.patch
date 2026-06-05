@@ -1,0 +1,74 @@
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -33,9 +33,16 @@
+   runtime_monitor: Option<RuntimeMonitor>,
+   headless: bool,
+   transparent_map_background: bool,
++  map_ui_mode: MapUiMode,
+   quit_requested: bool,
+ }
+ 
++#[derive(Clone, Copy)]
++enum MapUiMode {
++  Egui,
++  Native,
++}
++
+ pub struct MapAppOutput {
+   pub viewport: Option<MapViewport>,
+   pub config_update: Option<Config>,
+@@ -73,6 +80,7 @@
+       runtime_monitor,
+       headless: false,
+       transparent_map_background: false,
++      map_ui_mode: MapUiMode::Egui,
+       quit_requested: false,
+     }
+   }
+@@ -85,6 +93,10 @@
+     self.transparent_map_background = true;
+   }
+ 
++  pub fn use_native_map_ui(&mut self) {
++    self.map_ui_mode = MapUiMode::Native;
++  }
++
+   pub fn set_map_transform(&mut self, transform: crate::map::coordinates::Transform) {
+     self.map.set_transform(transform);
+   }
+@@ -394,7 +406,14 @@
+       .frame(map_frame)
+       .show_inside(ui, |ui| {
+         profile_scope!("MapApp::central_panel");
+-        (&mut self.map).ui(ui);
++        match self.map_ui_mode {
++          MapUiMode::Egui => {
++            (&mut self.map).ui(ui);
++          }
++          MapUiMode::Native => {
++            self.map.ui_native(ui);
++          }
++        }
+       });
+ 
+     // Show command line UI (must be after CentralPanel to appear on top)
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -64,6 +64,7 @@
+       self.runtime_monitor.take(),
+     );
+     app.set_transparent_map_background();
++    app.use_native_map_ui();
+     self.app = Some(app);
+   }
+ }
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -97,6 +97,7 @@
+ 93. `093-move-bevy-ui-bridge-module.patch`
+ 94. `094-move-bevy-app-assembly-module.patch`
+ 95. `095-split-map-ui-entrypoints.patch`
++96. `096-call-native-map-ui-explicitly.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

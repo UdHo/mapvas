@@ -1,0 +1,21 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -588,7 +588,7 @@
+       }
+     }
+     if !events.is_empty() {
+-      self.ctx.request_repaint();
++      self.repaint.request_repaint();
+     }
+   }
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -81,6 +81,7 @@
+ 77. `077-consolidate-remote-map-event-sender.patch`
+ 78. `078-decouple-map-from-remote-object.patch`
+ 79. `079-route-native-repaint-through-bevy.patch`
++80. `080-route-map-event-repaint-through-signal.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

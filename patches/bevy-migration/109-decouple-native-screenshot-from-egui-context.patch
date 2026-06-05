@@ -1,0 +1,104 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -367,7 +367,7 @@
+ 
+           egui::Key::V => self.paste(),
+           egui::Key::C => self.copy(),
+-          egui::Key::S => self.request_screenshot(ctx),
++          egui::Key::S => self.request_screenshot_if_no_text_focus(ctx),
+           _ => {
+             debug!("Unhandled key pressed: {key:?} {modifiers:?}");
+           }
+@@ -646,14 +646,18 @@
+     // TODO
+   }
+ 
+-  pub fn request_screenshot(&mut self, ctx: &egui::Context) {
++  fn request_screenshot_if_no_text_focus(&mut self, ctx: &egui::Context) {
+     let has_text_focus = ctx.memory(|mem| mem.focused().is_some());
+     if !has_text_focus {
+-      let path = helpers::current_time_screenshot_name();
+-      self.request_screenshot_path(path);
++      self.request_screenshot();
+     }
+   }
+ 
++  pub fn request_screenshot(&mut self) {
++    let path = helpers::current_time_screenshot_name();
++    self.request_screenshot_path(path);
++  }
++
+   pub fn take_screenshot_requests(&mut self) -> Vec<PathBuf> {
+     match &mut self.screenshot_target {
+       ScreenshotTarget::Egui(_) => Vec::new(),
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -175,8 +175,8 @@
+     self.map.copy();
+   }
+ 
+-  pub fn request_map_screenshot(&mut self, ctx: &egui::Context) {
+-    self.map.request_screenshot(ctx);
++  pub fn request_map_screenshot(&mut self) {
++    self.map.request_screenshot();
+   }
+ 
+   #[must_use]
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -82,7 +82,7 @@
+   }
+ }
+ 
+-fn handle_native_map_action(app: &mut MapApp, egui_ctx: &egui::Context, action: NativeMapAction) {
++fn handle_native_map_action(app: &mut MapApp, action: NativeMapAction) {
+   match action {
+     NativeMapAction::CommandDrag(drag) => {
+       app.handle_map_command_drag(drag.pos, drag.delta, drag.transform);
+@@ -96,24 +96,20 @@
+     NativeMapAction::DroppedFile(path) => {
+       app.handle_map_dropped_file(path);
+     }
+-    NativeMapAction::Shortcut(shortcut) => handle_native_map_shortcut(app, egui_ctx, shortcut),
++    NativeMapAction::Shortcut(shortcut) => handle_native_map_shortcut(app, shortcut),
+     NativeMapAction::TransformChanged(transform) => {
+       app.set_map_transform(transform);
+     }
+   }
+ }
+ 
+-fn handle_native_map_shortcut(
+-  app: &mut MapApp,
+-  egui_ctx: &egui::Context,
+-  shortcut: NativeMapShortcut,
+-) {
++fn handle_native_map_shortcut(app: &mut MapApp, shortcut: NativeMapShortcut) {
+   match shortcut {
+     NativeMapShortcut::Clear => app.clear_map(),
+     NativeMapShortcut::FocusAll => app.focus_map(),
+     NativeMapShortcut::Paste => app.paste_map(),
+     NativeMapShortcut::Copy => app.copy_map(),
+-    NativeMapShortcut::Screenshot => app.request_map_screenshot(egui_ctx),
++    NativeMapShortcut::Screenshot => app.request_map_screenshot(),
+   }
+ }
+ 
+@@ -163,7 +159,7 @@
+     .show(&egui_ctx, |ui| {
+       if let Some(app) = state.app.as_mut() {
+         for action in native_map.take_actions() {
+-          handle_native_map_action(app, &egui_ctx, action);
++          handle_native_map_action(app, action);
+         }
+         app.handle_native_map_hover(native_map.hover_pos());
+         {
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -110,6 +110,7 @@
+ 106. `106-reexport-neutral-map-api.patch`
+ 107. `107-use-neutral-interval-lock-reexport.patch`
+ 108. `108-remove-map-widget-impl.patch`
++109. `109-decouple-native-screenshot-from-egui-context.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

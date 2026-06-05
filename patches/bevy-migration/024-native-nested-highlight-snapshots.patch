@@ -1,0 +1,118 @@
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -657,8 +657,7 @@
+     else {
+       return Vec::new();
+     };
+-    if !nested_path.is_empty()
+-      || !*self.layer_visibility.get(&layer_id).unwrap_or(&true)
++    if !*self.layer_visibility.get(&layer_id).unwrap_or(&true)
+       || !*self
+         .geometry_visibility
+         .get(&(layer_id.clone(), shape_idx))
+@@ -680,7 +679,7 @@
+ 
+     let default_style = Style::default();
+     self
+-      .filter_nested_visibility(&layer_id, shape_idx, &[], shape)
++      .highlighted_path_geometry(&layer_id, shape_idx, &[], &nested_path, shape)
+       .map(|geometry| {
+         geometry
+           .flat_iterate_with_merged_style(&default_style)
+@@ -688,6 +687,35 @@
+           .collect::<Vec<_>>()
+       })
+       .unwrap_or_default()
++  }
++
++  fn highlighted_path_geometry(
++    &self,
++    layer_id: &str,
++    shape_idx: usize,
++    current_path: &[usize],
++    target_path: &[usize],
++    geometry: &Geometry<PixelCoordinate>,
++  ) -> Option<Geometry<PixelCoordinate>> {
++    let key = (layer_id.to_string(), shape_idx, current_path.to_vec());
++    if !*self.nested_geometry_visibility.get(&key).unwrap_or(&true) {
++      return None;
++    }
++
++    if current_path == target_path {
++      return self.filter_nested_visibility(layer_id, shape_idx, current_path, geometry);
++    }
++
++    let Geometry::GeometryCollection(geometries, metadata) = geometry else {
++      return None;
++    };
++    let child_idx = *target_path.get(current_path.len())?;
++    let child = geometries.get(child_idx)?;
++    let mut child_path = current_path.to_vec();
++    child_path.push(child_idx);
++    let child =
++      self.highlighted_path_geometry(layer_id, shape_idx, &child_path, target_path, child)?;
++    Some(Geometry::GeometryCollection(vec![child], metadata.clone()))
+   }
+ 
+   fn base_geometry_snapshot_version(&self) -> u64 {
+@@ -1271,7 +1299,7 @@
+   use super::*;
+   use crate::map::{
+     coordinates::{PixelCoordinate, Transform},
+-    geometry_collection::{Geometry, Metadata},
++    geometry_collection::{Geometry, Metadata, Style},
+   };
+   use egui::Pos2;
+   use std::sync::mpsc;
+@@ -1370,6 +1398,41 @@
+     assert!(closest_distance < 10.0); // Should be close to the line
+   }
+ 
++  #[test]
++  fn highlighted_geometry_snapshot_includes_nested_geometry_with_parent_style() {
++    let mut shape_layer = ShapeLayer::new_with_test_receiver();
++    let layer_id = "test_layer".to_string();
++    let parent_style = Style::default().with_color(egui::Color32::RED);
++    let point1 = Geometry::Point(PixelCoordinate { x: 100.0, y: 100.0 }, Metadata::default());
++    let point2 = Geometry::Point(PixelCoordinate { x: 200.0, y: 200.0 }, Metadata::default());
++    let collection = Geometry::GeometryCollection(
++      vec![point1, point2],
++      Metadata::default().with_style(parent_style),
++    );
++
++    shape_layer
++      .shape_map
++      .insert(layer_id.clone(), vec![collection]);
++    shape_layer.layer_visibility.insert(layer_id.clone(), true);
++    shape_layer
++      .geometry_visibility
++      .insert((layer_id.clone(), 0), true);
++    shape_layer
++      .geometry_highlighter
++      .highlight_geometry(&layer_id, 0, &[1]);
++
++    let snapshot = shape_layer.highlighted_geometry_snapshot();
++    assert_eq!(snapshot.len(), 1);
++    let Geometry::Point(coord, metadata) = &snapshot[0] else {
++      panic!("expected nested point highlight");
++    };
++    assert_eq!(*coord, PixelCoordinate { x: 200.0, y: 200.0 });
++    assert_eq!(
++      metadata.style.as_ref().map(Style::color),
++      Some(egui::Color32::RED)
++    );
++  }
++
+   impl ShapeLayer {
+     // Helper method for testing
+     #[allow(clippy::arc_with_non_send_sync)]
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -25,6 +25,7 @@
+ 21. `021-split-highlight-and-geometry-snapshot-versions.patch`
+ 22. `022-avoid-full-snapshots-for-highlight-only-updates.patch`
+ 23. `023-disjoint-native-fill-queries.patch`
++24. `024-native-nested-highlight-snapshots.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,36 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -71,7 +71,7 @@
+     self == Self::Egui
+   }
+ 
+-  fn uses_native_geometry(self) -> bool {
++  fn uses_native_rendering(self) -> bool {
+     self == Self::Native
+   }
+ 
+@@ -646,12 +646,12 @@
+       {
+         for layer in layer_guard.iter_mut() {
+           layer.process_pending_events();
+-          if self.render_mode.uses_native_geometry() && layer.is_native_geometry_source() {
++          if self.render_mode.uses_native_rendering() && layer.is_native_geometry_source() {
+             profile_scope!("Layer::draw_interaction_overlay", layer.name());
+             layer.draw_interaction_overlay(ui, &self.transform, rect);
+             continue;
+           }
+-          if self.render_mode.uses_native_geometry() && !layer.draw_in_native_render_mode() {
++          if self.render_mode.uses_native_rendering() && !layer.draw_in_native_render_mode() {
+             continue;
+           }
+           profile_scope!("Layer::draw", layer.name());
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -45,6 +45,7 @@
+ 41. `041-derive-native-viewport-input-from-render-mode.patch`
+ 42. `042-skip-egui-attribution-in-native-mode.patch`
+ 43. `043-skip-screenshot-preview-in-native-mode.patch`
++44. `044-rename-native-render-mode-helper.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

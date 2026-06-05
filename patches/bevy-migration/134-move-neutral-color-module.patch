@@ -1,0 +1,153 @@
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -135,6 +135,7 @@
+ 131. `131-use-pixel-position-for-layer-hover.patch`
+ 132. `132-remove-egui-coordinate-adapters.patch`
+ 133. `133-use-neutral-map-event-color.patch`
++134. `134-move-neutral-color-module.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+--- a/src/map.rs
++++ b/src/map.rs
+@@ -1,3 +1,5 @@
++/// Shared color types.
++pub mod color;
+ /// Contains everything needed to handle coordinates.
+ pub mod coordinates;
+ /// Distance calculation utilities for geometries and coordinates.
+--- /dev/null
++++ b/src/map/color.rs
+@@ -0,0 +1,62 @@
++use serde::{Deserialize, Serialize};
++use std::str::FromStr;
++
++#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(transparent)]
++pub struct Color([u8; 4]);
++
++impl Color {
++  pub const BLACK: Self = Self::from_rgb(0, 0, 0);
++  pub const BLUE: Self = Self::from_rgb(0, 0, 255);
++  pub const BROWN: Self = Self::from_rgb(165, 42, 42);
++  pub const DARK_BLUE: Self = Self::from_rgb(0, 0, 0x8B);
++  pub const DARK_GREEN: Self = Self::from_rgb(0, 0x64, 0);
++  pub const DARK_RED: Self = Self::from_rgb(0x8B, 0, 0);
++  pub const GRAY: Self = Self::from_rgb(160, 160, 160);
++  pub const GREEN: Self = Self::from_rgb(0, 255, 0);
++  pub const RED: Self = Self::from_rgb(255, 0, 0);
++  pub const WHITE: Self = Self::from_rgb(255, 255, 255);
++  pub const YELLOW: Self = Self::from_rgb(255, 255, 0);
++
++  #[must_use]
++  pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
++    Self::from_rgba_unmultiplied(r, g, b, 255)
++  }
++
++  #[must_use]
++  pub const fn from_rgba_unmultiplied(r: u8, g: u8, b: u8, a: u8) -> Self {
++    Self([r, g, b, a])
++  }
++
++  #[must_use]
++  pub const fn to_rgba_unmultiplied(self) -> [u8; 4] {
++    self.0
++  }
++}
++
++impl Default for Color {
++  fn default() -> Self {
++    Color::BLUE
++  }
++}
++
++impl FromStr for Color {
++  type Err = ();
++  fn from_str(input: &str) -> Result<Color, Self::Err> {
++    let lowercase = input.to_lowercase();
++    match lowercase.as_str() {
++      "blue" => Ok(Color::BLUE),
++      "darkblue" => Ok(Color::DARK_BLUE),
++      "red" => Ok(Color::RED),
++      "darkred" => Ok(Color::DARK_RED),
++      "green" => Ok(Color::GREEN),
++      "darkgreen" => Ok(Color::DARK_GREEN),
++      "yellow" => Ok(Color::YELLOW),
++      "black" => Ok(Color::BLACK),
++      "white" => Ok(Color::WHITE),
++      "grey" | "gray" => Ok(Color::GRAY),
++      "brown" => Ok(Color::BROWN),
++      _ => Err(()),
++    }
++  }
++}
+--- a/src/map/map_event.rs
++++ b/src/map/map_event.rs
+@@ -5,66 +5,8 @@
+ use serde::{Deserialize, Serialize};
+ use std::{path::PathBuf, str::FromStr};
+ 
+-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+-#[serde(transparent)]
+-pub struct Color([u8; 4]);
++pub use super::color::Color;
+ 
+-impl Color {
+-  pub const BLACK: Self = Self::from_rgb(0, 0, 0);
+-  pub const BLUE: Self = Self::from_rgb(0, 0, 255);
+-  pub const BROWN: Self = Self::from_rgb(165, 42, 42);
+-  pub const DARK_BLUE: Self = Self::from_rgb(0, 0, 0x8B);
+-  pub const DARK_GREEN: Self = Self::from_rgb(0, 0x64, 0);
+-  pub const DARK_RED: Self = Self::from_rgb(0x8B, 0, 0);
+-  pub const GRAY: Self = Self::from_rgb(160, 160, 160);
+-  pub const GREEN: Self = Self::from_rgb(0, 255, 0);
+-  pub const RED: Self = Self::from_rgb(255, 0, 0);
+-  pub const WHITE: Self = Self::from_rgb(255, 255, 255);
+-  pub const YELLOW: Self = Self::from_rgb(255, 255, 0);
+-
+-  #[must_use]
+-  pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+-    Self::from_rgba_unmultiplied(r, g, b, 255)
+-  }
+-
+-  #[must_use]
+-  pub const fn from_rgba_unmultiplied(r: u8, g: u8, b: u8, a: u8) -> Self {
+-    Self([r, g, b, a])
+-  }
+-
+-  #[must_use]
+-  pub const fn to_rgba_unmultiplied(self) -> [u8; 4] {
+-    self.0
+-  }
+-}
+-
+-impl Default for Color {
+-  fn default() -> Self {
+-    Color::BLUE
+-  }
+-}
+-
+-impl FromStr for Color {
+-  type Err = ();
+-  fn from_str(input: &str) -> Result<Color, Self::Err> {
+-    let lowercase = input.to_lowercase();
+-    match lowercase.as_str() {
+-      "blue" => Ok(Color::BLUE),
+-      "darkblue" => Ok(Color::DARK_BLUE),
+-      "red" => Ok(Color::RED),
+-      "darkred" => Ok(Color::DARK_RED),
+-      "green" => Ok(Color::GREEN),
+-      "darkgreen" => Ok(Color::DARK_GREEN),
+-      "yellow" => Ok(Color::YELLOW),
+-      "black" => Ok(Color::BLACK),
+-      "white" => Ok(Color::WHITE),
+-      "grey" | "gray" => Ok(Color::GRAY),
+-      "brown" => Ok(Color::BROWN),
+-      _ => Err(()),
+-    }
+-  }
+-}
+-
+ #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
+ pub enum FillStyle {
+   #[default]

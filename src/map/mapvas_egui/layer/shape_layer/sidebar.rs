@@ -1,7 +1,12 @@
 use super::{HighlightCacheKey, HighlightTextureCache, SCROLL_AREA_MAX_HEIGHT, ShapeLayer};
 use crate::map::{
+  color::Color as MapColor,
   coordinates::{Coordinate, PixelCoordinate, Transform, WGS84Coordinate},
   geometry_collection::{Geometry, Metadata, Style},
+  mapvas_egui::{
+    helpers::{color_to_color32, color32_to_color, pixel_to_pos},
+    layer::EguiMapFrame,
+  },
 };
 use egui::{Color32, Rect};
 
@@ -266,8 +271,8 @@ impl ShapeLayer {
             }
 
             if let Some(style) = &metadata.style {
-              let mut stroke_color = style.color();
-              let mut fill_color = style.fill_color();
+              let mut stroke_color = color_to_color32(style.color());
+              let mut fill_color = color_to_color32(style.fill_color());
               let is_polygon = matches!(shape, Geometry::Polygon(_, _));
 
               if is_polygon {
@@ -969,9 +974,9 @@ impl ShapeLayer {
     is_polygon: bool,
   ) {
     let stroke_color = if let Some(style) = &metadata.style {
-      style.color()
+      color_to_color32(style.color())
     } else {
-      egui::Color32::BLUE
+      color_to_color32(MapColor::BLUE)
     };
 
     let colored_text = egui::RichText::new(icon).color(stroke_color);
@@ -1005,6 +1010,7 @@ impl ShapeLayer {
   }
 
   fn update_shape_color(&mut self, layer_id: &str, shape_idx: usize, new_color: Color32) {
+    let new_color = color32_to_color(new_color);
     if let Some(shapes) = self.shape_map.get_mut(layer_id)
       && let Some(shape) = shapes.get_mut(shape_idx)
     {
@@ -1030,6 +1036,7 @@ impl ShapeLayer {
   }
 
   fn update_shape_stroke_color(&mut self, layer_id: &str, shape_idx: usize, new_color: Color32) {
+    let new_color = color32_to_color(new_color);
     if let Some(shapes) = self.shape_map.get_mut(layer_id)
       && let Some(shape) = shapes.get_mut(shape_idx)
     {
@@ -1055,6 +1062,7 @@ impl ShapeLayer {
   }
 
   fn update_shape_fill_color(&mut self, layer_id: &str, shape_idx: usize, new_fill_color: Color32) {
+    let new_fill_color = color32_to_color(new_fill_color);
     if let Some(shapes) = self.shape_map.get_mut(layer_id)
       && let Some(shape) = shapes.get_mut(shape_idx)
     {
@@ -1073,7 +1081,7 @@ impl ShapeLayer {
           .with_visible(true)
       } else {
         Style::default()
-          .with_color(Color32::BLUE)
+          .with_color(MapColor::BLUE)
           .with_fill_color(new_fill_color)
       };
       metadata.style = Some(new_style);
@@ -1261,8 +1269,9 @@ impl ShapeLayer {
     &mut self,
     ui: &mut egui::Ui,
     transform: &Transform,
-    rect: Rect,
+    frame: EguiMapFrame,
   ) {
+    let rect = frame.rect;
     let Some((layer_id, shape_idx, nested_path)) =
       self.geometry_highlighter.get_highlighted_geometry()
     else {
@@ -1296,13 +1305,14 @@ impl ShapeLayer {
       return;
     };
 
+    let pixel_rect = frame.pixel_rect;
     let key = HighlightCacheKey {
       geometry_path: (layer_id, shape_idx, nested_path),
       viewport: [
-        rect.min.x.to_bits(),
-        rect.min.y.to_bits(),
-        rect.max.x.to_bits(),
-        rect.max.y.to_bits(),
+        pixel_rect.min.x.to_bits(),
+        pixel_rect.min.y.to_bits(),
+        pixel_rect.max.x.to_bits(),
+        pixel_rect.max.y.to_bits(),
       ],
       transform: [
         transform.zoom.to_bits(),
@@ -1315,7 +1325,9 @@ impl ShapeLayer {
     let needs_rebuild = self.highlight_texture.as_ref().is_none_or(|c| c.key != key);
     if needs_rebuild {
       use super::super::geometry_highlighting::rasterize_highlighted_polygons;
-      if let Some((image, screen_rect)) = rasterize_highlighted_polygons(&shape, transform, rect) {
+      if let Some((image, screen_rect)) =
+        rasterize_highlighted_polygons(&shape, transform, pixel_rect)
+      {
         let handle =
           ui.ctx()
             .load_texture("highlight_polygon", image, egui::TextureOptions::LINEAR);
@@ -1333,7 +1345,10 @@ impl ShapeLayer {
     if let Some(cache) = &self.highlight_texture {
       painter.image(
         cache.texture.id(),
-        cache.screen_rect,
+        Rect::from_min_max(
+          pixel_to_pos(cache.screen_rect.min),
+          pixel_to_pos(cache.screen_rect.max),
+        ),
         Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         Color32::WHITE,
       );

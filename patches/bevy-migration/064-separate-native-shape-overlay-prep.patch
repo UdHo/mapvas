@@ -1,0 +1,64 @@
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -381,12 +381,7 @@
+     self.cache_version = self.version;
+   }
+ 
+-  fn prepare_interaction_frame(
+-    &mut self,
+-    ui: &egui::Ui,
+-    transform: &Transform,
+-    sample_egui_hover: bool,
+-  ) -> bool {
++  fn prepare_egui_draw_frame(&mut self, ui: &egui::Ui, transform: &Transform) -> bool {
+     self.current_transform = *transform;
+     self.handle_new_shapes();
+ 
+@@ -394,13 +389,18 @@
+       return false;
+     }
+ 
+-    if sample_egui_hover && let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
++    if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+       self.update_hover_highlighting(mouse_pos, transform);
+     }
+ 
+     true
+   }
+ 
++  fn prepare_native_overlay_frame(&mut self, transform: &Transform) -> bool {
++    self.current_transform = *transform;
++    self.visible()
++  }
++
+   fn draw_detail_popup(&mut self, ui: &mut Ui) {
+     let Some((click_pos, click_world_coord, detail_info, creation_time)) =
+       &self.pending_detail_popup
+@@ -777,7 +777,7 @@
+   fn draw_native_overlay(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
+     profile_scope!("ShapeLayer::draw_native_overlay");
+ 
+-    if !self.prepare_interaction_frame(ui, transform, false) {
++    if !self.prepare_native_overlay_frame(transform) {
+       return;
+     }
+ 
+@@ -788,7 +788,7 @@
+   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+     profile_scope!("ShapeLayer::draw");
+ 
+-    if !self.prepare_interaction_frame(ui, transform, true) {
++    if !self.prepare_egui_draw_frame(ui, transform) {
+       return;
+     }
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -65,6 +65,7 @@
+ 61. `061-native-map-shortcuts.patch`
+ 62. `062-native-map-hover-sense.patch`
+ 63. `063-isolate-egui-map-input.patch`
++64. `064-separate-native-shape-overlay-prep.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

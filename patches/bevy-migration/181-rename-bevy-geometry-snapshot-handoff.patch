@@ -1,0 +1,109 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index c6200d1..cbc4afa 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -182,6 +182,7 @@ Apply these patches in order from the repository root:
+ 178. `178-add-explicit-native-mapapp-show-api.patch`
+ 179. `179-rename-native-geometry-snapshot-handoff.patch`
+ 180. `180-add-explicit-bevy-mapapp-entrypoints.patch`
++181. `181-rename-bevy-geometry-snapshot-handoff.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index 89d2400..6fc05e4 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -3,7 +3,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiCon
+ use mapvas::{
+   config::Config,
+   map::{Map, tile_renderer::init_style_config},
+-  mapvas_ui::{KnownNativeGeometrySnapshot, MapApp, MapAppOutput},
++  mapvas_ui::{KnownBevyGeometrySnapshot, MapApp, MapAppOutput},
+   remote::{RepaintSignal, spawn_remote_runner_on_handle},
+ };
+ use tokio_metrics::RuntimeMonitor;
+@@ -124,7 +124,7 @@ fn apply_map_app_output(
+     native_screenshots.request_path(path);
+   }
+   native_viewport.set(output.viewport);
+-  if let Some(snapshot) = output.native_geometry_snapshot {
++  if let Some(snapshot) = output.bevy_geometry_snapshot {
+     native_geometry.update_snapshot(snapshot);
+   }
+   if let Some(config) = output.config_update {
+@@ -162,7 +162,7 @@ fn mapvas_ui_system(
+         }
+         app.handle_native_map_hover(native_map.hover_pos());
+         {
+-          let known_geometry_snapshot = KnownNativeGeometrySnapshot {
++          let known_geometry_snapshot = KnownBevyGeometrySnapshot {
+             snapshot_version: native_geometry.snapshot_version(),
+             geometry_version: native_geometry.geometry_version(),
+           };
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index ed92e8a..9602e03 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -52,17 +52,19 @@ impl MapUiMode {
+ pub struct MapAppOutput {
+   pub viewport: Option<MapViewport>,
+   pub config_update: Option<Config>,
+-  pub native_geometry_snapshot: Option<GeometrySnapshot>,
++  pub bevy_geometry_snapshot: Option<GeometrySnapshot>,
+   pub screenshot_requests: Vec<PathBuf>,
+   pub quit_requested: bool,
+ }
+ 
+ #[derive(Clone, Copy)]
+-pub struct KnownNativeGeometrySnapshot {
++pub struct KnownBevyGeometrySnapshot {
+   pub snapshot_version: u64,
+   pub geometry_version: u64,
+ }
+ 
++pub type KnownNativeGeometrySnapshot = KnownBevyGeometrySnapshot;
++
+ impl MapApp {
+   #[allow(clippy::needless_pass_by_value)]
+   pub fn new(
+@@ -254,7 +256,7 @@ impl MapApp {
+     &mut self,
+     ui: &mut egui::Ui,
+     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+-    known_geometry_snapshot: KnownNativeGeometrySnapshot,
++    known_geometry_snapshot: KnownBevyGeometrySnapshot,
+   ) -> MapAppOutput {
+     self.show_with_map_layer_controls(ui, map_layer_controls, Some(known_geometry_snapshot))
+   }
+@@ -273,7 +275,7 @@ impl MapApp {
+     &mut self,
+     ui: &mut egui::Ui,
+     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+-    known_geometry_snapshot: Option<KnownNativeGeometrySnapshot>,
++    known_geometry_snapshot: Option<KnownBevyGeometrySnapshot>,
+   ) -> MapAppOutput {
+     let ctx_owned = ui.ctx().clone();
+     let ctx = &ctx_owned;
+@@ -480,9 +482,9 @@ impl MapApp {
+       ctx.request_repaint_after(std::time::Duration::from_millis(16));
+     }
+ 
+-    let native_geometry_snapshot_version = self.map.geometry_snapshot_version();
+-    let native_geometry_snapshot = known_geometry_snapshot.and_then(|known| {
+-      (known.snapshot_version != native_geometry_snapshot_version)
++    let bevy_geometry_snapshot_version = self.map.geometry_snapshot_version();
++    let bevy_geometry_snapshot = known_geometry_snapshot.and_then(|known| {
++      (known.snapshot_version != bevy_geometry_snapshot_version)
+         .then(|| self.map.geometry_snapshot_since(known.geometry_version))
+     });
+     let config_update = if self.last_output_config.as_ref() == Some(&current_config) {
+@@ -498,7 +500,7 @@ impl MapApp {
+     MapAppOutput {
+       viewport: self.map.viewport(),
+       config_update,
+-      native_geometry_snapshot,
++      bevy_geometry_snapshot,
+       screenshot_requests: self.map.take_screenshot_requests(),
+       quit_requested,
+     }

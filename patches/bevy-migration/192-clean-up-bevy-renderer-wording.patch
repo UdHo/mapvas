@@ -1,0 +1,47 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 68f7bc1..70ae5b0 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -193,6 +193,7 @@ Apply these patches in order from the repository root:
+ 189. `189-remove-generic-mapapp-constructor.patch`
+ 190. `190-make-egui-mapapp-show-explicit.patch`
+ 191. `191-remove-generic-mapapp-show.patch`
++192. `192-clean-up-bevy-renderer-wording.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index 1c88acd..42d08d4 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -160,7 +160,7 @@ fn mapvas_ui_system(
+         }
+         app.handle_bevy_map_hover(bevy_map.hover_pos());
+         {
+-          let known_geometry_snapshot = KnownBevyGeometrySnapshot {
++          let known_bevy_geometry_snapshot = KnownBevyGeometrySnapshot {
+             snapshot_version: bevy_geometry.snapshot_version(),
+             geometry_version: bevy_geometry.geometry_version(),
+           };
+@@ -169,7 +169,7 @@ fn mapvas_ui_system(
+             bevy_tiles.ui(ui);
+             bevy_geometry.ui(ui);
+           };
+-          output = Some(app.show_bevy(ui, &mut map_layer_controls, known_geometry_snapshot));
++          output = Some(app.show_bevy(ui, &mut map_layer_controls, known_bevy_geometry_snapshot));
+         }
+       }
+     });
+diff --git a/src/map/layer.rs b/src/map/layer.rs
+index 41bba8f..9c0236e 100644
+--- a/src/map/layer.rs
++++ b/src/map/layer.rs
+@@ -109,7 +109,7 @@ pub trait Layer {
+     None
+   }
+ 
+-  /// Return visible map geometry for native renderer migration paths.
++  /// Return visible map geometry for Bevy renderer paths.
+   fn geometry_snapshot(&self) -> GeometrySnapshot {
+     GeometrySnapshot::default()
+   }

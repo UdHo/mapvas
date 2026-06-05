@@ -1,0 +1,73 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -131,6 +131,7 @@ Apply these patches in order from the repository root:
+ 127. `127-keep-tile-image-egui-conversion-in-egui-layer.patch`
+ 128. `128-remove-egui-rect-adapter-from-map-viewport.patch`
+ 129. `129-use-egui-map-pixel-conversion-helpers.patch`
++130. `130-use-egui-tile-pixel-conversion-helpers.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/tile_layer.rs b/src/map/mapvas_egui/layer/tile_layer.rs
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -10,8 +10,8 @@ use crate::{
+   config::TileType,
+   map::{
+     coordinates::{
+-      CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
+-      tile_zoom_for_transform, tiles_in_box,
++      CANVAS_SIZE, PixelPosition, Tile, TileCoordinate, TilePriority, Transform,
++      generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
+     },
+     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+     tile_renderer::{
+@@ -23,11 +23,17 @@ use crate::{
+ };
+ 
+ use super::{Layer, LayerProperties};
++use crate::map::mapvas_egui::helpers::{pixel_to_pos, pos_to_pixel};
+ 
+ /// Compute the pixel x-coordinate of the viewport's left edge in internal canvas coordinates.
+ fn viewport_left_x(rect: Rect, transform: &Transform) -> f32 {
+   let inv = transform.invert();
+-  inv.apply(egui::pos2(rect.min.x, 0.0).into()).x
++  inv
++    .apply(PixelPosition {
++      x: rect.min.x,
++      y: 0.0,
++    })
++    .x
+ }
+ 
+ /// Compute the offset that places a tile into the range `[left_x, left_x + CANVAS_SIZE)`.
+@@ -182,7 +188,7 @@ impl TileLayer {
+           y: se.y,
+         };
+         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+-        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
++        let tile_rect = Rect::from_min_max(pixel_to_pos(nw_screen), pixel_to_pos(se_screen));
+ 
+         if tile_rect.intersects(rect) {
+           ui.painter_at(rect).image(
+@@ -230,7 +236,7 @@ impl TileLayer {
+           y: se.y,
+         };
+         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+-        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
++        let tile_rect = Rect::from_min_max(pixel_to_pos(nw_screen), pixel_to_pos(se_screen));
+ 
+         if !tile_rect.intersects(clip_rect) {
+           continue;
+@@ -777,8 +783,8 @@ impl Layer for TileLayer {
+     }
+ 
+     let inv = transform.invert();
+-    let vp_min = inv.apply(rect.min.into());
+-    let vp_max = inv.apply(rect.max.into());
++    let vp_min = inv.apply(pos_to_pixel(rect.min));
++    let vp_max = inv.apply(pos_to_pixel(rect.max));
+     let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
+     let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
+ 

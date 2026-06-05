@@ -89,7 +89,7 @@ impl TileProvider {
   }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
   pub config_path: Option<PathBuf>,
   pub tile_provider: Vec<TileProvider>,

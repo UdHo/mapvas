@@ -1,0 +1,36 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index ed2362b..b34aecc 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -172,6 +172,7 @@ Apply these patches in order from the repository root:
+ 168. `168-rename-egui-layer-reader.patch`
+ 169. `169-move-neutral-layer-trait.patch`
+ 170. `170-import-neutral-layer-types-directly.patch`
++171. `171-remove-egui-layer-neutral-reexports.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer.rs b/src/map/mapvas_egui/layer.rs
+index 155e34b..3dc94a4 100644
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -1,4 +1,7 @@
+-use crate::map::coordinates::{PixelPosition, PixelRect, Transform};
++use crate::map::{
++  coordinates::{PixelPosition, PixelRect, Transform},
++  layer::Layer,
++};
+ use egui::{Rect, Ui};
+ 
+ /// Allows to display results of commands that return coordinates.
+@@ -18,10 +21,6 @@ mod tile_layer;
+ /// Timeline overlay for temporal visualization.
+ mod timeline_layer;
+ 
+-pub use crate::map::{
+-  layer::{Layer, LayerProperties, Searchable, SubLayerInfo},
+-  viewport::GeometrySnapshot,
+-};
+ pub use commands::{CommandLayer, ParameterUpdate};
+ pub use screenshot::ScreenshotLayer;
+ pub use shape_layer::ShapeLayer;

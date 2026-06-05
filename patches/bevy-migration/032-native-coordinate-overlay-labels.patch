@@ -1,0 +1,406 @@
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -10,6 +10,7 @@
+   asset::RenderAssetUsages,
+   prelude::*,
+   render::render_resource::{Extent3d, TextureDimension, TextureFormat},
++  sprite::Anchor,
+   window::PrimaryWindow,
+ };
+ use mapvas::{
+@@ -29,6 +30,13 @@
+ use crate::bevy_map::NativeMapViewport;
+ 
+ const MAX_PRELOAD_TILES: usize = 20;
++const TILE_LABEL_WIDTH: f32 = 100.0;
++const TILE_LABEL_HEIGHT: f32 = 60.0;
++const TILE_LABEL_TEXT_OFFSET_X: f32 = 8.0;
++const TILE_LABEL_TEXT_OFFSET_Y: f32 = 8.0;
++const TILE_LABEL_FONT_SIZE: f32 = 11.0;
++const TILE_LABEL_BACKGROUND_Z: f32 = 40.0;
++const TILE_LABEL_TEXT_Z: f32 = 41.0;
+ 
+ #[derive(Resource)]
+ pub struct NativeTileRuntime(pub tokio::runtime::Handle);
+@@ -57,6 +65,12 @@
+ #[derive(Component)]
+ struct NativeGridTileSprite;
+ 
++#[derive(Component)]
++struct NativeTileLabelBackground;
++
++#[derive(Component)]
++struct NativeTileLabelText;
++
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum CoordinateDisplayMode {
+   Off,
+@@ -69,6 +83,13 @@
+   entity: Option<Entity>,
+ }
+ 
++struct TileLabel {
++  background_rect: egui::Rect,
++  background_size: Vec2,
++  text_pos: egui::Pos2,
++  text: String,
++}
++
+ enum NativeTileResult {
+   Ready {
+     generation: u64,
+@@ -177,11 +198,6 @@
+     if !self.visible {
+       return;
+     }
+-    if let Some(viewport) = viewport
+-      && self.coordinate_display_mode != CoordinateDisplayMode::Off
+-    {
+-      self.draw_coordinate_grid(ui, viewport);
+-    }
+     if self.loaded_tiles.is_empty() {
+       return;
+     }
+@@ -317,78 +333,6 @@
+     match tile_type {
+       TileType::Raster => self.raster_renderer.clone(),
+       TileType::Vector => self.vector_renderer.clone(),
+-    }
+-  }
+-
+-  fn overlay_request_zoom(&self, viewport: MapViewport) -> Option<u8> {
+-    let tile_loader = self.tile_loader()?;
+-    let calculated_zoom = tile_zoom_for_transform(&viewport.transform);
+-    let max_zoom = tile_loader.max_zoom();
+-    let tile_type = tile_loader.tile_type();
+-    Some(
+-      if tile_type == TileType::Vector && calculated_zoom > max_zoom {
+-        calculated_zoom.min(19)
+-      } else {
+-        calculated_zoom.min(max_zoom)
+-      },
+-    )
+-  }
+-
+-  fn draw_coordinate_grid(&self, ui: &mut egui::Ui, viewport: MapViewport) {
+-    let Some(request_zoom) = self.overlay_request_zoom(viewport) else {
+-      return;
+-    };
+-    let inv = viewport.transform.invert();
+-    let vp_min = inv.apply(viewport.rect.min.into());
+-    let vp_max = inv.apply(viewport.rect.max.into());
+-    let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
+-    let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
+-
+-    for tile in tiles_in_box(min_pos, max_pos) {
+-      for tile_rect in coordinate_tile_rects(viewport, tile) {
+-        self.draw_tile_info(ui, viewport.rect, &tile, &tile_rect);
+-      }
+-    }
+-  }
+-
+-  fn draw_tile_info(
+-    &self,
+-    ui: &mut egui::Ui,
+-    clip_rect: egui::Rect,
+-    tile: &Tile,
+-    tile_rect: &egui::Rect,
+-  ) {
+-    let painter = ui.painter_at(clip_rect);
+-    let bg_width = 100.0;
+-    let bg_height = 60.0;
+-    let bg_rect = egui::Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
+-
+-    if tile_rect.width() > bg_width && tile_rect.height() > bg_height {
+-      painter.rect_filled(
+-        bg_rect,
+-        egui::CornerRadius::same(5),
+-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+-      );
+-
+-      let font_id = egui::FontId::monospace(11.0);
+-      let text_color = egui::Color32::WHITE;
+-      let lines = [
+-        format!("Z:{}", tile.zoom),
+-        format!("X:{}", tile.x),
+-        format!("Y:{}", tile.y),
+-      ];
+-
+-      for (index, line) in lines.iter().enumerate() {
+-        #[allow(clippy::cast_precision_loss)]
+-        let text_pos = bg_rect.min + egui::vec2(8.0, 8.0 + index as f32 * 14.0);
+-        painter.text(
+-          text_pos,
+-          egui::Align2::LEFT_TOP,
+-          line,
+-          font_id.clone(),
+-          text_color,
+-        );
+-      }
+     }
+   }
+ 
+@@ -673,6 +617,24 @@
+     (&mut Transform, &mut Sprite, &mut Visibility),
+     (With<NativeGridTileSprite>, Without<NativeTileSprite>),
+   >,
++  mut label_backgrounds: Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (
++      With<NativeTileLabelBackground>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelText>,
++    ),
++  >,
++  mut label_texts: Query<
++    (&mut Transform, &mut Text2d, &mut Visibility),
++    (
++      With<NativeTileLabelText>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelBackground>,
++    ),
++  >,
+   mut overlay_gizmos: Gizmos<NativeTileOverlayGizmos>,
+ ) {
+   for entity in layer.stale_entities.drain(..) {
+@@ -682,17 +644,20 @@
+   if !layer.visible {
+     hide_tile_sprites(&mut sprites);
+     hide_grid_tile_sprites(&mut grid_sprites);
++    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
+     return;
+   }
+ 
+   let Some(viewport) = viewport.get() else {
+     hide_tile_sprites(&mut sprites);
+     hide_grid_tile_sprites(&mut grid_sprites);
++    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
+     return;
+   };
+   let Ok(window) = windows.single() else {
+     hide_tile_sprites(&mut sprites);
+     hide_grid_tile_sprites(&mut grid_sprites);
++    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
+     return;
+   };
+ 
+@@ -722,6 +687,14 @@
+       layer.coordinate_display_mode,
+       &mut overlay_gizmos,
+     );
++    update_tile_labels(
++      &mut commands,
++      viewport,
++      window,
++      &visible_tiles,
++      &mut label_backgrounds,
++      &mut label_texts,
++    );
+     return;
+   }
+   hide_grid_tile_sprites(&mut grid_sprites);
+@@ -733,6 +706,18 @@
+     layer.coordinate_display_mode,
+     &mut overlay_gizmos,
+   );
++  if layer.coordinate_display_mode == CoordinateDisplayMode::Off {
++    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
++  } else {
++    update_tile_labels(
++      &mut commands,
++      viewport,
++      window,
++      &visible_tiles,
++      &mut label_backgrounds,
++      &mut label_texts,
++    );
++  }
+ 
+   let mut tiles_to_draw = visible_tiles
+     .iter()
+@@ -802,8 +787,36 @@
+   >,
+ ) {
+   for (_, _, mut visibility) in sprites.iter_mut() {
++    *visibility = Visibility::Hidden;
++  }
++}
++
++fn hide_tile_labels(
++  backgrounds: &mut Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (
++      With<NativeTileLabelBackground>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelText>,
++    ),
++  >,
++  texts: &mut Query<
++    (&mut Transform, &mut Text2d, &mut Visibility),
++    (
++      With<NativeTileLabelText>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelBackground>,
++    ),
++  >,
++) {
++  for (_, _, mut visibility) in backgrounds.iter_mut() {
+     *visibility = Visibility::Hidden;
+   }
++  for (_, _, mut visibility) in texts.iter_mut() {
++    *visibility = Visibility::Hidden;
++  }
+ }
+ 
+ fn update_grid_tile_sprites(
+@@ -844,6 +857,78 @@
+   }
+ }
+ 
++fn update_tile_labels(
++  commands: &mut Commands,
++  viewport: MapViewport,
++  window: &Window,
++  visible_tiles: &[Tile],
++  backgrounds: &mut Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (
++      With<NativeTileLabelBackground>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelText>,
++    ),
++  >,
++  texts: &mut Query<
++    (&mut Transform, &mut Text2d, &mut Visibility),
++    (
++      With<NativeTileLabelText>,
++      Without<NativeTileSprite>,
++      Without<NativeGridTileSprite>,
++      Without<NativeTileLabelBackground>,
++    ),
++  >,
++) {
++  let mut background_iter = backgrounds.iter_mut();
++  let mut text_iter = texts.iter_mut();
++  for tile in visible_tiles {
++    for tile_rect in coordinate_tile_rects(viewport, *tile) {
++      let Some(label) = tile_label(*tile, tile_rect) else {
++        continue;
++      };
++
++      if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
++        *transform =
++          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z);
++        sprite.custom_size = Some(label.background_size);
++        sprite.color = tile_label_background_color();
++        *visibility = Visibility::Visible;
++      } else {
++        commands.spawn((
++          Sprite::from_color(tile_label_background_color(), label.background_size),
++          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z),
++          NativeTileLabelBackground,
++        ));
++      }
++
++      if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
++        *transform = transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z);
++        text.0 = label.text;
++        *visibility = Visibility::Visible;
++      } else {
++        commands.spawn((
++          Text2d::new(label.text),
++          TextFont::from_font_size(TILE_LABEL_FONT_SIZE),
++          TextColor(Color::WHITE),
++          TextLayout::new_with_justify(Justify::Left),
++          Anchor::TOP_LEFT,
++          transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z),
++          NativeTileLabelText,
++        ));
++      }
++    }
++  }
++
++  for (_, _, mut visibility) in background_iter {
++    *visibility = Visibility::Hidden;
++  }
++  for (_, _, mut visibility) in text_iter {
++    *visibility = Visibility::Hidden;
++  }
++}
++
+ fn grid_tile_color(tile: Tile) -> Color {
+   if (tile.x + tile.y).is_multiple_of(2) {
+     Color::srgba(1.0, 240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0)
+@@ -852,6 +937,30 @@
+   }
+ }
+ 
++fn tile_label(tile: Tile, tile_rect: egui::Rect) -> Option<TileLabel> {
++  if tile_rect.width() <= TILE_LABEL_WIDTH || tile_rect.height() <= TILE_LABEL_HEIGHT {
++    return None;
++  }
++
++  let background_size = Vec2::new(TILE_LABEL_WIDTH, TILE_LABEL_HEIGHT);
++  let background_rect = egui::Rect::from_center_size(
++    tile_rect.center(),
++    egui::vec2(TILE_LABEL_WIDTH, TILE_LABEL_HEIGHT),
++  );
++  let text_pos =
++    background_rect.min + egui::vec2(TILE_LABEL_TEXT_OFFSET_X, TILE_LABEL_TEXT_OFFSET_Y);
++  Some(TileLabel {
++    background_rect,
++    background_size,
++    text_pos,
++    text: format!("Z:{}\nX:{}\nY:{}", tile.zoom, tile.x, tile.y),
++  })
++}
++
++fn tile_label_background_color() -> Color {
++  Color::srgba(0.0, 0.0, 0.0, 180.0 / 255.0)
++}
++
+ fn draw_coordinate_tile_borders(
+   viewport: MapViewport,
+   window: &Window,
+@@ -959,15 +1068,20 @@
+ }
+ 
+ fn transform_for_screen_rect(rect: egui::Rect, window: &Window, tile_zoom: u8) -> Transform {
+-  let center = rect.center();
+   let z = -10.0 + f32::from(tile_zoom) * 0.001;
+-  Transform::from_xyz(
+-    center.x - window.width() / 2.0,
+-    window.height() / 2.0 - center.y,
+-    z,
+-  )
++  transform_for_screen_rect_at_z(rect, window, z)
+ }
+ 
++fn transform_for_screen_rect_at_z(rect: egui::Rect, window: &Window, z: f32) -> Transform {
++  let center = rect.center();
++  transform_for_screen_pos(center, window, z)
++}
++
++fn transform_for_screen_pos(pos: egui::Pos2, window: &Window, z: f32) -> Transform {
++  let bevy_pos = screen_to_bevy_2d(pos, window);
++  Transform::from_xyz(bevy_pos.x, bevy_pos.y, z)
++}
++
+ fn screen_to_bevy_2d(screen: egui::Pos2, window: &Window) -> Vec2 {
+   Vec2::new(
+     screen.x - window.width() / 2.0,
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -33,6 +33,7 @@
+ 29. `029-wire-bevy-geometry-replacement-unconditionally.patch`
+ 30. `030-native-grid-only-tile-backgrounds.patch`
+ 31. `031-native-coordinate-overlay-borders.patch`
++32. `032-native-coordinate-overlay-labels.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

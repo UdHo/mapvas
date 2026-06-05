@@ -1,0 +1,52 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index ea595ab..09b6302 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -161,6 +161,7 @@ Apply these patches in order from the repository root:
+ 157. `157-stop-building-egui-frame-for-native-map.patch`
+ 158. `158-use-rect-for-egui-attribution.patch`
+ 159. `159-remove-timeline-layer-trait-impl.patch`
++160. `160-extract-command-egui-draw-helper.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/commands.rs b/src/map/mapvas_egui/layer/commands.rs
+index 4004e2a..3f6672d 100644
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -127,6 +127,19 @@ impl CommandLayer {
+           .wrapping_add(command.geometry_version())
+       })
+   }
++
++  fn draw_egui_geometries(&self, painter: &egui::Painter, transform: &Transform) {
++    if !self.visible() {
++      return;
++    }
++
++    for command in self.commands.iter().filter(|command| command.is_visible()) {
++      let geometries = command.result();
++      for geometry in geometries {
++        egui_geometry::draw_geometry(geometry.as_ref(), painter, transform);
++      }
++    }
++  }
+ }
+ 
+ #[derive(Clone)]
+@@ -240,14 +253,7 @@ impl Layer for CommandLayer {
+     transform: &crate::map::coordinates::Transform,
+     _frame: EguiMapFrame,
+   ) {
+-    if self.visible() {
+-      for command in self.commands.iter().filter(|command| command.is_visible()) {
+-        let geometries = command.result();
+-        for geometry in geometries {
+-          egui_geometry::draw_geometry(geometry.as_ref(), ui.painter(), transform);
+-        }
+-      }
+-    }
++    self.draw_egui_geometries(ui.painter(), transform);
+   }
+ 
+   fn geometry_snapshot(&self) -> GeometrySnapshot {

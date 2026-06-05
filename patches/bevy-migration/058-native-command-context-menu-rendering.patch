@@ -1,0 +1,153 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -41,6 +41,7 @@
+   ctx: egui::Context,
+   remote: Remote,
+   right_click: Option<PixelCoordinate>,
++  right_click_screen_pos: Option<egui::Pos2>,
+   right_click_open_requested: bool,
+   keys: Vec<String>,
+   config: Config,
+@@ -180,6 +181,7 @@
+         ctx,
+         remote: remote.clone(),
+         right_click: None,
++        right_click_screen_pos: None,
+         right_click_open_requested: false,
+         keys,
+         config: cfg,
+@@ -241,9 +243,68 @@
+ 
+   pub fn open_command_context_menu(&mut self, pos: egui::Pos2) {
+     self.right_click = Some(point_to_coordinate(pos.into(), &self.transform));
++    self.right_click_screen_pos = Some(pos);
+     self.right_click_open_requested = true;
++  }
++
++  fn clear_command_context_menu(&mut self) {
++    self.right_click = None;
++    self.right_click_screen_pos = None;
++  }
++
++  fn command_context_menu_content(&self, ui: &mut egui::Ui, right_click: PixelCoordinate) -> bool {
++    let mut close = false;
++    ui.set_min_width(140.);
++    let wgs84 = right_click.as_wgs84();
++    ui.label(format!("{:.6},{:.6}", wgs84.lat, wgs84.lon));
++    for key in &self.keys {
++      if ui.button(key).clicked() {
++        let _ = self
++          .remote
++          .command
++          .send(ParameterUpdate::Update(key.clone(), Some(right_click)))
++          .inspect_err(|e| {
++            log::error!("Failed to send {key}: {e:?}");
++          });
++        close = true;
++      }
++    }
++    close
+   }
+ 
++  fn show_native_command_context_menu(&mut self, ctx: &egui::Context) {
++    let Some(right_click) = self.right_click else {
++      return;
++    };
++    let Some(screen_pos) = self.right_click_screen_pos else {
++      return;
++    };
++
++    let mut close = false;
++    let inner = egui::Area::new(egui::Id::new("native_map_command_context_menu"))
++      .order(egui::Order::Foreground)
++      .fixed_pos(screen_pos)
++      .show(ctx, |ui| {
++        egui::Frame::popup(ui.style()).show(ui, |ui| {
++          close = self.command_context_menu_content(ui, right_click);
++        });
++      });
++
++    let close_from_input = ctx.input(|input| {
++      input.key_pressed(egui::Key::Escape)
++        || (!self.right_click_open_requested
++          && input.pointer.any_click()
++          && input
++            .pointer
++            .interact_pos()
++            .is_some_and(|pos| !inner.response.rect.contains(pos)))
++    });
++
++    if close || close_from_input {
++      self.clear_command_context_menu();
++    }
++  }
++
+   pub fn handle_hover(&mut self, pos: Option<egui::Pos2>) {
+     if let Ok(mut layers) = self.layers.lock() {
+       for layer in layers.iter_mut() {
+@@ -609,34 +670,30 @@
+       self.handle_double_click(pos);
+     }
+ 
+-    if !self.right_click_open_requested && !response.context_menu_opened() {
+-      self.right_click = None;
+-    }
+-    if self.render_mode.uses_egui_context_menu_trigger()
+-      && response.secondary_clicked()
+-      && let Some(pos) = response.hover_pos()
+-    {
+-      self.open_command_context_menu(pos);
+-    }
++    if self.render_mode.uses_egui_context_menu_trigger() {
++      if !self.right_click_open_requested && !response.context_menu_opened() {
++        self.clear_command_context_menu();
++      }
++      if response.secondary_clicked()
++        && let Some(pos) = response.hover_pos()
++      {
++        self.open_command_context_menu(pos);
++      }
+ 
+-    if let Some(right_click) = self.right_click {
+-      response.context_menu(|ui| {
+-        ui.set_min_width(140.);
+-        let wgs84 = right_click.as_wgs84();
+-        ui.label(format!("{:.6},{:.6}", wgs84.lat, wgs84.lon));
+-        for key in &self.keys {
+-          if ui.button(key).clicked() {
+-            let _ = self
+-              .remote
+-              .command
+-              .send(ParameterUpdate::Update(key.clone(), Some(right_click)))
+-              .inspect_err(|e| {
+-                log::error!("Failed to send {key}: {e:?}");
+-              });
++      let mut close_menu = false;
++      if let Some(right_click) = self.right_click {
++        response.context_menu(|ui| {
++          if self.command_context_menu_content(ui, right_click) {
+             ui.close();
++            close_menu = true;
+           }
+-        }
+-      });
++        });
++      }
++      if close_menu {
++        self.clear_command_context_menu();
++      }
++    } else {
++      self.show_native_command_context_menu(ui.ctx());
+     }
+     self.right_click_open_requested = false;
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -59,6 +59,7 @@
+ 55. `055-native-command-drag-input.patch`
+ 56. `056-native-context-menu-trigger.patch`
+ 57. `057-native-hover-input.patch`
++58. `058-native-command-context-menu-rendering.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

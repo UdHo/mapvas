@@ -1,0 +1,21 @@
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -758,8 +758,6 @@
+       return;
+     }
+ 
+-    self.collect_new_geo_tile_data(ui);
+-    self.sync_geometry_cache();
+     self.draw_detail_popup(ui);
+   }
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -26,6 +26,7 @@
+ 22. `022-avoid-full-snapshots-for-highlight-only-updates.patch`
+ 23. `023-disjoint-native-fill-queries.patch`
+ 24. `024-native-nested-highlight-snapshots.patch`
++25. `025-avoid-egui-geometry-tile-work-in-native-overlay.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

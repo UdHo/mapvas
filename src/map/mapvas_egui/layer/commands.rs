@@ -7,11 +7,17 @@ use external_cmd::ExternalCommand;
 use log::error;
 use serde::{Deserialize, Serialize};
 
-use crate::map::coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform};
-use egui::Pos2;
+use crate::map::{
+  coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform},
+  distance,
+  geometry_collection::Geometry,
+  layer::{Layer, LayerProperties},
+  viewport::GeometrySnapshot,
+};
 
-use super::{GeometrySnapshot, Layer, LayerProperties, drawable::Drawable};
+use super::{EguiLayer, EguiMapFrame};
 
+mod egui_geometry;
 mod external_cmd;
 mod ruler;
 
@@ -123,6 +129,19 @@ impl CommandLayer {
           .wrapping_add(command.geometry_version())
       })
   }
+
+  fn draw_egui_geometries(&self, painter: &egui::Painter, transform: &Transform) {
+    if !self.visible() {
+      return;
+    }
+
+    for command in self.commands.iter().filter(|command| command.is_visible()) {
+      let geometries = command.result();
+      for geometry in geometries {
+        egui_geometry::draw_geometry(geometry.as_ref(), painter, transform);
+      }
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -208,10 +227,12 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) -> 
 
 const NAME: &str = "Command Layer";
 
+type CommandGeometry = Rc<Geometry<PixelCoordinate>>;
+
 trait Command {
   fn update_paramters(&mut self, parameters: ParameterUpdate);
   fn run(&mut self);
-  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>>;
+  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>>;
   fn geometry_version(&self) -> u64;
   fn is_locked(&self) -> bool;
   fn is_visible(&self) -> bool;
@@ -226,22 +247,6 @@ trait Command {
 impl Layer for CommandLayer {
   fn process_pending_events(&mut self) {
     self.update_commands();
-  }
-
-  fn draw(
-    &mut self,
-    ui: &mut egui::Ui,
-    transform: &crate::map::coordinates::Transform,
-    _rect: egui::Rect,
-  ) {
-    if self.visible() {
-      for command in self.commands.iter().filter(|command| command.is_visible()) {
-        let drawable = command.result();
-        for d in drawable {
-          d.draw(ui.painter(), transform);
-        }
-      }
-    }
   }
 
   fn geometry_snapshot(&self) -> GeometrySnapshot {
@@ -260,7 +265,7 @@ impl Layer for CommandLayer {
       .iter()
       .filter(|command| command.is_visible())
       .flat_map(|command| command.result())
-      .filter_map(|drawable| drawable.as_pixel_geometry())
+      .map(|geometry| geometry.as_ref().clone())
       .collect();
 
     GeometrySnapshot {
@@ -275,10 +280,6 @@ impl Layer for CommandLayer {
     self.command_snapshot_version()
   }
 
-  fn is_native_geometry_source(&self) -> bool {
-    true
-  }
-
   fn name(&self) -> &str {
     NAME
   }
@@ -291,7 +292,72 @@ impl Layer for CommandLayer {
     &mut self.layer_properties.visible
   }
 
-  fn ui(&mut self, ui: &mut egui::Ui) {
+  fn bounding_box(&self) -> Option<BoundingBox> {
+    let bb = self
+      .commands
+      .iter()
+      .filter(|command| command.is_visible())
+      .map(|command| command.bounding_box())
+      .filter(BoundingBox::is_valid)
+      .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
+
+    bb.is_valid().then_some(bb)
+  }
+
+  fn closest_geometry_with_selection(
+    &mut self,
+    pos: PixelPosition,
+    transform: &Transform,
+  ) -> Option<f64> {
+    let click_coord = transform.invert().apply(pos);
+    let tolerance_screen_pixels = 5.0; // Fixed screen pixel tolerance
+    let mut closest_distance_screen = f64::INFINITY;
+    let mut found_command: Option<usize> = None;
+
+    for (cmd_idx, command) in self.commands.iter().enumerate() {
+      if !command.is_visible() {
+        continue;
+      }
+
+      if let Some(distance_map_coords) =
+        Self::calculate_distance_to_command(&**command, click_coord)
+      {
+        // Convert map coordinate distance back to screen pixels
+        let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
+
+        if distance_screen_pixels < closest_distance_screen
+          && distance_screen_pixels < tolerance_screen_pixels
+        {
+          closest_distance_screen = distance_screen_pixels;
+          found_command = Some(cmd_idx);
+        }
+      }
+    }
+
+    if let Some(cmd_idx) = found_command {
+      let was_different = self.highlighted_command != Some(cmd_idx);
+      self.highlighted_command = Some(cmd_idx);
+      self.just_highlighted = was_different;
+      Some(closest_distance_screen)
+    } else {
+      self.highlighted_command = None;
+      self.just_highlighted = false;
+      None
+    }
+  }
+}
+
+impl EguiLayer for CommandLayer {
+  fn draw_egui(
+    &mut self,
+    ui: &mut egui::Ui,
+    transform: &crate::map::coordinates::Transform,
+    _frame: EguiMapFrame,
+  ) {
+    self.draw_egui_geometries(ui.painter(), transform);
+  }
+
+  fn ui_egui_controls(&mut self, ui: &mut egui::Ui) {
     let has_highlighted_command = self.highlighted_command.is_some();
     let layer_id = egui::Id::new("command_layer_header");
 
@@ -305,11 +371,11 @@ impl Layer for CommandLayer {
 
     layer_header.show(ui, |ui| {
       ui.checkbox(self.visible_mut(), "visible");
-      self.ui_content(ui);
+      self.ui_egui_content(ui);
     });
   }
 
-  fn ui_content(&mut self, ui: &mut egui::Ui) {
+  fn ui_egui_content(&mut self, ui: &mut egui::Ui) {
     let has_highlighted_command = self.highlighted_command.is_some();
     let commands_header_id = egui::Id::new("commands_header");
 
@@ -399,60 +465,6 @@ impl Layer for CommandLayer {
 
     self.just_highlighted = false;
   }
-
-  fn bounding_box(&self) -> Option<BoundingBox> {
-    let bb = self
-      .commands
-      .iter()
-      .filter(|command| command.is_visible())
-      .map(|command| command.bounding_box())
-      .filter(BoundingBox::is_valid)
-      .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
-
-    bb.is_valid().then_some(bb)
-  }
-
-  fn has_highlighted_geometry(&self) -> bool {
-    self.highlighted_command.is_some()
-  }
-
-  fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
-    let click_coord = transform.invert().apply(pos.into());
-    let tolerance_screen_pixels = 5.0; // Fixed screen pixel tolerance
-    let mut closest_distance_screen = f64::INFINITY;
-    let mut found_command: Option<usize> = None;
-
-    for (cmd_idx, command) in self.commands.iter().enumerate() {
-      if !command.is_visible() {
-        continue;
-      }
-
-      if let Some(distance_map_coords) =
-        Self::calculate_distance_to_command(&**command, click_coord)
-      {
-        // Convert map coordinate distance back to screen pixels
-        let distance_screen_pixels = distance_map_coords * f64::from(transform.zoom);
-
-        if distance_screen_pixels < closest_distance_screen
-          && distance_screen_pixels < tolerance_screen_pixels
-        {
-          closest_distance_screen = distance_screen_pixels;
-          found_command = Some(cmd_idx);
-        }
-      }
-    }
-
-    if let Some(cmd_idx) = found_command {
-      let was_different = self.highlighted_command != Some(cmd_idx);
-      self.highlighted_command = Some(cmd_idx);
-      self.just_highlighted = was_different;
-      Some(closest_distance_screen)
-    } else {
-      self.highlighted_command = None;
-      self.just_highlighted = false;
-      None
-    }
-  }
 }
 
 impl CommandLayer {
@@ -461,11 +473,13 @@ impl CommandLayer {
     click_coord: PixelCoordinate,
   ) -> Option<f64> {
     let mut min_distance: Option<f64> = None;
-    for drawable in command.result() {
-      if let Some(drawable_distance) = drawable.distance_to_point(click_coord) {
+    for geometry in command.result() {
+      if let Some(geometry_distance) =
+        distance::distance_to_geometry(geometry.as_ref(), click_coord)
+      {
         min_distance = match min_distance {
-          None => Some(drawable_distance),
-          Some(current_min) => Some(drawable_distance.min(current_min)),
+          None => Some(geometry_distance),
+          Some(current_min) => Some(geometry_distance.min(current_min)),
         };
       }
     }

@@ -1,35 +1,37 @@
+use std::path::PathBuf;
+
 use bevy::{
   input::mouse::AccumulatedMouseScroll,
   prelude::*,
-  window::{PrimaryWindow, Window},
+  window::{FileDragAndDrop, PrimaryWindow, Window},
 };
 use bevy_egui::{egui, input::EguiWantsInput};
 use mapvas::map::{
-  coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, Transform},
-  viewport::MapViewport,
+  coordinates::{PixelPosition, Transform},
+  viewport::{MapViewport, fit_to_screen, zoom_with_center},
 };
 
-const MAX_ZOOM: f32 = 524_288.0;
-const MIN_ZOOM: f32 = 1.0;
 const KEY_PAN_SPEED: f32 = 500.0;
+const DOUBLE_CLICK_MAX_INTERVAL_SECS: f64 = 0.35;
+const DOUBLE_CLICK_MAX_DISTANCE: f32 = 8.0;
 
-pub struct NativeMapPlugin;
+pub struct BevyMapPlugin;
 
-impl Plugin for NativeMapPlugin {
+impl Plugin for BevyMapPlugin {
   fn build(&self, app: &mut App) {
     app
-      .init_resource::<NativeMapViewport>()
-      .init_resource::<NativeMapControl>()
-      .add_systems(Update, native_map_input);
+      .init_resource::<BevyMapViewport>()
+      .init_resource::<BevyMapControl>()
+      .add_systems(Update, bevy_map_input);
   }
 }
 
 #[derive(Resource, Default)]
-pub struct NativeMapViewport {
+pub struct BevyMapViewport {
   viewport: Option<MapViewport>,
 }
 
-impl NativeMapViewport {
+impl BevyMapViewport {
   pub fn set(&mut self, viewport: Option<MapViewport>) {
     self.viewport = viewport;
   }
@@ -41,38 +43,62 @@ impl NativeMapViewport {
 }
 
 #[derive(Resource)]
-pub struct NativeMapControl {
-  enabled: bool,
-  viewport: Option<MapViewport>,
-  transform: Option<Transform>,
+pub struct BevyMapControl {
   dragging: bool,
-  last_cursor_pos: Option<egui::Pos2>,
+  last_cursor_pos: Option<PixelPosition>,
+  hover_pos: Option<PixelPosition>,
+  last_left_click: Option<(PixelPosition, f64)>,
+  secondary_drag_start: Option<PixelPosition>,
+  secondary_drag_moved: bool,
+  actions: Vec<BevyMapAction>,
 }
 
-impl Default for NativeMapControl {
+pub struct BevyCommandDrag {
+  pub pos: PixelPosition,
+  pub delta: PixelPosition,
+  pub transform: Transform,
+}
+
+pub enum BevyMapAction {
+  CommandDrag(BevyCommandDrag),
+  ContextMenu(PixelPosition),
+  DoubleClick(PixelPosition),
+  DroppedFile(PathBuf),
+  Shortcut(BevyMapShortcut),
+  TransformChanged(Transform),
+}
+
+pub enum BevyMapShortcut {
+  Clear,
+  FocusAll,
+  Paste,
+  Copy,
+  Screenshot,
+}
+
+impl Default for BevyMapControl {
   fn default() -> Self {
     Self {
-      enabled: true,
-      viewport: None,
-      transform: None,
       dragging: false,
       last_cursor_pos: None,
+      hover_pos: None,
+      last_left_click: None,
+      secondary_drag_start: None,
+      secondary_drag_moved: false,
+      actions: Vec::new(),
     }
   }
 }
 
-impl NativeMapControl {
-  pub fn ui(&mut self, ui: &mut egui::Ui) {
-    ui.collapsing("Native Map Viewport", |ui| {
-      ui.checkbox(&mut self.enabled, "Bevy input");
-
-      ui.separator();
-      if let Some(viewport) = self.viewport {
+impl BevyMapControl {
+  pub fn ui(&self, ui: &mut egui::Ui, viewport: Option<MapViewport>) {
+    ui.collapsing("Bevy Map Viewport", |ui| {
+      if let Some(viewport) = viewport {
         stat_row(ui, "Zoom:", format!("{:.2}", viewport.transform.zoom));
         stat_row(
           ui,
           "Map rect:",
-          format!("{:.0}x{:.0}", viewport.rect.width(), viewport.rect.height()),
+          format!("{:.0}x{:.0}", viewport.width(), viewport.height()),
         );
       } else {
         ui.label("No viewport yet");
@@ -81,59 +107,76 @@ impl NativeMapControl {
   }
 
   #[must_use]
-  pub fn enabled(&self) -> bool {
-    self.enabled
+  pub fn hover_pos(&self) -> Option<PixelPosition> {
+    self.hover_pos
   }
 
-  #[must_use]
-  pub fn transform(&self) -> Option<Transform> {
-    self.transform
-  }
-
-  pub fn set_viewport(&mut self, viewport: Option<MapViewport>) {
-    self.viewport = viewport;
-    if let Some(viewport) = viewport {
-      self.transform = Some(viewport.transform);
-    }
+  pub fn take_actions(&mut self) -> Vec<BevyMapAction> {
+    std::mem::take(&mut self.actions)
   }
 }
 
-fn native_map_input(
-  mut control: ResMut<NativeMapControl>,
+fn bevy_map_input(
+  mut control: ResMut<BevyMapControl>,
+  viewport: Res<BevyMapViewport>,
   windows: Query<&Window, With<PrimaryWindow>>,
   buttons: Res<ButtonInput<MouseButton>>,
   keys: Res<ButtonInput<KeyCode>>,
   scroll: Res<AccumulatedMouseScroll>,
   egui_wants_input: Res<EguiWantsInput>,
   time: Res<Time>,
+  mut file_drops: MessageReader<FileDragAndDrop>,
 ) {
-  if !control.enabled {
-    control.dragging = false;
-    control.last_cursor_pos = None;
-    return;
+  for event in file_drops.read() {
+    if let FileDragAndDrop::DroppedFile { path_buf, .. } = event {
+      control
+        .actions
+        .push(BevyMapAction::DroppedFile(path_buf.clone()));
+    }
   }
 
-  let Some(viewport) = control.viewport else {
+  let Some(viewport) = viewport.get() else {
+    control.hover_pos = None;
     return;
   };
-  let Some(mut transform) = control.transform else {
-    return;
-  };
+  let mut transform = viewport.transform;
   let Ok(window) = windows.single() else {
     return;
   };
 
   let cursor = cursor_pos(window);
-  let cursor_in_viewport = cursor.is_some_and(|pos| viewport.rect.contains(pos));
+  let cursor_in_viewport = cursor.is_some_and(|pos| viewport.contains(pos));
   let egui_popup_open = egui_wants_input.is_popup_open();
+  control.hover_pos = if !egui_popup_open && cursor_in_viewport {
+    cursor
+  } else {
+    None
+  };
   let mut changed = false;
 
   if egui_popup_open {
     control.dragging = false;
     control.last_cursor_pos = cursor;
+    control.secondary_drag_start = None;
+    control.secondary_drag_moved = false;
   }
 
   if !egui_popup_open && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
+    if let Some(current) = cursor {
+      let now = time.elapsed_secs_f64();
+      if let Some((previous, previous_time)) = control.last_left_click {
+        let interval = now - previous_time;
+        let distance = pixel_distance(current, previous);
+        if interval <= DOUBLE_CLICK_MAX_INTERVAL_SECS && distance <= DOUBLE_CLICK_MAX_DISTANCE {
+          control.actions.push(BevyMapAction::DoubleClick(current));
+          control.last_left_click = None;
+        } else {
+          control.last_left_click = Some((current, now));
+        }
+      } else {
+        control.last_left_click = Some((current, now));
+      }
+    }
     control.dragging = true;
     control.last_cursor_pos = cursor;
   }
@@ -146,15 +189,48 @@ fn native_map_input(
     && buttons.pressed(MouseButton::Left)
     && let (Some(last), Some(current)) = (control.last_cursor_pos, cursor)
   {
-    let delta = current - last;
-    if delta != egui::Vec2::ZERO {
-      transform.translate(PixelPosition {
-        x: delta.x,
-        y: delta.y,
-      });
+    let delta = pixel_delta(last, current);
+    if delta != PixelPosition::default() {
+      transform.translate(delta);
       control.last_cursor_pos = Some(current);
       changed = true;
     }
+  }
+
+  if !egui_popup_open && buttons.just_pressed(MouseButton::Right) && cursor_in_viewport {
+    control.secondary_drag_start = cursor;
+    control.secondary_drag_moved = false;
+  }
+  if !egui_popup_open
+    && buttons.pressed(MouseButton::Right)
+    && let (Some(start), Some(current)) = (control.secondary_drag_start, cursor)
+  {
+    let delta = pixel_delta(start, current);
+    if delta != PixelPosition::default() {
+      control.secondary_drag_moved = true;
+      control
+        .actions
+        .push(BevyMapAction::CommandDrag(BevyCommandDrag {
+          pos: current,
+          delta,
+          transform,
+        }));
+    }
+  }
+  if buttons.just_released(MouseButton::Right) {
+    if let Some(start) = control.secondary_drag_start.take()
+      && !control.secondary_drag_moved
+      && !egui_popup_open
+      && cursor_in_viewport
+    {
+      control
+        .actions
+        .push(BevyMapAction::ContextMenu(cursor.unwrap_or(start)));
+    }
+    control.secondary_drag_moved = false;
+  } else if !buttons.pressed(MouseButton::Right) {
+    control.secondary_drag_start = None;
+    control.secondary_drag_moved = false;
   }
 
   if !egui_popup_open
@@ -163,7 +239,7 @@ fn native_map_input(
     && let Some(cursor) = cursor
   {
     let zoom_delta = (scroll.delta.y + 1.0).clamp(0.8, 1.4).sqrt();
-    if zoom_with_center(&mut transform, zoom_delta, cursor.into()) {
+    if zoom_with_center(&mut transform, zoom_delta, cursor) {
       changed = true;
     }
   }
@@ -196,89 +272,61 @@ fn native_map_input(
     {
       changed = true;
     }
+    if keys.just_pressed(KeyCode::Delete) {
+      control
+        .actions
+        .push(BevyMapAction::Shortcut(BevyMapShortcut::Clear));
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+      control
+        .actions
+        .push(BevyMapAction::Shortcut(BevyMapShortcut::FocusAll));
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+      control
+        .actions
+        .push(BevyMapAction::Shortcut(BevyMapShortcut::Paste));
+    }
+    if keys.just_pressed(KeyCode::KeyC) {
+      control
+        .actions
+        .push(BevyMapAction::Shortcut(BevyMapShortcut::Copy));
+    }
+    if keys.just_pressed(KeyCode::KeyS) {
+      control
+        .actions
+        .push(BevyMapAction::Shortcut(BevyMapShortcut::Screenshot));
+    }
   }
 
   if changed {
-    fit_to_screen(&mut transform, &viewport.rect);
-    control.transform = Some(transform);
+    fit_to_screen(&mut transform, viewport.rect);
+    control
+      .actions
+      .push(BevyMapAction::TransformChanged(transform));
   }
 }
 
-fn cursor_pos(window: &Window) -> Option<egui::Pos2> {
-  window.cursor_position().map(|pos| egui::pos2(pos.x, pos.y))
+fn cursor_pos(window: &Window) -> Option<PixelPosition> {
+  window
+    .cursor_position()
+    .map(|pos| PixelPosition { x: pos.x, y: pos.y })
+}
+
+fn pixel_delta(from: PixelPosition, to: PixelPosition) -> PixelPosition {
+  PixelPosition {
+    x: to.x - from.x,
+    y: to.y - from.y,
+  }
+}
+
+fn pixel_distance(a: PixelPosition, b: PixelPosition) -> f32 {
+  let delta = pixel_delta(a, b);
+  (delta.x * delta.x + delta.y * delta.y).sqrt()
 }
 
 fn center(viewport: MapViewport) -> PixelPosition {
-  viewport.rect.center().into()
-}
-
-fn zoom_with_center(transform: &mut Transform, delta: f32, center: PixelPosition) -> bool {
-  if transform.zoom * delta < MIN_ZOOM || transform.zoom * delta > MAX_ZOOM {
-    return false;
-  }
-  let hover_coord: PixelCoordinate = transform.invert().apply(center);
-  transform.zoom(delta);
-  set_coordinate_to_pixel(hover_coord, center, transform);
-  true
-}
-
-fn set_coordinate_to_pixel(
-  coord: PixelCoordinate,
-  cursor: PixelPosition,
-  transform: &mut Transform,
-) {
-  let current_pos_in_gui = transform.apply(coord);
-  transform.translate(current_pos_in_gui * (-1.0) + cursor);
-}
-
-fn fit_to_screen(transform: &mut Transform, rect: &egui::Rect) {
-  transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
-
-  let inv = transform.invert();
-  let world_h_screen = CANVAS_SIZE * transform.zoom;
-  let view_h = rect.height();
-  let top_y = inv.apply(PixelPosition { x: 0.0, y: 0.0 }).y;
-
-  if view_h >= world_h_screen {
-    let desired_top_y = -(view_h - world_h_screen) / (2.0 * transform.zoom);
-    let shift = (top_y - desired_top_y) * transform.zoom;
-    if shift.abs() > 0.01 {
-      transform.translate(PixelPosition { x: 0.0, y: shift });
-    }
-  } else if top_y < 0.0 {
-    transform.translate(PixelPosition {
-      x: 0.0,
-      y: top_y * transform.zoom,
-    });
-  } else {
-    let bottom_y = inv
-      .apply(PixelPosition {
-        x: rect.max.x,
-        y: rect.max.y,
-      })
-      .y;
-    if bottom_y > CANVAS_SIZE {
-      transform.translate(PixelPosition {
-        x: 0.0,
-        y: (bottom_y - CANVAS_SIZE) * transform.zoom,
-      });
-    }
-  }
-
-  let left_x = inv
-    .apply(PixelPosition {
-      x: rect.min.x,
-      y: 0.0,
-    })
-    .x;
-  let wrapped = left_x.rem_euclid(CANVAS_SIZE);
-  let shift = wrapped - left_x;
-  if shift.abs() > 0.01 {
-    transform.translate(PixelPosition {
-      x: -shift * transform.zoom,
-      y: 0.0,
-    });
-  }
+  viewport.center()
 }
 
 fn stat_row(ui: &mut egui::Ui, label: &str, value: String) {
