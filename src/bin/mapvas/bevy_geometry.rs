@@ -16,9 +16,13 @@ use mapvas::{
 use crate::bevy_map::NativeMapViewport;
 
 const POINT_RADIUS: f32 = 4.0;
+const HIGHLIGHT_POINT_RADIUS: f32 = 10.0;
 const GEOMETRY_STROKE_WIDTH: f32 = 4.0;
+const HIGHLIGHT_STROKE_WIDTH: f32 = 6.0;
 const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
 const GEOMETRY_FILL_Z: f32 = -5.0;
+const HIGHLIGHT_FILL_Z: f32 = -4.5;
+const POINT_FILL_Z: f32 = -4.0;
 
 pub struct NativeGeometryPlugin;
 
@@ -26,6 +30,7 @@ impl Plugin for NativeGeometryPlugin {
   fn build(&self, app: &mut App) {
     app
       .init_gizmo_group::<NativeGeometryGizmos>()
+      .init_gizmo_group::<NativeHighlightGizmos>()
       .add_systems(Startup, configure_native_geometry_gizmos)
       .add_systems(Update, draw_native_geometry);
   }
@@ -34,6 +39,10 @@ impl Plugin for NativeGeometryPlugin {
 #[derive(Default, Reflect, GizmoConfigGroup)]
 #[reflect(Default)]
 struct NativeGeometryGizmos;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+#[reflect(Default)]
+struct NativeHighlightGizmos;
 
 #[derive(Clone, Copy, Default)]
 struct GeometryStats {
@@ -49,11 +58,17 @@ pub struct NativeGeometryLayer {
   enabled: bool,
   replace_egui_geometry: bool,
   snapshot_version: u64,
+  geometries_version: u64,
   geometries: Vec<Geometry<PixelCoordinate>>,
+  highlighted_geometries: Vec<Geometry<PixelCoordinate>>,
   snapshot_stats: GeometryStats,
   draw_stats: GeometryStats,
   fill_entities: Vec<Entity>,
   fill_snapshot_version: u64,
+  point_fill_entities: Vec<Entity>,
+  point_fill_snapshot_version: u64,
+  highlight_fill_entities: Vec<Entity>,
+  highlight_fill_snapshot_version: u64,
   heading_style: HeadingStyle,
 }
 
@@ -62,12 +77,18 @@ impl Default for NativeGeometryLayer {
     Self {
       enabled: true,
       replace_egui_geometry: true,
-      snapshot_version: 0,
+      snapshot_version: u64::MAX,
+      geometries_version: u64::MAX,
       geometries: Vec::new(),
+      highlighted_geometries: Vec::new(),
       snapshot_stats: GeometryStats::default(),
       draw_stats: GeometryStats::default(),
       fill_entities: Vec::new(),
-      fill_snapshot_version: 0,
+      fill_snapshot_version: u64::MAX,
+      point_fill_entities: Vec::new(),
+      point_fill_snapshot_version: u64::MAX,
+      highlight_fill_entities: Vec::new(),
+      highlight_fill_snapshot_version: u64::MAX,
       heading_style: HeadingStyle::default(),
     }
   }
@@ -87,15 +108,36 @@ struct NativePolygonFill {
   wrap_offset: f32,
 }
 
+#[derive(Component)]
+struct NativeHighlightPolygonFill {
+  bounds: GeometryBounds,
+  wrap_offset: f32,
+}
+
+#[derive(Component)]
+struct NativePointFill {
+  coord: PixelCoordinate,
+}
+
 struct PolygonFillSpec {
   mesh: Mesh,
   color: Color,
   bounds: GeometryBounds,
 }
 
+struct PointFillSpec {
+  coord: PixelCoordinate,
+  color: Color,
+}
+
 fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
   let (config, _) = config_store.config_mut::<NativeGeometryGizmos>();
   config.line.width = GEOMETRY_STROKE_WIDTH;
+  config.line.joints = GizmoLineJoint::Round(4);
+  config.depth_bias = -1.0;
+
+  let (config, _) = config_store.config_mut::<NativeHighlightGizmos>();
+  config.line.width = HIGHLIGHT_STROKE_WIDTH;
   config.line.joints = GizmoLineJoint::Round(4);
   config.depth_bias = -1.0;
 }
@@ -113,6 +155,7 @@ impl NativeGeometryLayer {
       stat_row(ui, "Line segments:", self.snapshot_stats.line_segments);
       stat_row(ui, "Polygons:", self.snapshot_stats.polygons);
       stat_row(ui, "Heatmap points:", self.snapshot_stats.heatmap_points);
+      stat_row(ui, "Highlighted:", self.highlighted_geometries.len());
 
       ui.separator();
       ui.label("Drawn this frame:");
@@ -125,13 +168,24 @@ impl NativeGeometryLayer {
   }
 
   pub fn update_snapshot(&mut self, snapshot: GeometrySnapshot) {
-    if self.snapshot_version == snapshot.version {
+    let GeometrySnapshot {
+      version,
+      geometry_version,
+      geometries,
+      highlighted_geometries,
+    } = snapshot;
+
+    if self.snapshot_version == version {
       return;
     }
 
-    self.snapshot_version = snapshot.version;
-    self.snapshot_stats = snapshot_stats(&snapshot.geometries);
-    self.geometries = snapshot.geometries;
+    self.snapshot_version = version;
+    if self.geometries_version != geometry_version {
+      self.geometries_version = geometry_version;
+      self.snapshot_stats = snapshot_stats(&geometries);
+      self.geometries = geometries;
+    }
+    self.highlighted_geometries = highlighted_geometries;
   }
 
   pub fn update_config(&mut self, config: &Config) {
@@ -141,6 +195,11 @@ impl NativeGeometryLayer {
   #[must_use]
   pub fn needs_snapshot(&self, version: u64) -> bool {
     self.snapshot_version != version
+  }
+
+  #[must_use]
+  pub fn geometry_version(&self) -> u64 {
+    self.geometries_version
   }
 
   #[must_use]
@@ -156,30 +215,58 @@ fn draw_native_geometry(
   windows: Query<&Window, With<PrimaryWindow>>,
   mut meshes: ResMut<Assets<Mesh>>,
   mut materials: ResMut<Assets<ColorMaterial>>,
-  mut fills: Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+  mut fills: Query<
+    (&NativePolygonFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativeHighlightPolygonFill>,
+      Without<NativePointFill>,
+    ),
+  >,
+  mut highlight_fills: Query<
+    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+    (Without<NativePolygonFill>, Without<NativePointFill>),
+  >,
+  mut point_fills: Query<
+    (&NativePointFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativePolygonFill>,
+      Without<NativeHighlightPolygonFill>,
+    ),
+  >,
   mut gizmos: Gizmos<NativeGeometryGizmos>,
+  mut highlight_gizmos: Gizmos<NativeHighlightGizmos>,
 ) {
   let mut draw_stats = GeometryStats::default();
   if !layer.enabled {
     set_fill_visibility(&mut fills, false);
+    set_highlight_fill_visibility(&mut highlight_fills, false);
+    set_point_fill_visibility(&mut point_fills, false);
     layer.draw_stats = draw_stats;
     return;
   }
   let Some(viewport) = viewport.get() else {
     set_fill_visibility(&mut fills, false);
+    set_highlight_fill_visibility(&mut highlight_fills, false);
+    set_point_fill_visibility(&mut point_fills, false);
     layer.draw_stats = draw_stats;
     return;
   };
   let Ok(window) = windows.single() else {
     set_fill_visibility(&mut fills, false);
+    set_highlight_fill_visibility(&mut highlight_fills, false);
+    set_point_fill_visibility(&mut point_fills, false);
     layer.draw_stats = draw_stats;
     return;
   };
 
   rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
   update_polygon_fills(viewport, window, &mut fills);
+  rebuild_point_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+  rebuild_highlight_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+  update_highlight_polygon_fills(viewport, window, &mut highlight_fills);
 
   let left_x = viewport_left_x(viewport);
+  update_point_fills(viewport, window, left_x, &mut point_fills);
   let heading_style = layer.heading_style;
   for geometry in &layer.geometries {
     draw_geometry(
@@ -192,11 +279,55 @@ fn draw_native_geometry(
       &mut draw_stats,
     );
   }
+  for geometry in &layer.highlighted_geometries {
+    draw_highlighted_geometry(geometry, viewport, window, left_x, &mut highlight_gizmos);
+  }
   layer.draw_stats = draw_stats;
 }
 
 fn set_fill_visibility(
-  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+  fills: &mut Query<
+    (&NativePolygonFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativeHighlightPolygonFill>,
+      Without<NativePointFill>,
+    ),
+  >,
+  visible: bool,
+) {
+  for (_, _, mut visibility) in fills.iter_mut() {
+    *visibility = if visible {
+      Visibility::Visible
+    } else {
+      Visibility::Hidden
+    };
+  }
+}
+
+fn set_highlight_fill_visibility(
+  fills: &mut Query<
+    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+    (Without<NativePolygonFill>, Without<NativePointFill>),
+  >,
+  visible: bool,
+) {
+  for (_, _, mut visibility) in fills.iter_mut() {
+    *visibility = if visible {
+      Visibility::Visible
+    } else {
+      Visibility::Hidden
+    };
+  }
+}
+
+fn set_point_fill_visibility(
+  fills: &mut Query<
+    (&NativePointFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativePolygonFill>,
+      Without<NativeHighlightPolygonFill>,
+    ),
+  >,
   visible: bool,
 ) {
   for (_, _, mut visibility) in fills.iter_mut() {
@@ -214,7 +345,7 @@ fn rebuild_polygon_fills_if_needed(
   materials: &mut Assets<ColorMaterial>,
   layer: &mut NativeGeometryLayer,
 ) {
-  if layer.fill_snapshot_version == layer.snapshot_version {
+  if layer.fill_snapshot_version == layer.geometries_version {
     return;
   }
 
@@ -244,16 +375,96 @@ fn rebuild_polygon_fills_if_needed(
   }
 
   layer.fill_entities = fill_entities;
-  layer.fill_snapshot_version = layer.snapshot_version;
+  layer.fill_snapshot_version = layer.geometries_version;
+}
+
+fn rebuild_point_fills_if_needed(
+  commands: &mut Commands,
+  meshes: &mut Assets<Mesh>,
+  materials: &mut Assets<ColorMaterial>,
+  layer: &mut NativeGeometryLayer,
+) {
+  if layer.point_fill_snapshot_version == layer.geometries_version {
+    return;
+  }
+
+  for entity in layer.point_fill_entities.drain(..) {
+    commands.entity(entity).despawn();
+  }
+
+  let mesh = meshes.add(Circle::new(POINT_RADIUS).mesh().resolution(16));
+  let fill_specs = point_fill_specs(&layer.geometries);
+  let mut point_fill_entities = Vec::new();
+  for spec in fill_specs {
+    let material = materials.add(ColorMaterial::from(spec.color));
+    let entity = commands
+      .spawn((
+        Mesh2d(mesh.clone()),
+        MeshMaterial2d(material),
+        Transform::default(),
+        Visibility::Hidden,
+        NativePointFill { coord: spec.coord },
+      ))
+      .id();
+    point_fill_entities.push(entity);
+  }
+
+  layer.point_fill_entities = point_fill_entities;
+  layer.point_fill_snapshot_version = layer.geometries_version;
+}
+
+fn rebuild_highlight_polygon_fills_if_needed(
+  commands: &mut Commands,
+  meshes: &mut Assets<Mesh>,
+  materials: &mut Assets<ColorMaterial>,
+  layer: &mut NativeGeometryLayer,
+) {
+  if layer.highlight_fill_snapshot_version == layer.snapshot_version {
+    return;
+  }
+
+  for entity in layer.highlight_fill_entities.drain(..) {
+    commands.entity(entity).despawn();
+  }
+
+  let fill_specs = highlighted_polygon_fill_specs(&layer.highlighted_geometries);
+  let mut fill_entities = Vec::new();
+  for spec in fill_specs {
+    let mesh = meshes.add(spec.mesh);
+    let material = materials.add(ColorMaterial::from(spec.color));
+    for wrap_offset in [-CANVAS_SIZE, 0.0, CANVAS_SIZE] {
+      let entity = commands
+        .spawn((
+          Mesh2d(mesh.clone()),
+          MeshMaterial2d(material.clone()),
+          Transform::default(),
+          NativeHighlightPolygonFill {
+            bounds: spec.bounds,
+            wrap_offset,
+          },
+        ))
+        .id();
+      fill_entities.push(entity);
+    }
+  }
+
+  layer.highlight_fill_entities = fill_entities;
+  layer.highlight_fill_snapshot_version = layer.snapshot_version;
 }
 
 fn update_polygon_fills(
   viewport: MapViewport,
   window: &Window,
-  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+  fills: &mut Query<
+    (&NativePolygonFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativeHighlightPolygonFill>,
+      Without<NativePointFill>,
+    ),
+  >,
 ) {
   for (fill, mut transform, mut visibility) in fills.iter_mut() {
-    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset);
+    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, GEOMETRY_FILL_Z);
     *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
       Visibility::Visible
     } else {
@@ -262,11 +473,61 @@ fn update_polygon_fills(
   }
 }
 
-fn polygon_fill_transform(viewport: MapViewport, window: &Window, wrap_offset: f32) -> Transform {
+fn update_highlight_polygon_fills(
+  viewport: MapViewport,
+  window: &Window,
+  fills: &mut Query<
+    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+    (Without<NativePolygonFill>, Without<NativePointFill>),
+  >,
+) {
+  for (fill, mut transform, mut visibility) in fills.iter_mut() {
+    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset, HIGHLIGHT_FILL_Z);
+    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
+      Visibility::Visible
+    } else {
+      Visibility::Hidden
+    };
+  }
+}
+
+fn update_point_fills(
+  viewport: MapViewport,
+  window: &Window,
+  left_x: f32,
+  fills: &mut Query<
+    (&NativePointFill, &mut Transform, &mut Visibility),
+    (
+      Without<NativePolygonFill>,
+      Without<NativeHighlightPolygonFill>,
+    ),
+  >,
+) {
+  for (fill, mut transform, mut visibility) in fills.iter_mut() {
+    let Some(screen) = coordinate_to_screen(fill.coord, viewport, left_x) else {
+      *visibility = Visibility::Hidden;
+      continue;
+    };
+    if viewport.rect.contains(screen) {
+      let center = screen_to_bevy(screen, window);
+      *transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
+      *visibility = Visibility::Visible;
+    } else {
+      *visibility = Visibility::Hidden;
+    }
+  }
+}
+
+fn polygon_fill_transform(
+  viewport: MapViewport,
+  window: &Window,
+  wrap_offset: f32,
+  z: f32,
+) -> Transform {
   Transform::from_xyz(
     viewport.transform.trans.x + wrap_offset * viewport.transform.zoom - window.width() / 2.0,
     window.height() / 2.0 - viewport.transform.trans.y,
-    GEOMETRY_FILL_Z,
+    z,
   )
   .with_scale(Vec3::new(
     viewport.transform.zoom,
@@ -279,6 +540,24 @@ fn polygon_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PolygonFi
   let mut fills = Vec::new();
   for geometry in geometries {
     collect_polygon_fill_specs(geometry, &mut fills);
+  }
+  fills
+}
+
+fn highlighted_polygon_fill_specs(
+  geometries: &[Geometry<PixelCoordinate>],
+) -> Vec<PolygonFillSpec> {
+  let mut fills = Vec::new();
+  for geometry in geometries {
+    collect_highlighted_polygon_fill_specs(geometry, &mut fills);
+  }
+  fills
+}
+
+fn point_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PointFillSpec> {
+  let mut fills = Vec::new();
+  for geometry in geometries {
+    collect_point_fill_specs(geometry, &mut fills);
   }
   fills
 }
@@ -316,6 +595,57 @@ fn collect_polygon_fill_specs(
       });
     }
     Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
+  }
+}
+
+fn collect_highlighted_polygon_fill_specs(
+  geometry: &Geometry<PixelCoordinate>,
+  fills: &mut Vec<PolygonFillSpec>,
+) {
+  match geometry {
+    Geometry::GeometryCollection(geometries, _) => {
+      for geometry in geometries {
+        collect_highlighted_polygon_fill_specs(geometry, fills);
+      }
+    }
+    Geometry::Polygon(coords, metadata) => {
+      let color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+      if color.a() == 0 {
+        return;
+      }
+      let Some(bounds) = bounds_from_coords(coords) else {
+        return;
+      };
+      let Some(mesh) = polygon_fill_mesh(coords) else {
+        return;
+      };
+      fills.push(PolygonFillSpec {
+        mesh,
+        color: color32_to_bevy(color),
+        bounds,
+      });
+    }
+    Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
+  }
+}
+
+fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Vec<PointFillSpec>) {
+  match geometry {
+    Geometry::GeometryCollection(geometries, _) => {
+      for geometry in geometries {
+        collect_point_fill_specs(geometry, fills);
+      }
+    }
+    Geometry::Point(coord, metadata) => {
+      if !coord.is_valid() {
+        return;
+      }
+      fills.push(PointFillSpec {
+        coord: *coord,
+        color: style_color(metadata.style.as_ref()),
+      });
+    }
+    Geometry::LineString(_, _) | Geometry::Polygon(_, _) | Geometry::Heatmap(_, _) => {}
   }
 }
 
@@ -542,6 +872,112 @@ fn draw_segment(
   true
 }
 
+fn draw_highlighted_geometry(
+  geometry: &Geometry<PixelCoordinate>,
+  viewport: MapViewport,
+  window: &Window,
+  left_x: f32,
+  gizmos: &mut Gizmos<NativeHighlightGizmos>,
+) {
+  if !geometry_intersects_viewport(geometry, viewport, left_x) {
+    return;
+  }
+
+  match geometry {
+    Geometry::GeometryCollection(geometries, _) => {
+      for geometry in geometries {
+        draw_highlighted_geometry(geometry, viewport, window, left_x, gizmos);
+      }
+    }
+    Geometry::Point(coord, metadata) => {
+      let Some(screen) = coordinate_to_screen(*coord, viewport, left_x) else {
+        return;
+      };
+      if !viewport.rect.contains(screen) {
+        return;
+      }
+      gizmos.circle_2d(
+        screen_to_bevy(screen, window),
+        HIGHLIGHT_POINT_RADIUS,
+        highlight_color(metadata.style.as_ref()),
+      );
+    }
+    Geometry::LineString(coords, metadata) => {
+      draw_highlighted_lines(
+        coords,
+        false,
+        viewport,
+        window,
+        left_x,
+        highlight_color(metadata.style.as_ref()),
+        gizmos,
+      );
+    }
+    Geometry::Polygon(coords, metadata) => {
+      draw_highlighted_lines(
+        coords,
+        true,
+        viewport,
+        window,
+        left_x,
+        highlight_color(metadata.style.as_ref()),
+        gizmos,
+      );
+    }
+    Geometry::Heatmap(_, _) => {}
+  }
+}
+
+fn draw_highlighted_lines(
+  coords: &[PixelCoordinate],
+  closed: bool,
+  viewport: MapViewport,
+  window: &Window,
+  left_x: f32,
+  color: Color,
+  gizmos: &mut Gizmos<NativeHighlightGizmos>,
+) {
+  if coords.len() < 2 {
+    return;
+  }
+
+  for segment in coords.windows(2) {
+    draw_highlighted_segment(
+      segment[0], segment[1], viewport, window, left_x, color, gizmos,
+    );
+  }
+
+  if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
+    draw_highlighted_segment(*last, *first, viewport, window, left_x, color, gizmos);
+  }
+}
+
+fn draw_highlighted_segment(
+  start: PixelCoordinate,
+  end: PixelCoordinate,
+  viewport: MapViewport,
+  window: &Window,
+  left_x: f32,
+  color: Color,
+  gizmos: &mut Gizmos<NativeHighlightGizmos>,
+) {
+  let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+    return;
+  };
+  let Some(screen_end) = coordinate_to_screen(end, viewport, left_x) else {
+    return;
+  };
+  if !segment_intersects_rect(screen_start, screen_end, viewport.rect) {
+    return;
+  }
+
+  gizmos.line_2d(
+    screen_to_bevy(screen_start, window),
+    screen_to_bevy(screen_end, window),
+    color,
+  );
+}
+
 fn draw_heading(
   gizmos: &mut Gizmos<NativeGeometryGizmos>,
   center: Vec2,
@@ -707,6 +1143,10 @@ fn segment_intersects_rect(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect)
 
 fn style_color(style: Option<&Style>) -> Color {
   color32_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color().gamma_multiply(0.7))
+}
+
+fn highlight_color(style: Option<&Style>) -> Color {
+  color32_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color())
 }
 
 fn color32_to_bevy(color: egui::Color32) -> Color {

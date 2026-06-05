@@ -727,18 +727,50 @@ impl Map {
 
   #[must_use]
   pub fn geometry_snapshot(&self) -> GeometrySnapshot {
+    self.geometry_snapshot_since_version(None)
+  }
+
+  #[must_use]
+  pub fn geometry_snapshot_since(&self, geometry_version: u64) -> GeometrySnapshot {
+    self.geometry_snapshot_since_version(Some(geometry_version))
+  }
+
+  fn geometry_snapshot_since_version(
+    &self,
+    known_geometry_version: Option<u64>,
+  ) -> GeometrySnapshot {
     let Ok(layers) = self.layers.lock() else {
       return GeometrySnapshot::default();
     };
 
-    layers.iter().map(|layer| layer.geometry_snapshot()).fold(
-      GeometrySnapshot::default(),
-      |mut acc, mut snapshot| {
+    let geometry_version = layers.iter().fold(0_u64, |version, layer| {
+      version
+        .wrapping_mul(31)
+        .wrapping_add(layer.geometry_base_snapshot_version())
+    });
+    let include_geometries = known_geometry_version != Some(geometry_version);
+
+    layers
+      .iter()
+      .map(|layer| {
+        if include_geometries {
+          layer.geometry_snapshot()
+        } else {
+          layer.geometry_snapshot_without_geometries()
+        }
+      })
+      .fold(GeometrySnapshot::default(), |mut acc, mut snapshot| {
         acc.version = acc.version.wrapping_mul(31).wrapping_add(snapshot.version);
+        acc.geometry_version = acc
+          .geometry_version
+          .wrapping_mul(31)
+          .wrapping_add(snapshot.geometry_version);
         acc.geometries.append(&mut snapshot.geometries);
         acc
-      },
-    )
+          .highlighted_geometries
+          .append(&mut snapshot.highlighted_geometries);
+        acc
+      })
   }
 
   #[must_use]
