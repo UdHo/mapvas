@@ -1,0 +1,141 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 18c91ac..e7b1d5f 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -155,6 +155,7 @@ Apply these patches in order from the repository root:
+ 151. `151-remove-generic-egui-shape-drawable.patch`
+ 152. `152-use-egui-geometry-draw-function.patch`
+ 153. `153-move-command-egui-geometry-renderer.patch`
++154. `154-rename-command-geometry-result.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/commands/external_cmd.rs b/src/map/mapvas_egui/layer/commands/external_cmd.rs
+index 6db5040..459fd97 100644
+--- a/src/map/mapvas_egui/layer/commands/external_cmd.rs
++++ b/src/map/mapvas_egui/layer/commands/external_cmd.rs
+@@ -18,7 +18,7 @@ use crate::{
+   parser::{FileParser as _, Parsers},
+ };
+ 
+-use super::{Command, CommandResult, OoMCoordinates, ParameterUpdate, update_closest};
++use super::{Command, CommandGeometry, OoMCoordinates, ParameterUpdate, update_closest};
+ 
+ #[derive(Serialize, Deserialize)]
+ struct ExeCfg {
+@@ -463,7 +463,7 @@ struct ExternalCommandCommon {
+   response_rcv: Receiver<RawResponse>,
+   last_request: std::time::Instant,
+   last_update: std::time::Instant,
+-  result: Option<CommandResult>,
++  result: Option<CommandGeometry>,
+   raw_response: Option<RawResponse>,
+   version: u64,
+ }
+@@ -1136,7 +1136,7 @@ impl Command for ExternalCommand {
+     }
+   }
+ 
+-  fn result(&self) -> Box<dyn Iterator<Item = CommandResult>> {
++  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>> {
+     Box::new(
+       self
+         .common
+@@ -1144,7 +1144,7 @@ impl Command for ExternalCommand {
+         .clone()
+         .into_iter()
+         .chain(self.cmd.coordinates().iter().map(|(_, coord)| {
+-          let drawable: CommandResult = match coord {
++          let geometry: CommandGeometry = match coord {
+             OoMCoordinates::Coordinate(c) => Rc::new(Geometry::Point(*c, Metadata::default())),
+             OoMCoordinates::Coordinates(coords) => Rc::new(Geometry::GeometryCollection(
+               coords
+@@ -1154,7 +1154,7 @@ impl Command for ExternalCommand {
+               Metadata::default(),
+             )),
+           };
+-          drawable
++          geometry
+         }))
+         .collect::<Vec<_>>()
+         .into_iter(),
+diff --git a/src/map/mapvas_egui/layer/commands/ruler.rs b/src/map/mapvas_egui/layer/commands/ruler.rs
+index 3f31b35..fa19d70 100644
+--- a/src/map/mapvas_egui/layer/commands/ruler.rs
++++ b/src/map/mapvas_egui/layer/commands/ruler.rs
+@@ -7,7 +7,7 @@ use crate::map::{
+   geometry_collection::{Geometry, Metadata, Style},
+ };
+ 
+-use super::{Command, CommandResult, ParameterUpdate, update_closest};
++use super::{Command, CommandGeometry, ParameterUpdate, update_closest};
+ 
+ pub struct Ruler {
+   origin: Option<PixelCoordinate>,
+@@ -61,7 +61,7 @@ impl Command for Ruler {
+ 
+   fn run(&mut self) {}
+ 
+-  fn result(&self) -> Box<dyn Iterator<Item = CommandResult>> {
++  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>> {
+     let mut geom = vec![];
+     if let Some(origin) = self.origin {
+       geom.push(Geometry::Point(
+@@ -82,8 +82,9 @@ impl Command for Ruler {
+         Metadata::default().with_label(format!("Dist: {dist:.2}m")),
+       ));
+     }
+-    let drawable: CommandResult = Rc::new(Geometry::GeometryCollection(geom, Metadata::default()));
+-    Box::new(once(drawable))
++    let geometry: CommandGeometry =
++      Rc::new(Geometry::GeometryCollection(geom, Metadata::default()));
++    Box::new(once(geometry))
+   }
+ 
+   fn geometry_version(&self) -> u64 {
+diff --git a/src/map/mapvas_egui/layer/commands.rs b/src/map/mapvas_egui/layer/commands.rs
+index c6e0858..4004e2a 100644
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -212,12 +212,12 @@ fn truncate_label_by_width(ui: &egui::Ui, label: &str, available_width: f32) ->
+ 
+ const NAME: &str = "Command Layer";
+ 
+-type CommandResult = Rc<Geometry<PixelCoordinate>>;
++type CommandGeometry = Rc<Geometry<PixelCoordinate>>;
+ 
+ trait Command {
+   fn update_paramters(&mut self, parameters: ParameterUpdate);
+   fn run(&mut self);
+-  fn result(&self) -> Box<dyn Iterator<Item = CommandResult>>;
++  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>>;
+   fn geometry_version(&self) -> u64;
+   fn is_locked(&self) -> bool;
+   fn is_visible(&self) -> bool;
+@@ -242,8 +242,8 @@ impl Layer for CommandLayer {
+   ) {
+     if self.visible() {
+       for command in self.commands.iter().filter(|command| command.is_visible()) {
+-        let geometry = command.result();
+-        for geometry in geometry {
++        let geometries = command.result();
++        for geometry in geometries {
+           egui_geometry::draw_geometry(geometry.as_ref(), ui.painter(), transform);
+         }
+       }
+@@ -464,12 +464,12 @@ impl CommandLayer {
+   ) -> Option<f64> {
+     let mut min_distance: Option<f64> = None;
+     for geometry in command.result() {
+-      if let Some(drawable_distance) =
++      if let Some(geometry_distance) =
+         distance::distance_to_geometry(geometry.as_ref(), click_coord)
+       {
+         min_distance = match min_distance {
+-          None => Some(drawable_distance),
+-          Some(current_min) => Some(drawable_distance.min(current_min)),
++          None => Some(geometry_distance),
++          Some(current_min) => Some(geometry_distance.min(current_min)),
+         };
+       }
+     }

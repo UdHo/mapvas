@@ -7,7 +7,7 @@ use egui_kittest::Harness;
 
 use crate::{
   config::Config,
-  map::{map_event::MapEvent, mapvas_egui::Map},
+  map::{Map, map_event::MapEvent},
   mapvas_ui::MapApp,
 };
 
@@ -86,9 +86,9 @@ impl HeadlessRenderer {
       });
     }
     let (mut map, remote, data_holder) = if self.no_map {
-      Map::new_without_tiles(ctx, self.config.clone())
+      Map::new_egui_without_tiles(ctx, self.config.clone())
     } else {
-      Map::new(ctx, self.config.clone())
+      Map::new_egui(ctx, self.config.clone())
     };
     map.set_headless();
 
@@ -96,7 +96,7 @@ impl HeadlessRenderer {
       remote.handle_map_event(event.clone());
     }
 
-    let mut app = MapApp::new(map, remote, data_holder, self.config.clone(), None);
+    let mut app = MapApp::new_egui(map, remote, data_holder, self.config.clone(), None);
     app.set_headless();
 
     #[allow(clippy::cast_precision_loss)]
@@ -108,8 +108,7 @@ impl HeadlessRenderer {
       .with_max_steps(200)
       .build_ui_state(
         |ui, app: &mut MapApp| {
-          let mut frame = eframe::Frame::_new_kittest();
-          app.ui(ui, &mut frame);
+          app.show_egui(ui);
         },
         app,
       );

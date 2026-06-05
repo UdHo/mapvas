@@ -1,0 +1,64 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -68,6 +68,7 @@
+   DoubleClick(egui::Pos2),
+   DroppedFile(PathBuf),
+   Shortcut(NativeMapShortcut),
++  TransformChanged(Transform),
+ }
+ 
+ pub enum NativeMapShortcut {
+@@ -110,11 +111,6 @@
+   }
+ 
+   #[must_use]
+-  pub fn transform(&self) -> Option<Transform> {
+-    self.transform
+-  }
+-
+-  #[must_use]
+   pub fn hover_pos(&self) -> Option<egui::Pos2> {
+     self.hover_pos
+   }
+@@ -326,6 +322,9 @@
+   if changed {
+     fit_to_screen(&mut transform, &viewport.rect);
+     control.transform = Some(transform);
++    control
++      .actions
++      .push(NativeMapAction::TransformChanged(transform));
+   }
+ }
+ 
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -102,6 +102,9 @@
+       app.handle_map_dropped_file(path);
+     }
+     NativeMapAction::Shortcut(shortcut) => handle_native_map_shortcut(app, egui_ctx, shortcut),
++    NativeMapAction::TransformChanged(transform) => {
++      app.set_map_transform(transform);
++    }
+   }
+ }
+ 
+@@ -142,9 +145,6 @@
+     .frame(egui::Frame::NONE)
+     .show(&egui_ctx, |ui| {
+       if let Some(app) = state.app.as_mut() {
+-        if let Some(transform) = native_map.transform() {
+-          app.set_map_transform(transform);
+-        }
+         for action in native_map.take_actions() {
+           handle_native_map_action(app, &egui_ctx, action);
+         }
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -91,6 +91,7 @@
+ 87. `087-collapse-native-map-actions.patch`
+ 88. `088-route-native-file-drops-as-map-actions.patch`
+ 89. `089-extract-native-map-action-dispatch.patch`
++90. `090-route-native-transform-as-map-action.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,106 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -1,7 +1,9 @@
++use std::path::PathBuf;
++
+ use bevy::{
+   input::mouse::AccumulatedMouseScroll,
+   prelude::*,
+-  window::{PrimaryWindow, Window},
++  window::{FileDragAndDrop, PrimaryWindow, Window},
+ };
+ use bevy_egui::{egui, input::EguiWantsInput};
+ use mapvas::map::{
+@@ -64,6 +66,7 @@
+   CommandDrag(NativeCommandDrag),
+   ContextMenu(egui::Pos2),
+   DoubleClick(egui::Pos2),
++  DroppedFile(PathBuf),
+   Shortcut(NativeMapShortcut),
+ }
+ 
+@@ -138,7 +141,16 @@
+   scroll: Res<AccumulatedMouseScroll>,
+   egui_wants_input: Res<EguiWantsInput>,
+   time: Res<Time>,
++  mut file_drops: MessageReader<FileDragAndDrop>,
+ ) {
++  for event in file_drops.read() {
++    if let FileDragAndDrop::DroppedFile { path_buf, .. } = event {
++      control
++        .actions
++        .push(NativeMapAction::DroppedFile(path_buf.clone()));
++    }
++  }
++
+   let Some(viewport) = viewport.get() else {
+     control.hover_pos = None;
+     return;
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -4,11 +4,7 @@
+ mod bevy_screenshot;
+ mod bevy_tiles;
+ 
+-use bevy::{
+-  log::LogPlugin,
+-  prelude::*,
+-  window::{FileDragAndDrop, WindowResolution},
+-};
++use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+ use bevy_map::{
+@@ -99,7 +95,6 @@
+   mut native_geometry: ResMut<NativeGeometryLayer>,
+   mut native_screenshots: ResMut<NativeScreenshotRequests>,
+   mut native_tiles: ResMut<NativeTileLayer>,
+-  mut file_drops: MessageReader<FileDragAndDrop>,
+   mut app_exit: MessageWriter<AppExit>,
+ ) -> Result {
+   let egui_ctx = contexts.ctx_mut()?.clone();
+@@ -108,14 +103,6 @@
+ 
+   state.initialize(egui_ctx.clone());
+ 
+-  let dropped_files = file_drops
+-    .read()
+-    .filter_map(|event| match event {
+-      FileDragAndDrop::DroppedFile { path_buf, .. } => Some(path_buf.clone()),
+-      FileDragAndDrop::HoveredFile { .. } | FileDragAndDrop::HoveredFileCanceled { .. } => None,
+-    })
+-    .collect::<Vec<_>>();
+-
+   let mut viewport = None;
+   let mut current_config = None;
+   let mut geometry_snapshot = None;
+@@ -126,9 +113,6 @@
+         if let Some(transform) = native_map.transform() {
+           app.set_map_transform(transform);
+         }
+-        for path in &dropped_files {
+-          app.handle_map_dropped_file(path.clone());
+-        }
+         for action in native_map.take_actions() {
+           match action {
+             NativeMapAction::CommandDrag(drag) => {
+@@ -140,6 +124,9 @@
+             NativeMapAction::DoubleClick(pos) => {
+               app.handle_map_double_click(pos);
+             }
++            NativeMapAction::DroppedFile(path) => {
++              app.handle_map_dropped_file(path);
++            }
+             NativeMapAction::Shortcut(shortcut) => match shortcut {
+               NativeMapShortcut::Clear => app.clear_map(),
+               NativeMapShortcut::FocusAll => app.focus_map(),
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -89,6 +89,7 @@
+ 85. `085-collapse-map-screenshot-target.patch`
+ 86. `086-make-native-hover-path-explicit.patch`
+ 87. `087-collapse-native-map-actions.patch`
++88. `088-route-native-file-drops-as-map-actions.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

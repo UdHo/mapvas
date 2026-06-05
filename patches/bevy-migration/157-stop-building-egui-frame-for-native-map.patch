@@ -1,0 +1,44 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 5aea42c..d8cb1c2 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -158,6 +158,7 @@ Apply these patches in order from the repository root:
+ 154. `154-rename-command-geometry-result.patch`
+ 155. `155-use-pixel-rect-for-map-input-frame.patch`
+ 156. `156-remove-frame-from-egui-overlays.patch`
++157. `157-stop-building-egui-frame-for-native-map.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 8281369..e4c3c3d 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -725,9 +725,8 @@ impl Map {
+     }
+   }
+ 
+-  fn prepare_native_layer_frame(&mut self, ui: &mut Ui, frame: EguiMapFrame) {
++  fn prepare_native_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
+     profile_scope!("Map::prepare_native_layer_frame");
+-    let rect = frame.rect;
+     if !ui.is_rect_visible(rect) {
+       return;
+     }
+@@ -842,14 +841,13 @@ impl Map {
+   pub fn ui_native(&mut self, ui: &mut Ui) -> Response {
+     profile_scope!("Map::ui_native");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::hover());
+-    let frame = EguiMapFrame::from_rect(rect);
+-    let pixel_rect = frame.pixel_rect;
++    let pixel_rect = PixelRect::from_min_max(pos_to_pixel(rect.min), pos_to_pixel(rect.max));
+ 
+     self.initialize_transform_if_needed(pixel_rect);
+     self.show_native_command_context_menu(ui.ctx());
+     self.right_click_open_requested = false;
+     self.update_frame_viewport(pixel_rect);
+-    self.prepare_native_layer_frame(ui, frame);
++    self.prepare_native_layer_frame(ui, rect);
+     self.handle_map_events(pixel_rect);
+ 
+     response

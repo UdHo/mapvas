@@ -1,0 +1,36 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -78,6 +78,10 @@
+   fn uses_native_viewport_input(self) -> bool {
+     self == Self::Native
+   }
++
++  fn uses_egui_attribution(self) -> bool {
++    self != Self::Native
++  }
+ }
+ 
+ impl Map {
+@@ -652,8 +656,10 @@
+         }
+         profile_scope!("Layer::draw", "Timeline");
+         self.timeline.borrow_mut().draw(ui, &self.transform, rect);
+-        for layer in layer_guard.iter() {
+-          layer.draw_attribution(ui, rect);
++        if self.render_mode.uses_egui_attribution() {
++          for layer in layer_guard.iter() {
++            layer.draw_attribution(ui, rect);
++          }
+         }
+       }
+     }
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -43,6 +43,7 @@
+ 39. `039-move-eframe-to-dev-dependencies.patch`
+ 40. `040-use-native-map-input-unconditionally.patch`
+ 41. `041-derive-native-viewport-input-from-render-mode.patch`
++42. `042-skip-egui-attribution-in-native-mode.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,39 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -110,15 +110,6 @@
+   pub fn new_native_rendering(
+     ctx: egui::Context,
+     cfg: crate::config::Config,
+-  ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+-    let repaint = RepaintSignal::egui(ctx.clone());
+-    Self::new_impl(ctx, cfg, MapRenderMode::Native, repaint)
+-  }
+-
+-  #[must_use]
+-  pub fn new_native_rendering_with_repaint(
+-    ctx: egui::Context,
+-    cfg: crate::config::Config,
+     repaint: RepaintSignal,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+     Self::new_impl(ctx, cfg, MapRenderMode::Native, repaint)
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -59,7 +59,7 @@
+     init_style_config(config.vector_style_file.as_deref());
+ 
+     let (map, remote, data_holder) =
+-      Map::new_native_rendering_with_repaint(egui_ctx, config.clone(), self.repaint_signal.clone());
++      Map::new_native_rendering(egui_ctx, config.clone(), self.repaint_signal.clone());
+     spawn_remote_runner_on_handle(self.runtime.handle().clone(), remote.clone());
+ 
+     let mut app = MapApp::new(
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -83,6 +83,7 @@
+ 79. `079-route-native-repaint-through-bevy.patch`
+ 80. `080-route-map-event-repaint-through-signal.patch`
+ 81. `081-replace-native-layer-overlay-hook.patch`
++82. `082-require-repaint-for-native-map-constructor.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

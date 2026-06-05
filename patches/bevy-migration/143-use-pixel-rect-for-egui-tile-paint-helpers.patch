@@ -1,0 +1,131 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index b84fbd3..47e43ad 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -144,6 +144,7 @@ Apply these patches in order from the repository root:
+ 140. `140-use-pixel-rect-for-egui-tile-selection.patch`
+ 141. `141-use-pixel-rect-for-geometry-rasterizer.patch`
+ 142. `142-use-pixel-rect-for-highlight-rasterizer.patch`
++143. `143-use-pixel-rect-for-egui-tile-paint-helpers.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/tile_layer.rs b/src/map/mapvas_egui/layer/tile_layer.rs
+index d21ec80..9e85a73 100644
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -43,6 +43,10 @@ fn tile_world_offset(tile_x: f32, left_x: f32) -> f32 {
+   ((left_x - tile_x) / CANVAS_SIZE - 1e-6).ceil() * CANVAS_SIZE
+ }
+ 
++fn pixel_rect_to_rect(rect: PixelRect) -> Rect {
++  Rect::from_min_max(pixel_to_pos(rect.min), pixel_to_pos(rect.max))
++}
++
+ /// Splits a `TileImage` into a grid of tiles for super-resolution rendering.
+ ///
+ /// # Arguments
+@@ -195,18 +199,19 @@ impl TileLayer {
+           y: se.y,
+         };
+         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+-        let tile_rect = Rect::from_min_max(pixel_to_pos(nw_screen), pixel_to_pos(se_screen));
++        let tile_rect = PixelRect::from_min_max(nw_screen, se_screen);
+ 
+-        if tile_rect.intersects(clip_rect) {
++        if tile_rect.intersects(pixel_rect) {
++          let egui_tile_rect = pixel_rect_to_rect(tile_rect);
+           ui.painter_at(clip_rect).image(
+             image_data.id(),
+-            tile_rect,
++            egui_tile_rect,
+             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+             tint_color,
+           );
+ 
+           if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
+-            draw_coordinate_text_overlay(ui, clip_rect, tile, &tile_rect);
++            draw_coordinate_text_overlay(ui, clip_rect, tile, tile_rect);
+           }
+         }
+       }
+@@ -244,9 +249,9 @@ impl TileLayer {
+           y: se.y,
+         };
+         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
+-        let tile_rect = Rect::from_min_max(pixel_to_pos(nw_screen), pixel_to_pos(se_screen));
++        let tile_rect = PixelRect::from_min_max(nw_screen, se_screen);
+ 
+-        if !tile_rect.intersects(clip_rect) {
++        if !tile_rect.intersects(pixel_rect) {
+           continue;
+         }
+ 
+@@ -257,20 +262,27 @@ impl TileLayer {
+           } else {
+             Color32::from_rgba_unmultiplied(240, 240, 255, 120)
+           };
+-          painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
++          painter.rect_filled(
++            pixel_rect_to_rect(tile_rect),
++            egui::CornerRadius::ZERO,
++            bg_color,
++          );
+         }
+ 
+-        self.draw_tile_info(ui, clip_rect, &tile, &tile_rect);
++        self.draw_tile_info(ui, clip_rect, &tile, tile_rect);
+       }
+     }
+   }
+ 
+-  fn draw_tile_info(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
++  fn draw_tile_info(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: PixelRect) {
+     let painter = ui.painter_at(clip_rect);
+ 
+     let bg_width = 100.0;
+     let bg_height = 60.0;
+-    let bg_rect = Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
++    let bg_rect = Rect::from_center_size(
++      pixel_to_pos(tile_rect.center()),
++      egui::vec2(bg_width, bg_height),
++    );
+ 
+     if tile_rect.width() > bg_width && tile_rect.height() > bg_height {
+       painter.rect_filled(
+@@ -308,7 +320,7 @@ impl TileLayer {
+     };
+ 
+     painter.rect_stroke(
+-      *tile_rect,
++      pixel_rect_to_rect(tile_rect),
+       egui::CornerRadius::ZERO,
+       egui::Stroke::new(1.0, border_color),
+       egui::epaint::StrokeKind::Outside,
+@@ -1011,12 +1023,15 @@ fn draw_osm_attribution(ui: &mut Ui, clip_rect: Rect) {
+   );
+ }
+ 
+-fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
++fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: PixelRect) {
+   let painter = ui.painter_at(clip_rect);
+ 
+   let bg_width = 100.0;
+   let bg_height = 60.0;
+-  let bg_rect = Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
++  let bg_rect = Rect::from_center_size(
++    pixel_to_pos(tile_rect.center()),
++    egui::vec2(bg_width, bg_height),
++  );
+ 
+   painter.rect_filled(
+     bg_rect,
+@@ -1046,7 +1061,7 @@ fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_
+   }
+ 
+   painter.rect_stroke(
+-    *tile_rect,
++    pixel_rect_to_rect(tile_rect),
+     egui::CornerRadius::ZERO,
+     egui::Stroke::new(2.0, Color32::from_rgb(100, 100, 100)),
+     egui::epaint::StrokeKind::Outside,

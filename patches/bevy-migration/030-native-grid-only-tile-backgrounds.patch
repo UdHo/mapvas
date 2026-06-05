@@ -1,0 +1,162 @@
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -47,6 +47,9 @@
+ #[derive(Component)]
+ struct NativeTileSprite;
+ 
++#[derive(Component)]
++struct NativeGridTileSprite;
++
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum CoordinateDisplayMode {
+   Off,
+@@ -322,7 +325,6 @@
+     let Some(request_zoom) = self.overlay_request_zoom(viewport) else {
+       return;
+     };
+-    let painter = ui.painter_at(viewport.rect);
+     let inv = viewport.transform.invert();
+     let vp_min = inv.apply(viewport.rect.min.into());
+     let vp_max = inv.apply(viewport.rect.max.into());
+@@ -338,16 +340,6 @@
+         continue;
+       }
+ 
+-      if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+-        let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
+-        let bg_color = if is_even_tile {
+-          egui::Color32::from_rgba_unmultiplied(255, 240, 240, 120)
+-        } else {
+-          egui::Color32::from_rgba_unmultiplied(240, 240, 255, 120)
+-        };
+-        painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
+-      }
+-
+       self.draw_tile_info(ui, viewport.rect, &tile, &tile_rect);
+ 
+       let (nw, _) = tile.position();
+@@ -710,6 +702,10 @@
+   runtime: Res<NativeTileRuntime>,
+   windows: Query<&Window, With<PrimaryWindow>>,
+   mut sprites: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<NativeTileSprite>>,
++  mut grid_sprites: Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (With<NativeGridTileSprite>, Without<NativeTileSprite>),
++  >,
+ ) {
+   for entity in layer.stale_entities.drain(..) {
+     commands.entity(entity).despawn();
+@@ -717,15 +713,18 @@
+ 
+   if !layer.visible {
+     hide_tile_sprites(&mut sprites);
++    hide_grid_tile_sprites(&mut grid_sprites);
+     return;
+   }
+ 
+   let Some(viewport) = viewport.get() else {
+     hide_tile_sprites(&mut sprites);
++    hide_grid_tile_sprites(&mut grid_sprites);
+     return;
+   };
+   let Ok(window) = windows.single() else {
+     hide_tile_sprites(&mut sprites);
++    hide_grid_tile_sprites(&mut grid_sprites);
+     return;
+   };
+ 
+@@ -741,8 +740,16 @@
+   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+     layer.request_preload_tiles(&visible_tiles, runtime_handle);
+     hide_tile_sprites(&mut sprites);
++    update_grid_tile_sprites(
++      &mut commands,
++      viewport,
++      window,
++      &visible_tiles,
++      &mut grid_sprites,
++    );
+     return;
+   }
++  hide_grid_tile_sprites(&mut grid_sprites);
+ 
+   let mut tiles_to_draw = visible_tiles
+     .iter()
+@@ -801,10 +808,67 @@
+   sprites: &mut Query<(&mut Transform, &mut Sprite, &mut Visibility), With<NativeTileSprite>>,
+ ) {
+   for (_, _, mut visibility) in sprites.iter_mut() {
++    *visibility = Visibility::Hidden;
++  }
++}
++
++fn hide_grid_tile_sprites(
++  sprites: &mut Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (With<NativeGridTileSprite>, Without<NativeTileSprite>),
++  >,
++) {
++  for (_, _, mut visibility) in sprites.iter_mut() {
++    *visibility = Visibility::Hidden;
++  }
++}
++
++fn update_grid_tile_sprites(
++  commands: &mut Commands,
++  viewport: MapViewport,
++  window: &Window,
++  visible_tiles: &[Tile],
++  sprites: &mut Query<
++    (&mut Transform, &mut Sprite, &mut Visibility),
++    (With<NativeGridTileSprite>, Without<NativeTileSprite>),
++  >,
++) {
++  let mut sprite_iter = sprites.iter_mut();
++  for tile in visible_tiles {
++    let Some(tile_rect) = tile_screen_rect(viewport, *tile) else {
++      continue;
++    };
++    let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
++    let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
++    let color = grid_tile_color(*tile);
++
++    if let Some((mut sprite_transform, mut sprite, mut visibility)) = sprite_iter.next() {
++      *sprite_transform = transform;
++      sprite.custom_size = Some(custom_size);
++      sprite.color = color;
++      *visibility = Visibility::Visible;
++    } else {
++      commands.spawn((
++        Sprite::from_color(color, custom_size),
++        transform,
++        NativeGridTileSprite,
++      ));
++    }
++  }
++
++  for (_, _, mut visibility) in sprite_iter {
+     *visibility = Visibility::Hidden;
+   }
+ }
+ 
++fn grid_tile_color(tile: Tile) -> Color {
++  if (tile.x + tile.y).is_multiple_of(2) {
++    Color::srgba(1.0, 240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0)
++  } else {
++    Color::srgba(240.0 / 255.0, 240.0 / 255.0, 1.0, 120.0 / 255.0)
++  }
++}
++
+ fn loaded_tile_or_parent(layer: &NativeTileLayer, mut tile: Tile) -> Option<Tile> {
+   loop {
+     if layer.loaded_tiles.contains_key(&tile) {
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -31,6 +31,7 @@
+ 27. `027-hide-native-tiles-without-viewport.patch`
+ 28. `028-always-replace-egui-geometry-in-bevy-app.patch`
+ 29. `029-wire-bevy-geometry-replacement-unconditionally.patch`
++30. `030-native-grid-only-tile-backgrounds.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

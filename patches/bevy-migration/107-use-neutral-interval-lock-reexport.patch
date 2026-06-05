@@ -1,0 +1,56 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1066,9 +1066,7 @@
+ 
+   /// Get current timeline interval lock state
+   #[must_use]
+-  pub fn get_timeline_interval_lock(
+-    &self,
+-  ) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
++  pub fn get_timeline_interval_lock(&self) -> crate::map::IntervalLock {
+     self.timeline.borrow().interval_lock()
+   }
+ 
+--- a/src/map/mapvas_egui/layer/timeline_layer.rs
++++ b/src/map/mapvas_egui/layer/timeline_layer.rs
+@@ -66,7 +66,7 @@
+ 
+   /// Update animation during playback
+   pub fn update_animation(&mut self, current_time: f64) {
+-    use crate::map::mapvas_egui::timeline_widget::IntervalLock;
++    use crate::map::IntervalLock;
+ 
+     if !self.widget.is_playing() {
+       self.last_update = current_time;
+@@ -201,7 +201,7 @@
+   }
+ 
+   #[must_use]
+-  pub fn interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
++  pub fn interval_lock(&self) -> crate::map::IntervalLock {
+     self.widget.get_interval_lock()
+   }
+ }
+@@ -306,9 +306,9 @@
+       ui.label("🔒 Interval Lock:");
+       let lock_state = self.widget.get_interval_lock();
+       let lock_text = match lock_state {
+-        crate::map::mapvas_egui::timeline_widget::IntervalLock::None => "None",
+-        crate::map::mapvas_egui::timeline_widget::IntervalLock::Start => "Start Locked",
+-        crate::map::mapvas_egui::timeline_widget::IntervalLock::End => "End Locked",
++        crate::map::IntervalLock::None => "None",
++        crate::map::IntervalLock::Start => "Start Locked",
++        crate::map::IntervalLock::End => "End Locked",
+       };
+       ui.label(lock_text);
+ 
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -108,6 +108,7 @@
+ 104. `104-rename-native-layer-frame-prep.patch`
+ 105. `105-rename-layer-controls-egui.patch`
+ 106. `106-reexport-neutral-map-api.patch`
++107. `107-use-neutral-interval-lock-reexport.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

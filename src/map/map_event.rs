@@ -2,51 +2,10 @@ use super::{
   coordinates::{PixelCoordinate, WGS84Coordinate},
   geometry_collection::Geometry,
 };
-use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Color(pub Color32);
-
-impl From<Color32> for Color {
-  fn from(value: egui::Color32) -> Self {
-    Color(value)
-  }
-}
-
-impl Default for Color {
-  fn default() -> Self {
-    Color(egui::Color32::BLUE)
-  }
-}
-
-impl FromStr for Color {
-  type Err = ();
-  fn from_str(input: &str) -> Result<Color, Self::Err> {
-    let lowercase = input.to_lowercase();
-    match lowercase.as_str() {
-      "blue" => Ok(Color32::BLUE.into()),
-      "darkblue" => Ok(Color32::DARK_BLUE.into()),
-      "red" => Ok(Color32::RED.into()),
-      "darkred" => Ok(Color32::DARK_RED.into()),
-      "green" => Ok(Color32::GREEN.into()),
-      "darkgreen" => Ok(Color32::DARK_GREEN.into()),
-      "yellow" => Ok(Color32::YELLOW.into()),
-      "black" => Ok(Color32::BLACK.into()),
-      "white" => Ok(Color32::WHITE.into()),
-      "grey" | "gray" => Ok(Color32::GRAY.into()),
-      "brown" => Ok(Color32::BROWN.into()),
-      _ => Err(()),
-    }
-  }
-}
-
-impl From<Color> for egui::Color32 {
-  fn from(value: Color) -> Self {
-    value.0
-  }
-}
+pub use super::color::Color;
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum FillStyle {
@@ -121,30 +80,30 @@ mod tests {
   #[test]
   fn color_from_str_all_variants() {
     let cases = [
-      ("blue", Color32::BLUE),
-      ("darkblue", Color32::DARK_BLUE),
-      ("red", Color32::RED),
-      ("darkred", Color32::DARK_RED),
-      ("green", Color32::GREEN),
-      ("darkgreen", Color32::DARK_GREEN),
-      ("yellow", Color32::YELLOW),
-      ("black", Color32::BLACK),
-      ("white", Color32::WHITE),
-      ("grey", Color32::GRAY),
-      ("gray", Color32::GRAY),
-      ("brown", Color32::BROWN),
+      ("blue", Color::BLUE),
+      ("darkblue", Color::DARK_BLUE),
+      ("red", Color::RED),
+      ("darkred", Color::DARK_RED),
+      ("green", Color::GREEN),
+      ("darkgreen", Color::DARK_GREEN),
+      ("yellow", Color::YELLOW),
+      ("black", Color::BLACK),
+      ("white", Color::WHITE),
+      ("grey", Color::GRAY),
+      ("gray", Color::GRAY),
+      ("brown", Color::BROWN),
     ];
     for (name, expected) in cases {
       let color = Color::from_str(name).unwrap();
-      assert_eq!(color.0, expected, "Color '{name}' should match");
+      assert_eq!(color, expected, "Color '{name}' should match");
     }
   }
 
   #[test]
   fn color_from_str_case_insensitive() {
-    assert_eq!(Color::from_str("Blue").unwrap().0, Color32::BLUE);
-    assert_eq!(Color::from_str("DARKRED").unwrap().0, Color32::DARK_RED);
-    assert_eq!(Color::from_str("GREEN").unwrap().0, Color32::GREEN);
+    assert_eq!(Color::from_str("Blue").unwrap(), Color::BLUE);
+    assert_eq!(Color::from_str("DARKRED").unwrap(), Color::DARK_RED);
+    assert_eq!(Color::from_str("GREEN").unwrap(), Color::GREEN);
   }
 
   #[test]
@@ -156,7 +115,13 @@ mod tests {
 
   #[test]
   fn color_default_is_blue() {
-    assert_eq!(Color::default().0, Color32::BLUE);
+    assert_eq!(Color::default(), Color::BLUE);
+  }
+
+  #[test]
+  fn color_preserves_rgba_bytes() {
+    let color = Color::from_rgba_unmultiplied(1, 2, 3, 4);
+    assert_eq!(color.to_rgba_unmultiplied(), [1, 2, 3, 4]);
   }
 
   #[test]

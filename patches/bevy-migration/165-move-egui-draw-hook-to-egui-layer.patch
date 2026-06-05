@@ -1,0 +1,258 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 2a08d8b..0c62456 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -166,6 +166,7 @@ Apply these patches in order from the repository root:
+ 162. `162-extract-tile-egui-draw-helper.patch`
+ 163. `163-extract-shape-egui-overlay-helper.patch`
+ 164. `164-split-egui-layer-overlay-trait.patch`
++165. `165-move-egui-draw-hook-to-egui-layer.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/commands.rs b/src/map/mapvas_egui/layer/commands.rs
+index e6bc491..224c557 100644
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -247,15 +247,6 @@ impl Layer for CommandLayer {
+     self.update_commands();
+   }
+ 
+-  fn draw_egui(
+-    &mut self,
+-    ui: &mut egui::Ui,
+-    transform: &crate::map::coordinates::Transform,
+-    _frame: EguiMapFrame,
+-  ) {
+-    self.draw_egui_geometries(ui.painter(), transform);
+-  }
+-
+   fn geometry_snapshot(&self) -> GeometrySnapshot {
+     let version = self.geometry_snapshot_version();
+     if !self.visible() {
+@@ -463,7 +454,16 @@ impl Layer for CommandLayer {
+   }
+ }
+ 
+-impl EguiLayer for CommandLayer {}
++impl EguiLayer for CommandLayer {
++  fn draw_egui(
++    &mut self,
++    ui: &mut egui::Ui,
++    transform: &crate::map::coordinates::Transform,
++    _frame: EguiMapFrame,
++  ) {
++    self.draw_egui_geometries(ui.painter(), transform);
++  }
++}
+ 
+ impl CommandLayer {
+   fn calculate_distance_to_command(
+diff --git a/src/map/mapvas_egui/layer/screenshot.rs b/src/map/mapvas_egui/layer/screenshot.rs
+index 80c2c2b..5e3032e 100644
+--- a/src/map/mapvas_egui/layer/screenshot.rs
++++ b/src/map/mapvas_egui/layer/screenshot.rs
+@@ -150,15 +150,6 @@ impl Layer for ScreenshotLayer {
+     self.handle_screenshots();
+   }
+ 
+-  fn draw_egui(
+-    &mut self,
+-    ui: &mut egui::Ui,
+-    _transform: &crate::map::coordinates::Transform,
+-    frame: EguiMapFrame,
+-  ) {
+-    self.draw_screenshot_preview(ui, frame.rect);
+-  }
+-
+   fn name(&self) -> &str {
+     NAME
+   }
+@@ -174,4 +165,13 @@ impl Layer for ScreenshotLayer {
+   fn ui_egui_content(&mut self, _ui: &mut egui::Ui) {}
+ }
+ 
+-impl EguiLayer for ScreenshotLayer {}
++impl EguiLayer for ScreenshotLayer {
++  fn draw_egui(
++    &mut self,
++    ui: &mut egui::Ui,
++    _transform: &crate::map::coordinates::Transform,
++    frame: EguiMapFrame,
++  ) {
++    self.draw_screenshot_preview(ui, frame.rect);
++  }
++}
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index be8653f..19f7e05 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -740,59 +740,9 @@ impl ShapeLayer {
+ 
+     self.draw_detail_popup(ui);
+   }
+-}
+-
+-const NAME: &str = "Shape Layer";
+-
+-impl EguiLayer for ShapeLayer {
+-  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform) {
+-    self.draw_egui_overlay_content(ui, transform);
+-  }
+-}
+-
+-impl Layer for ShapeLayer {
+-  /// Get temporal range from all geometries in this layer
+-  fn get_temporal_range(
+-    &self,
+-  ) -> (
+-    Option<chrono::DateTime<chrono::Utc>>,
+-    Option<chrono::DateTime<chrono::Utc>>,
+-  ) {
+-    self.get_temporal_range()
+-  }
+-  fn process_pending_events(&mut self) {
+-    self.handle_new_shapes();
+-    self.sync_geometry_cache();
+-  }
+-
+-  fn discard_pending_events(&mut self) {
+-    for _event in self.recv.try_iter() {}
+-  }
+-
+-  fn set_headless(&mut self) {
+-    self.headless = true;
+-  }
+-
+-  fn handle_hover(&mut self, pos: Option<PixelPosition>, transform: &Transform) {
+-    profile_scope!("ShapeLayer::handle_hover");
+-    self.current_transform = *transform;
+-    self.handle_new_shapes();
+-    self.sync_geometry_cache();
+-
+-    let Some(pos) = pos else {
+-      self.geometry_highlighter.clear_highlighting();
+-      return;
+-    };
+-    if !self.visible() {
+-      self.geometry_highlighter.clear_highlighting();
+-      return;
+-    }
+-
+-    self.update_hover_highlighting(pos, transform);
+-  }
+ 
+   #[allow(clippy::too_many_lines)]
+-  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
++  fn draw_egui_content(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+     profile_scope!("ShapeLayer::draw_egui");
+     let rect = frame.rect;
+     let pixel_rect = frame.pixel_rect;
+@@ -942,6 +892,60 @@ impl Layer for ShapeLayer {
+     // fan-triangulation; points, lines, and polygon strokes go through egui.
+     self.draw_highlight_overlay(ui, transform, frame);
+   }
++}
++
++const NAME: &str = "Shape Layer";
++
++impl EguiLayer for ShapeLayer {
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
++    self.draw_egui_content(ui, transform, frame);
++  }
++
++  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform) {
++    self.draw_egui_overlay_content(ui, transform);
++  }
++}
++
++impl Layer for ShapeLayer {
++  /// Get temporal range from all geometries in this layer
++  fn get_temporal_range(
++    &self,
++  ) -> (
++    Option<chrono::DateTime<chrono::Utc>>,
++    Option<chrono::DateTime<chrono::Utc>>,
++  ) {
++    self.get_temporal_range()
++  }
++  fn process_pending_events(&mut self) {
++    self.handle_new_shapes();
++    self.sync_geometry_cache();
++  }
++
++  fn discard_pending_events(&mut self) {
++    for _event in self.recv.try_iter() {}
++  }
++
++  fn set_headless(&mut self) {
++    self.headless = true;
++  }
++
++  fn handle_hover(&mut self, pos: Option<PixelPosition>, transform: &Transform) {
++    profile_scope!("ShapeLayer::handle_hover");
++    self.current_transform = *transform;
++    self.handle_new_shapes();
++    self.sync_geometry_cache();
++
++    let Some(pos) = pos else {
++      self.geometry_highlighter.clear_highlighting();
++      return;
++    };
++    if !self.visible() {
++      self.geometry_highlighter.clear_highlighting();
++      return;
++    }
++
++    self.update_hover_highlighting(pos, transform);
++  }
+ 
+   fn bounding_box(&self) -> Option<BoundingBox> {
+     let bb = self
+diff --git a/src/map/mapvas_egui/layer/tile_layer.rs b/src/map/mapvas_egui/layer/tile_layer.rs
+index 4427953..9512fba 100644
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -875,10 +875,6 @@ impl TileLayer {
+ }
+ 
+ impl Layer for TileLayer {
+-  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+-    self.draw_egui_tiles(ui, transform, frame);
+-  }
+-
+   fn name(&self) -> &str {
+     NAME
+   }
+@@ -996,6 +992,10 @@ impl Layer for TileLayer {
+ }
+ 
+ impl EguiLayer for TileLayer {
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
++    self.draw_egui_tiles(ui, transform, frame);
++  }
++
+   fn draw_egui_attribution(&self, ui: &mut Ui, clip_rect: Rect) {
+     if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly
+       && !self.loaded_tiles.is_empty()
+diff --git a/src/map/mapvas_egui/layer.rs b/src/map/mapvas_egui/layer.rs
+index c8308fa..4673165 100644
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -60,7 +60,6 @@ impl EguiMapFrame {
+ /// A layer represents everything that can be summarized as a logical unit on the map.
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+-  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame);
+   fn handle_hover(&mut self, _pos: Option<PixelPosition>, _transform: &Transform) {}
+   fn clear(&mut self) {}
+   fn name(&self) -> &str;
+@@ -192,6 +191,8 @@ pub trait Layer {
+ 
+ /// Egui-specific layer hooks used by the legacy egui map renderer and egui overlays.
+ pub trait EguiLayer: Layer {
++  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame);
++
+   fn draw_egui_overlay(&mut self, _ui: &mut Ui, _transform: &Transform) {}
+ 
+   /// Draw egui attribution or licensing overlays after all map content is painted.

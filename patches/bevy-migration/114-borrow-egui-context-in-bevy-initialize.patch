@@ -1,0 +1,36 @@
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -42,12 +42,12 @@
+     }
+   }
+ 
+-  fn initialize(&mut self, egui_ctx: egui::Context) {
++  fn initialize(&mut self, egui_ctx: &egui::Context) {
+     if self.app.is_some() {
+       return;
+     }
+ 
+-    egui_extras::install_image_loaders(&egui_ctx);
++    egui_extras::install_image_loaders(egui_ctx);
+ 
+     let config = self.initial_config.clone();
+     init_style_config(config.vector_style_file.as_deref());
+@@ -150,7 +150,7 @@
+   let runtime_handle = state.runtime.handle().clone();
+   let _runtime_guard = runtime_handle.enter();
+ 
+-  state.initialize(egui_ctx.clone());
++  state.initialize(&egui_ctx);
+ 
+   let mut output = None;
+   egui::CentralPanel::default()
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -115,6 +115,7 @@
+ 111. `111-rename-egui-without-tiles-constructor.patch`
+ 112. `112-use-repaint-signal-in-shape-layer.patch`
+ 113. `113-drop-egui-context-from-native-map-constructor.patch`
++114. `114-borrow-egui-context-in-bevy-initialize.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

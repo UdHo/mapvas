@@ -1,0 +1,136 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 4c9af5c..7c5b0bb 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -150,6 +150,7 @@ Apply these patches in order from the repository root:
+ 146. `146-thread-egui-map-frame-through-map-widget.patch`
+ 147. `147-use-egui-map-frame-for-highlight-overlay.patch`
+ 148. `148-use-geometry-command-results.patch`
++149. `149-trim-drawable-to-egui-drawing.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/commands.rs b/src/map/mapvas_egui/layer/commands.rs
+index 9fbf775..4fbf46f 100644
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::map::{
+   coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform},
++  distance,
+   geometry_collection::Geometry,
+ };
+ 
+@@ -461,8 +462,10 @@ impl CommandLayer {
+     click_coord: PixelCoordinate,
+   ) -> Option<f64> {
+     let mut min_distance: Option<f64> = None;
+-    for drawable in command.result() {
+-      if let Some(drawable_distance) = drawable.distance_to_point(click_coord) {
++    for geometry in command.result() {
++      if let Some(drawable_distance) =
++        distance::distance_to_geometry(geometry.as_ref(), click_coord)
++      {
+         min_distance = match min_distance {
+           None => Some(drawable_distance),
+           Some(current_min) => Some(drawable_distance.min(current_min)),
+diff --git a/src/map/mapvas_egui/layer/drawable.rs b/src/map/mapvas_egui/layer/drawable.rs
+index cecf481..748576c 100644
+--- a/src/map/mapvas_egui/layer/drawable.rs
++++ b/src/map/mapvas_egui/layer/drawable.rs
+@@ -6,8 +6,7 @@ use egui::{
+ use crate::{
+   config::HeadingStyle,
+   map::{
+-    coordinates::{BoundingBox, Coordinate, PixelCoordinate, Transform},
+-    distance,
++    coordinates::{Coordinate, Transform},
+     geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+     mapvas_egui::helpers::{color_to_color32, pixel_to_pos},
+   },
+@@ -31,30 +30,6 @@ pub trait Drawable {
+     // Default implementation falls back to the old draw method
+     self.draw(painter, transform);
+   }
+-  fn bounding_box(&self) -> Option<BoundingBox> {
+-    None
+-  }
+-  /// Convert this drawable to pixel geometry if it is backed by geometry data.
+-  fn as_pixel_geometry(&self) -> Option<Geometry<PixelCoordinate>> {
+-    None
+-  }
+-  /// Calculate distance from this drawable to a point
+-  fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
+-    if let Some(geometry) = self.as_pixel_geometry() {
+-      distance::distance_to_geometry(&geometry, point)
+-    } else if let Some(bbox) = self.bounding_box() {
+-      if bbox.is_valid() {
+-        let center = bbox.center();
+-        let dx = center.x - point.x;
+-        let dy = center.y - point.y;
+-        Some(f64::from(dx * dx + dy * dy).sqrt())
+-      } else {
+-        None
+-      }
+-    } else {
+-      None
+-    }
+-  }
+ }
+ 
+ impl Drawable for Shape {
+@@ -154,53 +129,6 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
+       painter.add(shape);
+     }
+   }
+-
+-  fn bounding_box(&self) -> Option<BoundingBox> {
+-    Some(Geometry::bounding_box(self))
+-  }
+-
+-  fn as_pixel_geometry(&self) -> Option<Geometry<PixelCoordinate>> {
+-    Some(self.convert_to_pixel_coordinates())
+-  }
+-
+-  fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
+-    let converted = self.convert_to_pixel_coordinates();
+-    distance::distance_to_geometry(&converted, point)
+-  }
+-}
+-
+-impl<C: Coordinate> Geometry<C> {
+-  fn convert_to_pixel_coordinates(&self) -> Geometry<PixelCoordinate> {
+-    match self {
+-      Geometry::Point(coord, metadata) => {
+-        Geometry::Point(coord.as_pixel_coordinate(), metadata.clone())
+-      }
+-      Geometry::LineString(coords, metadata) => Geometry::LineString(
+-        coords.iter().map(Coordinate::as_pixel_coordinate).collect(),
+-        metadata.clone(),
+-      ),
+-      Geometry::Polygon(coords, metadata) => Geometry::Polygon(
+-        coords.iter().map(Coordinate::as_pixel_coordinate).collect(),
+-        metadata.clone(),
+-      ),
+-      Geometry::GeometryCollection(geometries, metadata) => Geometry::GeometryCollection(
+-        geometries
+-          .iter()
+-          .map(Geometry::convert_to_pixel_coordinates)
+-          .collect(),
+-        metadata.clone(),
+-      ),
+-      Geometry::Heatmap(coords, metadata) => Geometry::Heatmap(
+-        std::sync::Arc::new(
+-          coords
+-            .iter()
+-            .map(Coordinate::as_pixel_coordinate)
+-            .collect::<Vec<_>>(),
+-        ),
+-        metadata.clone(),
+-      ),
+-    }
+-  }
+ }
+ 
+ /// Create a heading arrow shape pointing in the specified direction

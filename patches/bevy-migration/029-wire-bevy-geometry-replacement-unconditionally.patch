@@ -1,0 +1,35 @@
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -99,7 +99,7 @@
+     .show(&egui_ctx, |ui| {
+       if let Some(app) = state.app.as_mut() {
+         app.set_external_viewport_input(native_map.enabled());
+-        app.set_native_geometry_rendering(native_geometry.replaces_egui_geometry());
++        app.set_native_geometry_rendering(true);
+         if native_map.enabled()
+           && let Some(transform) = native_map.transform()
+         {
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -198,11 +198,6 @@
+   pub fn geometry_version(&self) -> u64 {
+     self.geometries_version
+   }
+-
+-  #[must_use]
+-  pub fn replaces_egui_geometry(&self) -> bool {
+-    true
+-  }
+ }
+ 
+ fn draw_native_geometry(
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -30,6 +30,7 @@
+ 26. `026-native-coordinate-overlay-tile-tint.patch`
+ 27. `027-hide-native-tiles-without-viewport.patch`
+ 28. `028-always-replace-egui-geometry-in-bevy-app.patch`
++29. `029-wire-bevy-geometry-replacement-unconditionally.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -158,7 +158,10 @@ mod tests {
     let events = load_and_parse::<JsonParser>("styled_coordinates.json");
     let actual_layer = extract_layer(&events, "json");
 
-    let expected_style = StyleBuilder::with_colors(egui::Color32::RED, egui::Color32::GREEN);
+    let expected_style = StyleBuilder::with_colors(
+      crate::map::color::Color::RED,
+      crate::map::color::Color::GREEN,
+    );
     let expected_metadata = MetadataBuilder::with_label_and_style("Test Location", expected_style);
     let expected_layer = LayerBuilder::new("json")
       .with_geometry(GeometryBuilder::point_with_metadata(
@@ -246,10 +249,10 @@ mod tests {
         "Should have at least 5 parsed colors"
       );
 
-      assert_eq!(parsed_colors[0], egui::Color32::RED);
-      assert_eq!(parsed_colors[1], egui::Color32::RED);
-      assert_eq!(parsed_colors[2], egui::Color32::GREEN);
-      assert_eq!(parsed_colors[3], egui::Color32::BLUE);
+      assert_eq!(parsed_colors[0], crate::map::color::Color::RED);
+      assert_eq!(parsed_colors[1], crate::map::color::Color::RED);
+      assert_eq!(parsed_colors[2], crate::map::color::Color::GREEN);
+      assert_eq!(parsed_colors[3], crate::map::color::Color::BLUE);
     } else {
       panic!("First event should be a Layer event");
     }

@@ -1,0 +1,245 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index e424228..55444db 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -153,6 +153,7 @@ Apply these patches in order from the repository root:
+ 149. `149-trim-drawable-to-egui-drawing.patch`
+ 150. `150-rename-egui-drawable-abstraction.patch`
+ 151. `151-remove-generic-egui-shape-drawable.patch`
++152. `152-use-egui-geometry-draw-function.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/commands.rs b/src/map/mapvas_egui/layer/commands.rs
+index d6df3b1..4e2c0ce 100644
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -13,7 +13,7 @@ use crate::map::{
+   geometry_collection::Geometry,
+ };
+ 
+-use super::{EguiMapFrame, GeometrySnapshot, Layer, LayerProperties, egui_drawable::EguiDrawable};
++use super::{EguiMapFrame, GeometrySnapshot, Layer, LayerProperties, egui_drawable};
+ 
+ mod external_cmd;
+ mod ruler;
+@@ -241,9 +241,9 @@ impl Layer for CommandLayer {
+   ) {
+     if self.visible() {
+       for command in self.commands.iter().filter(|command| command.is_visible()) {
+-        let drawable = command.result();
+-        for d in drawable {
+-          d.draw(ui.painter(), transform);
++        let geometry = command.result();
++        for geometry in geometry {
++          egui_drawable::draw_geometry(geometry.as_ref(), ui.painter(), transform);
+         }
+       }
+     }
+diff --git a/src/map/mapvas_egui/layer/egui_drawable.rs b/src/map/mapvas_egui/layer/egui_drawable.rs
+index 778366c..b331cdd 100644
+--- a/src/map/mapvas_egui/layer/egui_drawable.rs
++++ b/src/map/mapvas_egui/layer/egui_drawable.rs
+@@ -19,109 +19,103 @@ const DEFAULT_POINT_RADIUS: f32 = 4.0;
+ 
+ /// An abstraction for anything that can be drawn on the map that is dependent on coordinates/the
+ /// transformation.
+-pub trait EguiDrawable {
+-  fn draw(&self, painter: &Painter, transform: &Transform);
+-  fn draw_with_style(
+-    &self,
+-    painter: &Painter,
+-    transform: &Transform,
+-    _heading_style: HeadingStyle,
+-  ) {
+-    // Default implementation falls back to the old draw method
+-    self.draw(painter, transform);
+-  }
++pub fn draw_geometry<C: Coordinate>(
++  geometry: &Geometry<C>,
++  painter: &Painter,
++  transform: &Transform,
++) {
++  draw_geometry_with_style(geometry, painter, transform, HeadingStyle::default());
+ }
+ 
+-impl<C: Coordinate + 'static> EguiDrawable for Geometry<C> {
+-  fn draw(&self, painter: &Painter, transform: &Transform) {
+-    self.draw_with_style(painter, transform, HeadingStyle::default());
+-  }
+-
+-  fn draw_with_style(&self, painter: &Painter, transform: &Transform, heading_style: HeadingStyle) {
+-    for el in self
+-      .flat_iterate_with_merged_style(&Style::default())
+-      .filter(Geometry::is_visible)
+-    {
+-      let shape = match el {
+-        Geometry::GeometryCollection(_, _) => {
+-          unreachable!("GeometryCollections should be flattened")
+-        }
+-        Geometry::Point(coord, metadata) => {
+-          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+-          let original_color = color_to_color32(style.color());
+-          let center = pixel_to_pos(transform.apply(coord.as_pixel_coordinate()));
+-
+-          // Points should typically be filled with their stroke color at transparency
+-          let transparent_fill = original_color.gamma_multiply(0.7);
+-
+-          // Draw the point as a transparent circle with moderate outline
+-          let circle_shape = Shape::Circle(CircleShape {
++fn draw_geometry_with_style<C: Coordinate>(
++  geometry: &Geometry<C>,
++  painter: &Painter,
++  transform: &Transform,
++  heading_style: HeadingStyle,
++) {
++  for el in geometry
++    .flat_iterate_with_merged_style(&Style::default())
++    .filter(Geometry::is_visible)
++  {
++    let shape = match el {
++      Geometry::GeometryCollection(_, _) => {
++        unreachable!("GeometryCollections should be flattened")
++      }
++      Geometry::Point(coord, metadata) => {
++        let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
++        let original_color = color_to_color32(style.color());
++        let center = pixel_to_pos(transform.apply(coord.as_pixel_coordinate()));
++
++        // Points should typically be filled with their stroke color at transparency
++        let transparent_fill = original_color.gamma_multiply(0.7);
++
++        // Draw the point as a transparent circle with moderate outline
++        let circle_shape = Shape::Circle(CircleShape {
++          center,
++          radius: DEFAULT_POINT_RADIUS,
++          fill: transparent_fill, // Preserve original fill at transparency
++          stroke: Stroke::new(DEFAULT_STROKE_WIDTH, original_color.gamma_multiply(0.7)), // More visible outline
++        });
++        painter.add(circle_shape);
++
++        // Draw heading arrow if present (also transparent)
++        if let Some(heading) = metadata.heading {
++          let heading_shape = create_heading_arrow(
+             center,
+-            radius: DEFAULT_POINT_RADIUS,
+-            fill: transparent_fill, // Preserve original fill at transparency
+-            stroke: Stroke::new(DEFAULT_STROKE_WIDTH, original_color.gamma_multiply(0.7)), // More visible outline
+-          });
+-          painter.add(circle_shape);
+-
+-          // Draw heading arrow if present (also transparent)
+-          if let Some(heading) = metadata.heading {
+-            let heading_shape = create_heading_arrow(
+-              center,
+-              heading,
+-              original_color.gamma_multiply(0.7),
+-              heading_style,
+-            );
+-            painter.add(heading_shape);
+-          }
+-
+-          // Return a no-op shape since we've already drawn directly to painter
+-          Shape::Noop
+-        }
+-        Geometry::LineString(coord, metadata) => {
+-          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+-          // Make linestrings transparent with moderate outline
+-          Shape::Path(PathShape {
+-            points: coord
+-              .iter()
+-              .map(|c| pixel_to_pos(transform.apply(c.as_pixel_coordinate())))
+-              .collect(),
+-            closed: false,
+-            fill: egui::Color32::TRANSPARENT,
+-            stroke: PathStroke::new(
+-              DEFAULT_STROKE_WIDTH,
+-              color_to_color32(style.color().gamma_multiply(0.7)),
+-            ), // More visible line
+-          })
+-        }
+-        Geometry::Polygon(vec, metadata) => {
+-          let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
+-          // Make polygons transparent with moderate outline and preserve fill
+-          let fill_color = style.fill_color();
+-          let transparent_fill = if fill_color.a() == 0 {
+-            egui::Color32::TRANSPARENT // Keep transparent if originally transparent
+-          } else {
+-            color_to_color32(fill_color.gamma_multiply(0.7)) // Make original fill transparent
+-          };
+-          Shape::Path(PathShape {
+-            points: vec
+-              .iter()
+-              .map(|c| pixel_to_pos(transform.apply(c.as_pixel_coordinate())))
+-              .collect(),
+-            closed: true,
+-            fill: transparent_fill, // Preserve original fill at transparency
+-            stroke: PathStroke::new(
+-              DEFAULT_STROKE_WIDTH,
+-              color_to_color32(style.color().gamma_multiply(0.7)),
+-            ), // More visible outline
+-          })
++            heading,
++            original_color.gamma_multiply(0.7),
++            heading_style,
++          );
++          painter.add(heading_shape);
+         }
+-        Geometry::Heatmap(_, _) => {
+-          // Heatmaps are rendered through the tile rasterizer only.
+-          Shape::Noop
+-        }
+-      };
+-      painter.add(shape);
+-    }
++
++        // Return a no-op shape since we've already drawn directly to painter
++        Shape::Noop
++      }
++      Geometry::LineString(coord, metadata) => {
++        let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
++        // Make linestrings transparent with moderate outline
++        Shape::Path(PathShape {
++          points: coord
++            .iter()
++            .map(|c| pixel_to_pos(transform.apply(c.as_pixel_coordinate())))
++            .collect(),
++          closed: false,
++          fill: egui::Color32::TRANSPARENT,
++          stroke: PathStroke::new(
++            DEFAULT_STROKE_WIDTH,
++            color_to_color32(style.color().gamma_multiply(0.7)),
++          ), // More visible line
++        })
++      }
++      Geometry::Polygon(vec, metadata) => {
++        let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
++        // Make polygons transparent with moderate outline and preserve fill
++        let fill_color = style.fill_color();
++        let transparent_fill = if fill_color.a() == 0 {
++          egui::Color32::TRANSPARENT // Keep transparent if originally transparent
++        } else {
++          color_to_color32(fill_color.gamma_multiply(0.7)) // Make original fill transparent
++        };
++        Shape::Path(PathShape {
++          points: vec
++            .iter()
++            .map(|c| pixel_to_pos(transform.apply(c.as_pixel_coordinate())))
++            .collect(),
++          closed: true,
++          fill: transparent_fill, // Preserve original fill at transparency
++          stroke: PathStroke::new(
++            DEFAULT_STROKE_WIDTH,
++            color_to_color32(style.color().gamma_multiply(0.7)),
++          ), // More visible outline
++        })
++      }
++      Geometry::Heatmap(_, _) => {
++        // Heatmaps are rendered through the tile rasterizer only.
++        Shape::Noop
++      }
++    };
++    painter.add(shape);
+   }
+ }
+ 

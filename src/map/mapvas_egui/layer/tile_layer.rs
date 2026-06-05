@@ -3,29 +3,38 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-use egui::{Color32, ColorImage, Pos2, Rect, Ui};
+use egui::{Color32, Rect, Ui};
 use log::error;
 
 use crate::{
   config::TileType,
   map::{
     coordinates::{
-      CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform, generate_preload_tiles,
-      tile_zoom_for_transform, tiles_in_box,
+      CANVAS_SIZE, PixelPosition, PixelRect, Tile, TileCoordinate, TilePriority, Transform,
+      generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
     },
+    layer::{Layer, LayerProperties},
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
-    tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
+    tile_renderer::{
+      RasterTileRenderer, TileImage, TileRenderer, VectorTileRenderer, style_version,
+    },
   },
   profile_scope,
   task_tracker::{TaskCategory, TaskGuard},
 };
 
-use super::{Layer, LayerProperties};
+use super::{EguiLayer, EguiMapFrame};
+use crate::map::mapvas_egui::helpers::pixel_to_pos;
 
 /// Compute the pixel x-coordinate of the viewport's left edge in internal canvas coordinates.
-fn viewport_left_x(rect: Rect, transform: &Transform) -> f32 {
+fn viewport_left_x(rect: PixelRect, transform: &Transform) -> f32 {
   let inv = transform.invert();
-  inv.apply(egui::pos2(rect.min.x, 0.0).into()).x
+  inv
+    .apply(PixelPosition {
+      x: rect.min.x,
+      y: 0.0,
+    })
+    .x
 }
 
 /// Compute the offset that places a tile into the range `[left_x, left_x + CANVAS_SIZE)`.
@@ -35,15 +44,19 @@ fn tile_world_offset(tile_x: f32, left_x: f32) -> f32 {
   ((left_x - tile_x) / CANVAS_SIZE - 1e-6).ceil() * CANVAS_SIZE
 }
 
-/// Splits a `ColorImage` into a grid of tiles for super-resolution rendering.
+fn pixel_rect_to_rect(rect: PixelRect) -> Rect {
+  Rect::from_min_max(pixel_to_pos(rect.min), pixel_to_pos(rect.max))
+}
+
+/// Splits a `TileImage` into a grid of tiles for super-resolution rendering.
 ///
 /// # Arguments
 /// * `image` - The source image to split (must be sized as `TILE_SIZE` * `grid_size`)
 /// * `grid_size` - Number of tiles per side (e.g., 2 for 4 tiles, 4 for 16 tiles)
 ///
 /// # Returns
-/// Vector of `ColorImages`, ordered row by row (top-left to bottom-right)
-fn split_image_into_tiles(image: &ColorImage, grid_size: usize) -> Vec<ColorImage> {
+/// Vector of `TileImage`s, ordered row by row (top-left to bottom-right)
+fn split_image_into_tiles(image: &TileImage, grid_size: usize) -> Vec<TileImage> {
   let size = image.size[0];
   let tile_size = size / grid_size;
   let num_tiles = grid_size * grid_size;
@@ -60,20 +73,23 @@ fn split_image_into_tiles(image: &ColorImage, grid_size: usize) -> Vec<ColorImag
         for x in 0..tile_size {
           let src_x = tile_x * tile_size + x;
           let src_y = tile_y * tile_size + y;
-          let src_idx = src_y * size + src_x;
-          let color = image.pixels[src_idx];
-          tile_rgba.extend_from_slice(&[color.r(), color.g(), color.b(), color.a()]);
+          let src_idx = (src_y * size + src_x) * 4;
+          tile_rgba.extend_from_slice(&image.rgba[src_idx..src_idx + 4]);
         }
       }
 
-      tiles.push(ColorImage::from_rgba_unmultiplied(
+      tiles.push(TileImage::from_rgba_unmultiplied(
         [tile_size, tile_size],
-        &tile_rgba,
+        tile_rgba,
       ));
     }
   }
 
   tiles
+}
+
+fn tile_image_to_color_image(image: TileImage) -> egui::ColorImage {
+  egui::ColorImage::from_rgba_unmultiplied(image.size, &image.rgba)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,8 +101,8 @@ enum CoordinateDisplayMode {
 
 /// A layer that loads and displays the map tiles.
 pub struct TileLayer {
-  receiver: std::sync::mpsc::Receiver<(Tile, ColorImage)>,
-  sender: std::sync::mpsc::Sender<(Tile, ColorImage)>,
+  receiver: std::sync::mpsc::Receiver<(Tile, TileImage)>,
+  sender: std::sync::mpsc::Sender<(Tile, TileImage)>,
   tile_loader_index: usize,
   tile_loader_old_index: usize,
   all_tile_loader: Vec<Arc<CachedTileLoader>>,
@@ -148,10 +164,17 @@ impl TileLayer {
     }
   }
 
-  fn draw_tile(&self, ui: &mut Ui, rect: Rect, tile: &Tile, transform: &Transform) -> bool {
+  fn draw_tile(
+    &self,
+    ui: &mut Ui,
+    clip_rect: Rect,
+    pixel_rect: PixelRect,
+    tile: &Tile,
+    transform: &Transform,
+  ) -> bool {
     if let Some(image_data) = self.loaded_tiles.get(tile) {
       let (nw, se) = tile.position();
-      let left_x = viewport_left_x(rect, transform);
+      let left_x = viewport_left_x(pixel_rect, transform);
       let dx = tile_world_offset(nw.x, left_x);
 
       let tint_color = if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
@@ -177,18 +200,19 @@ impl TileLayer {
           y: se.y,
         };
         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
-        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
+        let tile_rect = PixelRect::from_min_max(nw_screen, se_screen);
 
-        if tile_rect.intersects(rect) {
-          ui.painter_at(rect).image(
+        if tile_rect.intersects(pixel_rect) {
+          let egui_tile_rect = pixel_rect_to_rect(tile_rect);
+          ui.painter_at(clip_rect).image(
             image_data.id(),
-            tile_rect,
+            egui_tile_rect,
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             tint_color,
           );
 
           if self.coordinate_display_mode == CoordinateDisplayMode::Overlay {
-            draw_coordinate_text_overlay(ui, rect, tile, &tile_rect);
+            draw_coordinate_text_overlay(ui, clip_rect, tile, tile_rect);
           }
         }
       }
@@ -202,6 +226,7 @@ impl TileLayer {
     &self,
     ui: &mut Ui,
     clip_rect: Rect,
+    pixel_rect: PixelRect,
     transform: &Transform,
     min_pos: TileCoordinate,
     max_pos: TileCoordinate,
@@ -210,7 +235,7 @@ impl TileLayer {
 
     let painter = ui.painter_at(clip_rect);
 
-    let left_x = viewport_left_x(clip_rect, transform);
+    let left_x = viewport_left_x(pixel_rect, transform);
     for tile in tiles_in_box(min_pos, max_pos) {
       let (nw, se) = tile.position();
       let dx = tile_world_offset(nw.x, left_x);
@@ -225,9 +250,9 @@ impl TileLayer {
           y: se.y,
         };
         let (nw_screen, se_screen) = (transform.apply(nw_shifted), transform.apply(se_shifted));
-        let tile_rect = Rect::from_min_max(nw_screen.into(), se_screen.into());
+        let tile_rect = PixelRect::from_min_max(nw_screen, se_screen);
 
-        if !tile_rect.intersects(clip_rect) {
+        if !tile_rect.intersects(pixel_rect) {
           continue;
         }
 
@@ -238,20 +263,27 @@ impl TileLayer {
           } else {
             Color32::from_rgba_unmultiplied(240, 240, 255, 120)
           };
-          painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
+          painter.rect_filled(
+            pixel_rect_to_rect(tile_rect),
+            egui::CornerRadius::ZERO,
+            bg_color,
+          );
         }
 
-        self.draw_tile_info(ui, clip_rect, &tile, &tile_rect);
+        self.draw_tile_info(ui, clip_rect, &tile, tile_rect);
       }
     }
   }
 
-  fn draw_tile_info(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
+  fn draw_tile_info(&self, ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: PixelRect) {
     let painter = ui.painter_at(clip_rect);
 
     let bg_width = 100.0;
     let bg_height = 60.0;
-    let bg_rect = Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
+    let bg_rect = Rect::from_center_size(
+      pixel_to_pos(tile_rect.center()),
+      egui::vec2(bg_width, bg_height),
+    );
 
     if tile_rect.width() > bg_width && tile_rect.height() > bg_height {
       painter.rect_filled(
@@ -289,7 +321,7 @@ impl TileLayer {
     };
 
     painter.rect_stroke(
-      *tile_rect,
+      pixel_rect_to_rect(tile_rect),
       egui::CornerRadius::ZERO,
       egui::Stroke::new(1.0, border_color),
       egui::epaint::StrokeKind::Outside,
@@ -599,7 +631,7 @@ impl TileLayer {
 
         log::info!("Tile {tile:?} render completed in {render_duration:?}");
 
-        let egui_image = match render_result {
+        let tile_image = match render_result {
           Ok(Ok(image)) => image,
           Ok(Err(_)) => {
             let removed = in_flight_tiles.lock().unwrap().remove(&tile);
@@ -614,7 +646,7 @@ impl TileLayer {
           }
         };
 
-        if let Err(e) = sender.send((tile, egui_image)) {
+        if let Err(e) = sender.send((tile, tile_image)) {
           error!("Failed to send tile {tile:?}: {e}, removing from in-flight");
           let removed = in_flight_tiles.lock().unwrap().remove(&tile);
           log::info!("Tile {tile:?} removed from in-flight after send error: {removed}");
@@ -663,10 +695,10 @@ impl TileLayer {
     }
   }
   fn collect_new_tile_data(&mut self, ui: &Ui) {
-    for (tile, egui_image) in self.receiver.try_iter() {
+    for (tile, tile_image) in self.receiver.try_iter() {
       let handle = ui.ctx().load_texture(
         format!("{}-{}-{}", tile.zoom, tile.x, tile.y),
-        egui_image,
+        tile_image_to_color_image(tile_image),
         egui::TextureOptions::default(),
       );
       self.loaded_tiles.insert(tile, handle);
@@ -714,14 +746,16 @@ impl TileLayer {
   }
 }
 
-impl Layer for TileLayer {
+impl TileLayer {
   #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::too_many_lines
   )]
-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
-    profile_scope!("TileLayer::draw");
+  fn draw_egui_tiles(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+    profile_scope!("TileLayer::draw_egui");
+    let rect = frame.rect;
+    let pixel_rect = frame.pixel_rect;
     self.collect_new_tile_data(ui);
     if self.tile_loader_index != self.tile_loader_old_index {
       log::info!(
@@ -772,8 +806,8 @@ impl Layer for TileLayer {
     }
 
     let inv = transform.invert();
-    let vp_min = inv.apply(rect.min.into());
-    let vp_max = inv.apply(rect.max.into());
+    let vp_min = inv.apply(pixel_rect.min);
+    let vp_max = inv.apply(pixel_rect.max);
     let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
     let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
 
@@ -829,17 +863,19 @@ impl Layer for TileLayer {
 
     if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly {
       for tile in tiles_to_draw {
-        if !self.draw_tile(ui, rect, &tile, transform) {
+        if !self.draw_tile(ui, rect, pixel_rect, &tile, transform) {
           self.get_tile(tile);
         }
       }
     }
 
     if self.coordinate_display_mode != CoordinateDisplayMode::Off {
-      self.draw_coordinate_grid(ui, rect, transform, min_pos, max_pos);
+      self.draw_coordinate_grid(ui, rect, pixel_rect, transform, min_pos, max_pos);
     }
   }
+}
 
+impl Layer for TileLayer {
   fn name(&self) -> &str {
     NAME
   }
@@ -852,7 +888,21 @@ impl Layer for TileLayer {
     &mut self.layer_properties.visible
   }
 
-  fn ui_content(&mut self, ui: &mut Ui) {
+  fn has_pending_work(&self) -> bool {
+    !self.in_flight_tiles.lock().unwrap().is_empty()
+  }
+
+  fn set_headless(&mut self) {
+    self.preload_enabled = false;
+  }
+}
+
+impl EguiLayer for TileLayer {
+  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+    self.draw_egui_tiles(ui, transform, frame);
+  }
+
+  fn ui_egui_content(&mut self, ui: &mut Ui) {
     egui::ComboBox::from_label("tile provider")
       .selected_text(
         self.all_tile_loader[self.tile_loader_index]
@@ -947,28 +997,12 @@ impl Layer for TileLayer {
     });
   }
 
-  fn closest_geometry_with_selection(&mut self, _pos: Pos2, _transform: &Transform) -> Option<f64> {
-    None
-  }
-
-  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
-    false
-  }
-
-  fn has_pending_work(&self) -> bool {
-    !self.in_flight_tiles.lock().unwrap().is_empty()
-  }
-
-  fn set_headless(&mut self) {
-    self.preload_enabled = false;
-  }
-
-  fn draw_attribution(&self, ui: &mut Ui, rect: Rect) {
+  fn draw_egui_attribution(&self, ui: &mut Ui, clip_rect: Rect) {
     if self.coordinate_display_mode != CoordinateDisplayMode::GridOnly
       && !self.loaded_tiles.is_empty()
       && self.tile_loader().requires_osm_attribution()
     {
-      draw_osm_attribution(ui, rect);
+      draw_osm_attribution(ui, clip_rect);
     }
   }
 }
@@ -999,12 +1033,15 @@ fn draw_osm_attribution(ui: &mut Ui, clip_rect: Rect) {
   );
 }
 
-fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: &Rect) {
+fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_rect: PixelRect) {
   let painter = ui.painter_at(clip_rect);
 
   let bg_width = 100.0;
   let bg_height = 60.0;
-  let bg_rect = Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
+  let bg_rect = Rect::from_center_size(
+    pixel_to_pos(tile_rect.center()),
+    egui::vec2(bg_width, bg_height),
+  );
 
   painter.rect_filled(
     bg_rect,
@@ -1034,7 +1071,7 @@ fn draw_coordinate_text_overlay(ui: &mut Ui, clip_rect: Rect, tile: &Tile, tile_
   }
 
   painter.rect_stroke(
-    *tile_rect,
+    pixel_rect_to_rect(tile_rect),
     egui::CornerRadius::ZERO,
     egui::Stroke::new(2.0, Color32::from_rgb(100, 100, 100)),
     egui::epaint::StrokeKind::Outside,

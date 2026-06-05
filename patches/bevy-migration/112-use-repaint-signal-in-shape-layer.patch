@@ -1,0 +1,103 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -129,7 +129,7 @@
+       None
+     };
+     let shape_info = std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+-    let shape_layer = layer::ShapeLayer::new(cfg.clone(), ctx.clone(), shape_info.clone());
++    let shape_layer = layer::ShapeLayer::new(cfg.clone(), repaint.clone(), shape_info.clone());
+     let shape_layer_sender = shape_layer.get_sender();
+     let shape_layer_vis_sender = shape_layer.get_vis_sender();
+     let shape_layer_shape_vis_sender = shape_layer.get_shape_vis_sender();
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -15,6 +15,7 @@
+     map_event::{Layer as EventLayer, MapEvent},
+   },
+   profile_scope,
++  remote::RepaintSignal,
+   task_tracker::{TaskCategory, TaskGuard},
+ };
+ use chrono::{DateTime, Duration, Utc};
+@@ -91,7 +92,7 @@
+   /// Scheduler task handles for queued (not yet executing) geo tile renders.
+   /// Used to bump prefetch tiles to Current priority when they become visible.
+   geo_tile_handles: HashMap<Tile, crate::render_scheduler::TaskHandle>,
+-  ctx: egui::Context,
++  repaint: RepaintSignal,
+   /// When true, render geo tiles synchronously (used in headless/test mode).
+   headless: bool,
+   /// Receives sub-layer visibility toggle commands from the HTTP server.
+@@ -205,7 +206,7 @@
+   #[must_use]
+   pub fn new(
+     config: Config,
+-    ctx: egui::Context,
++    repaint: RepaintSignal,
+     shape_info: Arc<
+       std::sync::RwLock<std::collections::HashMap<String, Vec<crate::remote::ShapeInfo>>>,
+     >,
+@@ -241,7 +242,7 @@
+       geo_tile_receiver,
+       in_flight_geo_tiles: Arc::new(Mutex::new(HashSet::new())),
+       geo_tile_handles: HashMap::new(),
+-      ctx,
++      repaint,
+       headless: false,
+       vis_receiver,
+       vis_sender,
+@@ -840,7 +841,7 @@
+             } else {
+               self.in_flight_geo_tiles.lock().unwrap().insert(tile);
+               let sender = self.geo_tile_sender.clone();
+-              let ctx = self.ctx.clone();
++              let repaint = self.repaint.clone();
+               let in_flight = self.in_flight_geo_tiles.clone();
+               let heading_style = self.config.heading_style;
+               let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER
+@@ -859,7 +860,7 @@
+                     in_flight.lock().unwrap().remove(&tile);
+                   }
+                 }
+-                ctx.request_repaint();
++                repaint.request_repaint();
+               });
+             }
+           }
+@@ -900,7 +901,7 @@
+         }
+         self.in_flight_geo_tiles.lock().unwrap().insert(tile);
+         let sender = self.geo_tile_sender.clone();
+-        let ctx = self.ctx.clone();
++        let repaint = self.repaint.clone();
+         let in_flight = self.in_flight_geo_tiles.clone();
+         let heading_style = self.config.heading_style;
+         let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
+@@ -919,7 +920,7 @@
+               in_flight.lock().unwrap().remove(&tile);
+             }
+           }
+-          ctx.request_repaint();
++          repaint.request_repaint();
+         });
+       }
+     }
+@@ -1470,7 +1471,7 @@
+         },
+         in_flight_geo_tiles: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+         geo_tile_handles: HashMap::new(),
+-        ctx: egui::Context::default(),
++        repaint: RepaintSignal::egui(egui::Context::default()),
+         headless: false,
+         vis_receiver: {
+           let (_, r) = mpsc::channel();
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -113,6 +113,7 @@
+ 109. `109-decouple-native-screenshot-from-egui-context.patch`
+ 110. `110-rename-timeline-controls-egui.patch`
+ 111. `111-rename-egui-without-tiles-constructor.patch`
++112. `112-use-repaint-signal-in-shape-layer.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

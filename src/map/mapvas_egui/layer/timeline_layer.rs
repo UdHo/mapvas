@@ -1,5 +1,4 @@
-use super::{Layer, LayerProperties};
-use crate::map::coordinates::{BoundingBox, Transform};
+use crate::map::layer::LayerProperties;
 use crate::map::mapvas_egui::timeline_widget::TimelineWidget;
 use chrono::{DateTime, Utc};
 use egui::{Rect, Ui};
@@ -66,7 +65,7 @@ impl TimelineLayer {
 
   /// Update animation during playback
   pub fn update_animation(&mut self, current_time: f64) {
-    use crate::map::mapvas_egui::timeline_widget::IntervalLock;
+    use crate::map::IntervalLock;
 
     if !self.widget.is_playing() {
       self.last_update = current_time;
@@ -201,13 +200,13 @@ impl TimelineLayer {
   }
 
   #[must_use]
-  pub fn interval_lock(&self) -> crate::map::mapvas_egui::timeline_widget::IntervalLock {
+  pub fn interval_lock(&self) -> crate::map::IntervalLock {
     self.widget.get_interval_lock()
   }
 }
 
-impl Layer for TimelineLayer {
-  fn draw(&mut self, ui: &mut Ui, _transform: &Transform, rect: Rect) {
+impl TimelineLayer {
+  pub fn draw_egui(&mut self, ui: &mut Ui, screen_rect: Rect) {
     if !self.properties.visible {
       return;
     }
@@ -219,35 +218,34 @@ impl Layer for TimelineLayer {
     // Only draw if we have time data
     let (time_start, time_end) = self.widget.get_time_range();
     if time_start.is_some() && time_end.is_some() {
-      self.draw_timeline(ui, rect);
+      self.draw_timeline(ui, screen_rect);
     }
   }
 
-  fn name(&self) -> &'static str {
+  pub fn name(&self) -> &'static str {
     "Timeline"
   }
 
-  fn visible(&self) -> bool {
+  pub fn visible(&self) -> bool {
     self.properties.visible
   }
 
-  fn set_visible(&mut self, visible: bool) {
+  pub fn set_visible(&mut self, visible: bool) {
     self.properties.visible = visible;
   }
 
-  fn visible_mut(&mut self) -> &mut bool {
-    &mut self.properties.visible
-  }
-
-  fn bounding_box(&self) -> Option<BoundingBox> {
-    None
-  }
-
-  fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+  pub fn get_temporal_range(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
     self.widget.get_time_range()
   }
 
-  fn ui_content(&mut self, ui: &mut Ui) {
+  pub fn ui_egui_controls(&mut self, ui: &mut Ui) {
+    ui.collapsing(self.name().to_owned(), |ui| {
+      ui.checkbox(&mut self.properties.visible, "visible");
+      self.ui_egui_content(ui);
+    });
+  }
+
+  fn ui_egui_content(&mut self, ui: &mut Ui) {
     let (time_start, time_end) = self.widget.get_time_range();
     if time_start.is_none() || time_end.is_none() {
       ui.separator();
@@ -306,9 +304,9 @@ impl Layer for TimelineLayer {
       ui.label("🔒 Interval Lock:");
       let lock_state = self.widget.get_interval_lock();
       let lock_text = match lock_state {
-        crate::map::mapvas_egui::timeline_widget::IntervalLock::None => "None",
-        crate::map::mapvas_egui::timeline_widget::IntervalLock::Start => "Start Locked",
-        crate::map::mapvas_egui::timeline_widget::IntervalLock::End => "End Locked",
+        crate::map::IntervalLock::None => "None",
+        crate::map::IntervalLock::Start => "Start Locked",
+        crate::map::IntervalLock::End => "End Locked",
       };
       ui.label(lock_text);
 

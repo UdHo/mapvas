@@ -1,9 +1,8 @@
-use eframe::App;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use mapvas::{
   config::Config,
-  map::{map_event::MapEvent, mapvas_egui::Map},
+  map::{Map, map_event::MapEvent},
   mapvas_ui::MapApp,
   parser::{FileParser, KmlParser},
 };
@@ -13,7 +12,7 @@ use std::io::Cursor;
 fn create_test_app_with_temporal_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Read and parse the temporal KML file
@@ -32,13 +31,13 @@ fn create_test_app_with_temporal_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 fn create_test_app_with_unix_epoch_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Read and parse the unix epoch KML file
@@ -57,7 +56,7 @@ fn create_test_app_with_unix_epoch_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -66,8 +65,7 @@ async fn temporal_visualization_initial_state() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -110,8 +108,7 @@ async fn temporal_visualization_morning_time() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -143,8 +140,7 @@ async fn temporal_visualization_with_geometries() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -180,8 +176,7 @@ async fn temporal_visualization_timeline_expanded() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -220,8 +215,7 @@ async fn temporal_visualization_workflow() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -266,8 +260,7 @@ async fn temporal_filtering_demonstration() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -320,8 +313,7 @@ async fn unix_epoch_timeline_detection() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -356,8 +348,7 @@ async fn unix_epoch_temporal_filtering() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -390,7 +381,7 @@ async fn unix_epoch_temporal_filtering() {
 fn create_test_app_with_debug_range_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Read and parse the debug range KML file (2-minute span)
@@ -409,13 +400,13 @@ fn create_test_app_with_debug_range_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Read and parse the unix epoch KML file without timezone
@@ -434,7 +425,7 @@ fn create_test_app_with_unix_epoch_no_tz_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -443,8 +434,7 @@ async fn unix_epoch_no_timezone_parsing() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -477,8 +467,7 @@ async fn debug_range_timeline_fix() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -529,7 +518,7 @@ async fn large_file_temporal_parsing() {
 
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   let mut parser = KmlParser::new();
@@ -541,12 +530,11 @@ async fn large_file_temporal_parsing() {
   }
   remote.handle_map_event(MapEvent::Focus);
 
-  let app = MapApp::new(map, remote, data_holder, config, None);
+  let app = MapApp::new_egui(map, remote, data_holder, config, None);
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );

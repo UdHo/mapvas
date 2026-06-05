@@ -1,0 +1,134 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1255,7 +1255,7 @@
+   }
+ 
+   fn timeline_ui(&self, ui: &mut egui::Ui) {
+-    self.timeline.borrow_mut().ui(ui);
++    self.timeline.borrow_mut().ui_egui_controls(ui);
+   }
+ 
+   fn timeline_temporal_range(
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -49,13 +49,13 @@
+   }
+   fn process_pending_events(&mut self) {}
+   fn discard_pending_events(&mut self) {}
+-  fn ui(&mut self, ui: &mut Ui) {
++  fn ui_egui_controls(&mut self, ui: &mut Ui) {
+     ui.collapsing(self.name().to_owned(), |ui| {
+       ui.checkbox(self.visible_mut(), "visible");
+-      self.ui_content(ui);
++      self.ui_egui_content(ui);
+     });
+   }
+-  fn ui_content(&mut self, ui: &mut Ui);
++  fn ui_egui_content(&mut self, ui: &mut Ui);
+   fn has_double_click_action(&self) -> bool {
+     false
+   }
+--- a/src/map/mapvas_egui/layer/commands.rs
++++ b/src/map/mapvas_egui/layer/commands.rs
+@@ -287,7 +287,7 @@
+     &mut self.layer_properties.visible
+   }
+ 
+-  fn ui(&mut self, ui: &mut egui::Ui) {
++  fn ui_egui_controls(&mut self, ui: &mut egui::Ui) {
+     let has_highlighted_command = self.highlighted_command.is_some();
+     let layer_id = egui::Id::new("command_layer_header");
+ 
+@@ -301,11 +301,11 @@
+ 
+     layer_header.show(ui, |ui| {
+       ui.checkbox(self.visible_mut(), "visible");
+-      self.ui_content(ui);
++      self.ui_egui_content(ui);
+     });
+   }
+ 
+-  fn ui_content(&mut self, ui: &mut egui::Ui) {
++  fn ui_egui_content(&mut self, ui: &mut egui::Ui) {
+     let has_highlighted_command = self.highlighted_command.is_some();
+     let commands_header_id = egui::Id::new("commands_header");
+ 
+--- a/src/map/mapvas_egui/layer/screenshot.rs
++++ b/src/map/mapvas_egui/layer/screenshot.rs
+@@ -175,5 +175,5 @@
+     None
+   }
+ 
+-  fn ui_content(&mut self, _ui: &mut egui::Ui) {}
++  fn ui_egui_content(&mut self, _ui: &mut egui::Ui) {}
+ }
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -1058,7 +1058,7 @@
+     &mut self.layer_properties.visible
+   }
+ 
+-  fn ui(&mut self, ui: &mut Ui) {
++  fn ui_egui_controls(&mut self, ui: &mut Ui) {
+     let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
+     let layer_id = egui::Id::new("shape_layer_header");
+ 
+@@ -1073,12 +1073,12 @@
+ 
+     layer_header.show(ui, |ui| {
+       ui.checkbox(self.visible_mut(), "visible");
+-      self.ui_content(ui);
++      self.ui_egui_content(ui);
+     });
+   }
+ 
+-  fn ui_content(&mut self, ui: &mut Ui) {
+-    profile_scope!("ShapeLayer::ui_content");
++  fn ui_egui_content(&mut self, ui: &mut Ui) {
++    profile_scope!("ShapeLayer::ui_egui_content");
+     let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
+     let shapes_header_id = egui::Id::new("shapes_header");
+ 
+--- a/src/map/mapvas_egui/layer/tile_layer.rs
++++ b/src/map/mapvas_egui/layer/tile_layer.rs
+@@ -852,7 +852,7 @@
+     &mut self.layer_properties.visible
+   }
+ 
+-  fn ui_content(&mut self, ui: &mut Ui) {
++  fn ui_egui_content(&mut self, ui: &mut Ui) {
+     egui::ComboBox::from_label("tile provider")
+       .selected_text(
+         self.all_tile_loader[self.tile_loader_index]
+--- a/src/map/mapvas_egui/layer/timeline_layer.rs
++++ b/src/map/mapvas_egui/layer/timeline_layer.rs
+@@ -247,7 +247,7 @@
+     self.widget.get_time_range()
+   }
+ 
+-  fn ui_content(&mut self, ui: &mut Ui) {
++  fn ui_egui_content(&mut self, ui: &mut Ui) {
+     let (time_start, time_end) = self.widget.get_time_range();
+     if time_start.is_none() || time_end.is_none() {
+       ui.separator();
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -1123,7 +1123,7 @@
+                 {
+                   let mut layer_reader = self.map_content.get_reader();
+                   for layer in layer_reader.get_layers() {
+-                    layer.ui(ui);
++                    layer.ui_egui_controls(ui);
+                   }
+                 }
+                 self.map_content.timeline_ui(ui);
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -106,6 +106,7 @@
+ 102. `102-rename-layer-overlay-egui.patch`
+ 103. `103-rename-layer-attribution-egui.patch`
+ 104. `104-rename-native-layer-frame-prep.patch`
++105. `105-rename-layer-controls-egui.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,176 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 952bc1c..9fdaab2 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -184,6 +184,7 @@ Apply these patches in order from the repository root:
+ 180. `180-add-explicit-bevy-mapapp-entrypoints.patch`
+ 181. `181-rename-bevy-geometry-snapshot-handoff.patch`
+ 182. `182-add-explicit-bevy-map-surface-methods.patch`
++183. `183-rename-bevy-repaint-screenshot-resources.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index f92907b..37931d9 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -13,8 +13,8 @@ use crate::{
+   bevy_map::{
+     NativeMapAction, NativeMapControl, NativeMapPlugin, NativeMapShortcut, NativeMapViewport,
+   },
+-  bevy_repaint::{NativeRepaintPlugin, NativeRepaintRequests},
+-  bevy_screenshot::{NativeScreenshotPlugin, NativeScreenshotRequests},
++  bevy_repaint::{BevyRepaintPlugin, BevyRepaintRequests},
++  bevy_screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
+   bevy_tiles::{NativeTileLayer, NativeTilePlugin, NativeTileRuntime},
+ };
+ 
+@@ -116,12 +116,12 @@ fn apply_map_app_output(
+   output: MapAppOutput,
+   native_viewport: &mut NativeMapViewport,
+   native_geometry: &mut NativeGeometryLayer,
+-  native_screenshots: &mut NativeScreenshotRequests,
++  bevy_screenshots: &mut BevyScreenshotRequests,
+   native_tiles: &mut NativeTileLayer,
+   app_exit: &mut MessageWriter<AppExit>,
+ ) {
+   for path in output.screenshot_requests {
+-    native_screenshots.request_path(path);
++    bevy_screenshots.request_path(path);
+   }
+   native_viewport.set(output.viewport);
+   if let Some(snapshot) = output.bevy_geometry_snapshot {
+@@ -142,7 +142,7 @@ fn mapvas_ui_system(
+   mut native_map: ResMut<NativeMapControl>,
+   mut native_viewport: ResMut<NativeMapViewport>,
+   mut native_geometry: ResMut<NativeGeometryLayer>,
+-  mut native_screenshots: ResMut<NativeScreenshotRequests>,
++  mut bevy_screenshots: ResMut<BevyScreenshotRequests>,
+   mut native_tiles: ResMut<NativeTileLayer>,
+   mut app_exit: MessageWriter<AppExit>,
+ ) -> Result {
+@@ -180,7 +180,7 @@ fn mapvas_ui_system(
+       output,
+       &mut native_viewport,
+       &mut native_geometry,
+-      &mut native_screenshots,
++      &mut bevy_screenshots,
+       &mut native_tiles,
+       &mut app_exit,
+     );
+@@ -201,7 +201,7 @@ pub(crate) fn run() {
+   let runtime_handle = runtime.handle().clone();
+   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
+   let config = Config::new();
+-  let (repaint_signal, repaint_requests) = NativeRepaintRequests::channel();
++  let (repaint_signal, repaint_requests) = BevyRepaintRequests::channel();
+ 
+   App::new()
+     .insert_resource(repaint_requests)
+@@ -228,8 +228,8 @@ pub(crate) fn run() {
+     )
+     .add_plugins(EguiPlugin::default())
+     .add_plugins(NativeMapPlugin)
+-    .add_plugins(NativeRepaintPlugin)
+-    .add_plugins(NativeScreenshotPlugin)
++    .add_plugins(BevyRepaintPlugin)
++    .add_plugins(BevyScreenshotPlugin)
+     .add_plugins(NativeTilePlugin)
+     .add_plugins(NativeGeometryPlugin)
+     .add_systems(Startup, setup_camera)
+diff --git a/src/bin/mapvas/bevy_repaint.rs b/src/bin/mapvas/bevy_repaint.rs
+index 64a75e4..9a7de2d 100644
+--- a/src/bin/mapvas/bevy_repaint.rs
++++ b/src/bin/mapvas/bevy_repaint.rs
+@@ -6,20 +6,20 @@ use std::sync::{
+ use bevy::{prelude::*, window::RequestRedraw};
+ use mapvas::remote::RepaintSignal;
+ 
+-pub struct NativeRepaintPlugin;
++pub struct BevyRepaintPlugin;
+ 
+-impl Plugin for NativeRepaintPlugin {
++impl Plugin for BevyRepaintPlugin {
+   fn build(&self, app: &mut App) {
+-    app.add_systems(Update, issue_native_repaints);
++    app.add_systems(Update, issue_bevy_repaints);
+   }
+ }
+ 
+ #[derive(Resource)]
+-pub struct NativeRepaintRequests {
++pub struct BevyRepaintRequests {
+   receiver: Mutex<Receiver<()>>,
+ }
+ 
+-impl NativeRepaintRequests {
++impl BevyRepaintRequests {
+   pub fn channel() -> (RepaintSignal, Self) {
+     let (sender, receiver) = mpsc::channel();
+     (
+@@ -31,8 +31,8 @@ impl NativeRepaintRequests {
+   }
+ }
+ 
+-fn issue_native_repaints(
+-  requests: Res<NativeRepaintRequests>,
++fn issue_bevy_repaints(
++  requests: Res<BevyRepaintRequests>,
+   mut redraw: MessageWriter<RequestRedraw>,
+ ) {
+   let mut requested = false;
+diff --git a/src/bin/mapvas/bevy_screenshot.rs b/src/bin/mapvas/bevy_screenshot.rs
+index 0b721d8..764da7e 100644
+--- a/src/bin/mapvas/bevy_screenshot.rs
++++ b/src/bin/mapvas/bevy_screenshot.rs
+@@ -5,23 +5,23 @@ use bevy::{
+   render::view::screenshot::{Screenshot, save_to_disk},
+ };
+ 
+-pub struct NativeScreenshotPlugin;
++pub struct BevyScreenshotPlugin;
+ 
+-impl Plugin for NativeScreenshotPlugin {
++impl Plugin for BevyScreenshotPlugin {
+   fn build(&self, app: &mut App) {
+     app
+-      .init_resource::<NativeScreenshotRequests>()
+-      .add_systems(Update, issue_native_screenshots);
++      .init_resource::<BevyScreenshotRequests>()
++      .add_systems(Update, issue_bevy_screenshots);
+   }
+ }
+ 
+ #[derive(Resource)]
+-pub struct NativeScreenshotRequests {
++pub struct BevyScreenshotRequests {
+   pending_paths: Vec<PathBuf>,
+   screenshot_base_path: PathBuf,
+ }
+ 
+-impl Default for NativeScreenshotRequests {
++impl Default for BevyScreenshotRequests {
+   fn default() -> Self {
+     Self {
+       pending_paths: Vec::new(),
+@@ -32,7 +32,7 @@ impl Default for NativeScreenshotRequests {
+   }
+ }
+ 
+-impl NativeScreenshotRequests {
++impl BevyScreenshotRequests {
+   pub fn request_path(&mut self, path: PathBuf) {
+     self.pending_paths.push(path);
+   }
+@@ -53,10 +53,7 @@ impl NativeScreenshotRequests {
+   }
+ }
+ 
+-fn issue_native_screenshots(
+-  mut commands: Commands,
+-  mut requests: ResMut<NativeScreenshotRequests>,
+-) {
++fn issue_bevy_screenshots(mut commands: Commands, mut requests: ResMut<BevyScreenshotRequests>) {
+   for path in requests.take_pending_absolute_paths() {
+     commands
+       .spawn(Screenshot::primary_window())

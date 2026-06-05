@@ -4,9 +4,13 @@ use egui::{
   Color32, ColorImage, Context, Rect, TextureHandle, TextureOptions, UserData, ViewportCommand,
 };
 
-use crate::map::{map_event::MapEvent, mapvas_egui::helpers::current_time_screenshot_name};
+use crate::map::{
+  layer::{Layer, LayerProperties},
+  map_event::MapEvent,
+  mapvas_egui::helpers::current_time_screenshot_name,
+};
 
-use super::{Layer, LayerProperties};
+use super::{EguiLayer, EguiMapFrame};
 
 /// A layer that takes screenshots of the map, saves the image, and displays it on the map.
 pub struct ScreenshotLayer {
@@ -106,24 +110,8 @@ impl ScreenshotLayer {
   fn compute_gamma(&self) -> f32 {
     1. - (self.last_screenshot_time.elapsed().as_millis() as f32) / 10000.
   }
-}
 
-const NAME: &str = "Screenshot Layer";
-
-impl Layer for ScreenshotLayer {
-  fn draw(
-    &mut self,
-    ui: &mut egui::Ui,
-    _transform: &crate::map::coordinates::Transform,
-    rect: egui::Rect,
-  ) {
-    for event in self.receiver.try_iter() {
-      if let MapEvent::Screenshot(path) = event {
-        self.take_screenshot(path);
-      }
-    }
-    self.handle_screenshots();
-
+  fn draw_screenshot_preview(&mut self, ui: &mut egui::Ui, rect: Rect) {
     if !self.visible() {
       return;
     }
@@ -152,6 +140,19 @@ impl Layer for ScreenshotLayer {
       self.ctx.request_repaint_after_secs(0.2);
     }
   }
+}
+
+const NAME: &str = "Screenshot Layer";
+
+impl Layer for ScreenshotLayer {
+  fn process_pending_events(&mut self) {
+    for event in self.receiver.try_iter() {
+      if let MapEvent::Screenshot(path) = event {
+        self.take_screenshot(path);
+      }
+    }
+    self.handle_screenshots();
+  }
 
   fn name(&self) -> &str {
     NAME
@@ -164,14 +165,17 @@ impl Layer for ScreenshotLayer {
   fn visible_mut(&mut self) -> &mut bool {
     &mut self.layer_properties.visible
   }
+}
 
-  fn closest_geometry_with_selection(
+impl EguiLayer for ScreenshotLayer {
+  fn draw_egui(
     &mut self,
-    _pos: egui::Pos2,
+    ui: &mut egui::Ui,
     _transform: &crate::map::coordinates::Transform,
-  ) -> Option<f64> {
-    None
+    frame: EguiMapFrame,
+  ) {
+    self.draw_screenshot_preview(ui, frame.rect);
   }
 
-  fn ui_content(&mut self, _ui: &mut egui::Ui) {}
+  fn ui_egui_content(&mut self, _ui: &mut egui::Ui) {}
 }

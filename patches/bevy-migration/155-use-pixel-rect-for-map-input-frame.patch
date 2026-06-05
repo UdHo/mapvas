@@ -1,0 +1,130 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index e7b1d5f..a9f531a 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -156,6 +156,7 @@ Apply these patches in order from the repository root:
+ 152. `152-use-egui-geometry-draw-function.patch`
+ 153. `153-move-command-egui-geometry-renderer.patch`
+ 154. `154-rename-command-geometry-result.patch`
++155. `155-use-pixel-rect-for-map-input-frame.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 13777ae..d2aa59c 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -331,7 +331,7 @@ impl Map {
+     &mut self,
+     ctx: &egui::Context,
+     events: impl Iterator<Item = egui::Event>,
+-    frame: EguiMapFrame,
++    rect: PixelRect,
+   ) {
+     for event in events {
+       if let egui::Event::Key {
+@@ -358,14 +358,14 @@ impl Map {
+           }
+ 
+           egui::Key::Minus => {
+-            zoom_with_center(&mut self.transform, 0.9, frame.pixel_rect.center());
++            zoom_with_center(&mut self.transform, 0.9, rect.center());
+           }
+           egui::Key::Plus | egui::Key::Equals => {
+-            zoom_with_center(&mut self.transform, 1. / 0.9, frame.pixel_rect.center());
++            zoom_with_center(&mut self.transform, 1. / 0.9, rect.center());
+           }
+ 
+           egui::Key::F => {
+-            self.show_bounding_box(frame.pixel_rect);
++            self.show_bounding_box(rect);
+           }
+ 
+           egui::Key::V => self.paste(),
+@@ -663,7 +663,7 @@ impl Map {
+     std::mem::take(&mut self.shutdown_requested)
+   }
+ 
+-  fn handle_egui_map_input(&mut self, ui: &Ui, response: &Response, frame: EguiMapFrame) {
++  fn handle_egui_map_input(&mut self, ui: &Ui, response: &Response, rect: PixelRect) {
+     self.handle_dropped_files(ui.ctx());
+     self.handle_mouse_wheel(ui, response);
+ 
+@@ -674,7 +674,7 @@ impl Map {
+         .cloned()
+         .collect::<Vec<_>>()
+     });
+-    self.handle_keys(ui.ctx(), events.into_iter(), frame);
++    self.handle_keys(ui.ctx(), events.into_iter(), rect);
+ 
+     if response.double_clicked()
+       && let Some(pos) = response.hover_pos()
+@@ -804,13 +804,12 @@ impl Map {
+     ui.allocate_exact_size(size, sense)
+   }
+ 
+-  fn initialize_transform_if_needed(&mut self, frame: EguiMapFrame) {
++  fn initialize_transform_if_needed(&mut self, rect: PixelRect) {
+     if self.transform.is_invalid() {
+-      let pixel_rect = frame.pixel_rect;
+-      fit_to_screen(&mut self.transform, pixel_rect);
++      fit_to_screen(&mut self.transform, rect);
+       set_coordinate_to_pixel(
+         PixelCoordinate { x: 500., y: 500. },
+-        pixel_rect.center(),
++        rect.center(),
+         &mut self.transform,
+       );
+ 
+@@ -822,12 +821,11 @@ impl Map {
+     }
+   }
+ 
+-  fn update_frame_viewport(&mut self, frame: EguiMapFrame) {
+-    let pixel_rect = frame.pixel_rect;
+-    fit_to_screen(&mut self.transform, pixel_rect);
++  fn update_frame_viewport(&mut self, rect: PixelRect) {
++    fit_to_screen(&mut self.transform, rect);
+     self.last_viewport = Some(MapViewport {
+       transform: self.transform,
+-      rect: pixel_rect,
++      rect,
+     });
+   }
+ 
+@@ -835,12 +833,13 @@ impl Map {
+     profile_scope!("Map::ui_egui");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::click_and_drag());
+     let frame = EguiMapFrame::from_rect(rect);
++    let pixel_rect = frame.pixel_rect;
+ 
+-    self.initialize_transform_if_needed(frame);
+-    self.handle_egui_map_input(ui, &response, frame);
+-    self.update_frame_viewport(frame);
++    self.initialize_transform_if_needed(pixel_rect);
++    self.handle_egui_map_input(ui, &response, pixel_rect);
++    self.update_frame_viewport(pixel_rect);
+     self.draw_egui_layer_frame(ui, frame);
+-    self.handle_map_events(frame.pixel_rect);
++    self.handle_map_events(pixel_rect);
+ 
+     response
+   }
+@@ -849,13 +848,14 @@ impl Map {
+     profile_scope!("Map::ui_native");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::hover());
+     let frame = EguiMapFrame::from_rect(rect);
++    let pixel_rect = frame.pixel_rect;
+ 
+-    self.initialize_transform_if_needed(frame);
++    self.initialize_transform_if_needed(pixel_rect);
+     self.show_native_command_context_menu(ui.ctx());
+     self.right_click_open_requested = false;
+-    self.update_frame_viewport(frame);
++    self.update_frame_viewport(pixel_rect);
+     self.prepare_native_layer_frame(ui, frame);
+-    self.handle_map_events(frame.pixel_rect);
++    self.handle_map_events(pixel_rect);
+ 
+     response
+   }

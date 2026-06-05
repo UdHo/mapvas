@@ -1,0 +1,78 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index a9f531a..5aea42c 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -157,6 +157,7 @@ Apply these patches in order from the repository root:
+ 153. `153-move-command-egui-geometry-renderer.patch`
+ 154. `154-rename-command-geometry-result.patch`
+ 155. `155-use-pixel-rect-for-map-input-frame.patch`
++156. `156-remove-frame-from-egui-overlays.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index c3262ee..7e6bece 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -774,7 +774,7 @@ impl Layer for ShapeLayer {
+     self.update_hover_highlighting(pos, transform);
+   }
+ 
+-  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform, _frame: EguiMapFrame) {
++  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform) {
+     profile_scope!("ShapeLayer::draw_egui_overlay");
+ 
+     self.current_transform = *transform;
+diff --git a/src/map/mapvas_egui/layer.rs b/src/map/mapvas_egui/layer.rs
+index b48e1a1..532a73b 100644
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -61,7 +61,7 @@ impl EguiMapFrame {
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+   fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame);
+-  fn draw_egui_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _frame: EguiMapFrame) {}
++  fn draw_egui_overlay(&mut self, _ui: &mut Ui, _transform: &Transform) {}
+   fn handle_hover(&mut self, _pos: Option<PixelPosition>, _transform: &Transform) {}
+   fn clear(&mut self) {}
+   fn name(&self) -> &str;
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index d2aa59c..8281369 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -741,7 +741,7 @@ impl Map {
+     for layer in layer_guard.iter_mut() {
+       layer.process_pending_events();
+     }
+-    Self::draw_egui_layer_overlays(layer_guard.as_mut_slice(), ui, &self.transform, frame);
++    Self::draw_egui_layer_overlays(layer_guard.as_mut_slice(), ui, &self.transform);
+   }
+ 
+   fn draw_egui_layer_frame(&mut self, ui: &mut Ui, frame: EguiMapFrame) {
+@@ -766,15 +766,10 @@ impl Map {
+     );
+   }
+ 
+-  fn draw_egui_layer_overlays(
+-    layers: &mut [Box<dyn Layer>],
+-    ui: &mut Ui,
+-    transform: &Transform,
+-    frame: EguiMapFrame,
+-  ) {
++  fn draw_egui_layer_overlays(layers: &mut [Box<dyn Layer>], ui: &mut Ui, transform: &Transform) {
+     for layer in layers {
+       profile_scope!("Layer::draw_egui_overlay", layer.name());
+-      layer.draw_egui_overlay(ui, transform, frame);
++      layer.draw_egui_overlay(ui, transform);
+     }
+   }
+ 
+@@ -796,7 +791,7 @@ impl Map {
+     for layer in layers.iter() {
+       layer.draw_egui_attribution(ui, frame);
+     }
+-    Self::draw_egui_layer_overlays(layers, ui, transform, frame);
++    Self::draw_egui_layer_overlays(layers, ui, transform);
+   }
+ 
+   fn allocate_map_response(ui: &mut Ui, sense: Sense) -> (Rect, Response) {

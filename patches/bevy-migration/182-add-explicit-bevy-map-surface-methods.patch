@@ -1,0 +1,133 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index cbc4afa..952bc1c 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -183,6 +183,7 @@ Apply these patches in order from the repository root:
+ 179. `179-rename-native-geometry-snapshot-handoff.patch`
+ 180. `180-add-explicit-bevy-mapapp-entrypoints.patch`
+ 181. `181-rename-bevy-geometry-snapshot-handoff.patch`
++182. `182-add-explicit-bevy-map-surface-methods.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index 6fc05e4..f92907b 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -160,7 +160,7 @@ fn mapvas_ui_system(
+         for action in native_map.take_actions() {
+           handle_native_map_action(app, action);
+         }
+-        app.handle_native_map_hover(native_map.hover_pos());
++        app.handle_bevy_map_hover(native_map.hover_pos());
+         {
+           let known_geometry_snapshot = KnownBevyGeometrySnapshot {
+             snapshot_version: native_geometry.snapshot_version(),
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 1c5b478..85a4955 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -276,7 +276,7 @@ impl Map {
+     close
+   }
+ 
+-  fn show_native_command_context_menu(&mut self, ctx: &egui::Context) {
++  fn show_bevy_command_context_menu(&mut self, ctx: &egui::Context) {
+     let Some(right_click) = self.right_click else {
+       return;
+     };
+@@ -309,13 +309,17 @@ impl Map {
+     }
+   }
+ 
+-  pub fn handle_native_hover(&mut self, pos: Option<PixelPosition>) {
++  pub fn handle_bevy_hover(&mut self, pos: Option<PixelPosition>) {
+     let transform = self.transform;
+     self.layers.for_each_neutral_mut(|layer| {
+       layer.handle_hover(pos, &transform);
+     });
+   }
+ 
++  pub fn handle_native_hover(&mut self, pos: Option<PixelPosition>) {
++    self.handle_bevy_hover(pos);
++  }
++
+   fn handle_keys(
+     &mut self,
+     ctx: &egui::Context,
+@@ -698,8 +702,8 @@ impl Map {
+     }
+   }
+ 
+-  fn prepare_native_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
+-    profile_scope!("Map::prepare_native_layer_frame");
++  fn prepare_bevy_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
++    profile_scope!("Map::prepare_bevy_layer_frame");
+     if !ui.is_rect_visible(rect) {
+       return;
+     }
+@@ -707,7 +711,7 @@ impl Map {
+     let transform = self.transform;
+     self
+       .layers
+-      .try_with_egui_layers_mut("native layer frame", |layers| {
++      .try_with_egui_layers_mut("bevy layer frame", |layers| {
+         for layer in layers.iter_mut() {
+           layer.process_pending_events();
+         }
+@@ -808,20 +812,24 @@ impl Map {
+     response
+   }
+ 
+-  pub fn ui_native(&mut self, ui: &mut Ui) -> Response {
+-    profile_scope!("Map::ui_native");
++  pub fn ui_bevy(&mut self, ui: &mut Ui) -> Response {
++    profile_scope!("Map::ui_bevy");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::hover());
+     let pixel_rect = PixelRect::from_min_max(pos_to_pixel(rect.min), pos_to_pixel(rect.max));
+ 
+     self.initialize_transform_if_needed(pixel_rect);
+-    self.show_native_command_context_menu(ui.ctx());
++    self.show_bevy_command_context_menu(ui.ctx());
+     self.right_click_open_requested = false;
+     self.update_frame_viewport(pixel_rect);
+-    self.prepare_native_layer_frame(ui, rect);
++    self.prepare_bevy_layer_frame(ui, rect);
+     self.handle_map_events(pixel_rect);
+ 
+     response
+   }
++
++  pub fn ui_native(&mut self, ui: &mut Ui) -> Response {
++    self.ui_bevy(ui)
++  }
+ }
+ 
+ impl Map {
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 9602e03..b2ae048 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -164,8 +164,12 @@ impl MapApp {
+     self.map.open_command_context_menu(pos);
+   }
+ 
++  pub fn handle_bevy_map_hover(&mut self, pos: Option<crate::map::coordinates::PixelPosition>) {
++    self.map.handle_bevy_hover(pos);
++  }
++
+   pub fn handle_native_map_hover(&mut self, pos: Option<crate::map::coordinates::PixelPosition>) {
+-    self.map.handle_native_hover(pos);
++    self.handle_bevy_map_hover(pos);
+   }
+ 
+   pub fn handle_map_dropped_file(&mut self, path: PathBuf) {
+@@ -469,7 +473,7 @@ impl MapApp {
+             self.map.ui_egui(ui);
+           }
+           MapUiMode::Bevy => {
+-            self.map.ui_native(ui);
++            self.map.ui_bevy(ui);
+           }
+         }
+       });

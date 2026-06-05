@@ -1,0 +1,36 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -82,6 +82,10 @@
+   fn uses_egui_attribution(self) -> bool {
+     self != Self::Native
+   }
++
++  fn uses_egui_timeline(self) -> bool {
++    self != Self::Native
++  }
+ }
+ 
+ impl Map {
+@@ -657,8 +661,10 @@
+           profile_scope!("Layer::draw", layer.name());
+           layer.draw(ui, &self.transform, rect);
+         }
+-        profile_scope!("Layer::draw", "Timeline");
+-        self.timeline.borrow_mut().draw(ui, &self.transform, rect);
++        if self.render_mode.uses_egui_timeline() {
++          profile_scope!("Layer::draw", "Timeline");
++          self.timeline.borrow_mut().draw(ui, &self.transform, rect);
++        }
+         if self.render_mode.uses_egui_attribution() {
+           for layer in layer_guard.iter() {
+             layer.draw_attribution(ui, rect);
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -46,6 +46,7 @@
+ 42. `042-skip-egui-attribution-in-native-mode.patch`
+ 43. `043-skip-screenshot-preview-in-native-mode.patch`
+ 44. `044-rename-native-render-mode-helper.patch`
++45. `045-skip-egui-timeline-in-native-mode.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

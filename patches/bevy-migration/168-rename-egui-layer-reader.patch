@@ -1,0 +1,67 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 94b8c25..ccf005a 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -169,6 +169,7 @@ Apply these patches in order from the repository root:
+ 165. `165-move-egui-draw-hook-to-egui-layer.patch`
+ 166. `166-move-egui-controls-to-egui-layer.patch`
+ 167. `167-hide-temporal-scan-behind-layer-holder.patch`
++168. `168-rename-egui-layer-reader.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index fa4d825..bbd08fb 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -1209,12 +1209,12 @@ impl Map {
+   }
+ }
+ 
+-pub trait MapLayerReader {
++pub trait EguiLayerReader {
+   fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn EguiLayer>> + '_>;
+ }
+ 
+ pub trait MapLayerHolder {
+-  fn get_reader(&self) -> Box<dyn MapLayerReader + '_>;
++  fn get_egui_layer_reader(&self) -> Box<dyn EguiLayerReader + '_>;
+   /// Read temporal range from map layers without exposing the egui layer reader.
+   fn layer_temporal_range(
+     &self,
+@@ -1244,8 +1244,8 @@ impl MapLayerHolderImpl {
+ }
+ 
+ impl MapLayerHolder for MapLayerHolderImpl {
+-  fn get_reader(&self) -> Box<dyn MapLayerReader + '_> {
+-    Box::new(MapLayerReaderImpl(
++  fn get_egui_layer_reader(&self) -> Box<dyn EguiLayerReader + '_> {
++    Box::new(EguiLayerReaderImpl(
+       self
+         .layers
+         .lock()
+@@ -1297,9 +1297,9 @@ impl MapLayerHolder for MapLayerHolderImpl {
+   }
+ }
+ 
+-struct MapLayerReaderImpl<'a>(MutexGuard<'a, Vec<Box<dyn EguiLayer>>>);
++struct EguiLayerReaderImpl<'a>(MutexGuard<'a, Vec<Box<dyn EguiLayer>>>);
+ 
+-impl MapLayerReader for MapLayerReaderImpl<'_> {
++impl EguiLayerReader for EguiLayerReaderImpl<'_> {
+   fn get_layers(&mut self) -> Box<dyn Iterator<Item = &mut Box<dyn EguiLayer>> + '_> {
+     Box::new(self.0.iter_mut())
+   }
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 5129a8f..f299c94 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -1107,7 +1107,7 @@ impl Sidebar {
+               ui.vertical(|ui| {
+                 map_layer_controls(ui);
+                 {
+-                  let mut layer_reader = self.map_content.get_reader();
++                  let mut layer_reader = self.map_content.get_egui_layer_reader();
+                   for layer in layer_reader.get_layers() {
+                     layer.ui_egui_controls(ui);
+                   }

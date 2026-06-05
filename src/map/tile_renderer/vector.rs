@@ -24,10 +24,9 @@ use styling::{
   style_config,
 };
 
-use egui::ColorImage;
 use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-use super::{TileRenderError, TileRenderer};
+use super::{TileImage, TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
 
 /// Vector tile renderer that parses MVT/PBF data and rasterizes it.
@@ -486,7 +485,7 @@ impl VectorTileRenderer {
 }
 
 impl TileRenderer for VectorTileRenderer {
-  fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
+  fn render(&self, tile: &Tile, data: &[u8]) -> Result<TileImage, TileRenderError> {
     self.render_scaled(tile, data, 1)
   }
 
@@ -500,7 +499,7 @@ impl TileRenderer for VectorTileRenderer {
     tile: &Tile,
     data: &[u8],
     scale: u32,
-  ) -> Result<ColorImage, TileRenderError> {
+  ) -> Result<TileImage, TileRenderError> {
     let start = std::time::Instant::now();
     let scaled_size = style_config().rendering.tile_size * scale;
     log::info!(
@@ -683,7 +682,7 @@ impl TileRenderer for VectorTileRenderer {
       );
     }
 
-    // Convert pixmap to ColorImage
+    // Convert pixmap to TileImage
     let pixels = pixmap.data();
     let size = [scaled_size as usize, scaled_size as usize];
 
@@ -693,7 +692,7 @@ impl TileRenderer for VectorTileRenderer {
       total_time.checked_sub(parse_time).unwrap()
     );
 
-    Ok(ColorImage::from_rgba_unmultiplied(size, pixels))
+    Ok(TileImage::from_rgba_unmultiplied(size, pixels.to_vec()))
   }
 
   fn name(&self) -> &'static str {
@@ -771,16 +770,16 @@ mod tests {
     let result = renderer.render(&tile, &tile_data);
     assert!(result.is_ok(), "Rendering should succeed");
 
-    let color_image = result.unwrap();
+    let tile_image = result.unwrap();
 
     // Save as reference PNG
     let mut reference_path = test_artifacts_dir();
     reference_path.push("berlin_tile_15_17603_10747_reference.png");
 
-    // Convert ColorImage to image::RgbaImage
-    let width = color_image.width();
-    let height = color_image.height();
-    let pixels = color_image.as_raw();
+    // Convert TileImage to image::RgbaImage
+    let width = tile_image.width();
+    let height = tile_image.height();
+    let pixels = tile_image.as_raw();
 
     let img = image::RgbaImage::from_raw(width as u32, height as u32, pixels.to_vec())
       .expect("Failed to create image");
@@ -824,7 +823,7 @@ mod tests {
     let result = renderer.render(&tile, &tile_data);
     assert!(result.is_ok(), "Rendering should succeed");
 
-    let color_image = result.unwrap();
+    let tile_image = result.unwrap();
 
     // Load reference image
     let mut reference_path = test_artifacts_dir();
@@ -842,18 +841,18 @@ mod tests {
 
     // Compare dimensions
     assert_eq!(
-      color_image.width(),
+      tile_image.width(),
       reference_img.width() as usize,
       "Image width mismatch"
     );
     assert_eq!(
-      color_image.height(),
+      tile_image.height(),
       reference_img.height() as usize,
       "Image height mismatch"
     );
 
     // Compare pixels
-    let rendered_pixels = color_image.as_raw();
+    let rendered_pixels = tile_image.as_raw();
     let reference_pixels = reference_img.as_raw();
 
     let mut diff_count = 0;

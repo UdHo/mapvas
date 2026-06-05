@@ -34,7 +34,6 @@ chrono = { version = "0.4.44", features = ["serde"] }
 bevy = "0.18.1"
 bevy_egui = "0.39.1"
 egui ={version =  "0.33.3", features = ["serde","bytemuck"]}
-eframe = "0.33.3"
 egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }

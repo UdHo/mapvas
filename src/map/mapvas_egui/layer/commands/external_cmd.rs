@@ -11,15 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   map::{
-    coordinates::{BoundingBox, Coordinate},
+    coordinates::{BoundingBox, Coordinate, PixelCoordinate},
     geometry_collection::{Geometry, Metadata},
     map_event::{Layer as EventLayer, MapEvent},
-    mapvas_egui::layer::drawable::Drawable,
   },
   parser::{FileParser as _, Parsers},
 };
 
-use super::{Command, OoMCoordinates, ParameterUpdate, update_closest};
+use super::{Command, CommandGeometry, OoMCoordinates, ParameterUpdate, update_closest};
 
 #[derive(Serialize, Deserialize)]
 struct ExeCfg {
@@ -464,7 +463,7 @@ struct ExternalCommandCommon {
   response_rcv: Receiver<RawResponse>,
   last_request: std::time::Instant,
   last_update: std::time::Instant,
-  result: Option<Rc<dyn Drawable>>,
+  result: Option<CommandGeometry>,
   raw_response: Option<RawResponse>,
   version: u64,
 }
@@ -507,7 +506,7 @@ impl ExternalCommandCommon {
       .result
       .as_ref()
       .map(|r| r.bounding_box())
-      .unwrap_or_default()
+      .filter(BoundingBox::is_valid)
   }
 }
 
@@ -704,38 +703,8 @@ impl ExternalCommand {
     }
   }
 
-  fn display_geometry_info(ui: &mut egui::Ui, drawable: &dyn Drawable) {
-    if let Some(geometry) = drawable.as_pixel_geometry() {
-      Self::display_geometry_details(ui, &geometry);
-    } else if let Some(bbox) = drawable.bounding_box() {
-      if bbox.is_valid() {
-        let center = bbox.center().as_wgs84();
-        let bbox_text = "Geometry bounding box:";
-        let available_width = (ui.available_width() - 80.0).max(30.0);
-        let (truncated_bbox, _) = super::truncate_label_by_width(ui, bbox_text, available_width);
-        ui.label(truncated_bbox);
-
-        let center_text = format!("  Center: {:.3}, {:.3}", center.lat, center.lon);
-        let (truncated_center, _) =
-          super::truncate_label_by_width(ui, &center_text, available_width);
-        ui.small(truncated_center);
-
-        let size_text = format!("  Size: {:.0}m × {:.0}m", bbox.width(), bbox.height());
-        let (truncated_size, _) = super::truncate_label_by_width(ui, &size_text, available_width);
-        ui.small(truncated_size);
-      } else {
-        let error_text = "Invalid geometry bounding box";
-        let available_width = (ui.available_width() - 80.0).max(30.0);
-        let (truncated_error, _) = super::truncate_label_by_width(ui, error_text, available_width);
-        ui.label(truncated_error);
-      }
-    } else {
-      let no_data_text = "No geometry data available";
-      let available_width = (ui.available_width() - 80.0).max(30.0);
-      let (truncated_no_data, _) =
-        super::truncate_label_by_width(ui, no_data_text, available_width);
-      ui.label(truncated_no_data);
-    }
+  fn display_geometry_info(ui: &mut egui::Ui, geometry: &Geometry<PixelCoordinate>) {
+    Self::display_geometry_details(ui, geometry);
   }
 
   #[allow(clippy::too_many_lines)]
@@ -1167,7 +1136,7 @@ impl Command for ExternalCommand {
     }
   }
 
-  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>> {
+  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>> {
     Box::new(
       self
         .common
@@ -1175,7 +1144,7 @@ impl Command for ExternalCommand {
         .clone()
         .into_iter()
         .chain(self.cmd.coordinates().iter().map(|(_, coord)| {
-          let drawable: Rc<dyn Drawable> = match coord {
+          let geometry: CommandGeometry = match coord {
             OoMCoordinates::Coordinate(c) => Rc::new(Geometry::Point(*c, Metadata::default())),
             OoMCoordinates::Coordinates(coords) => Rc::new(Geometry::GeometryCollection(
               coords
@@ -1185,7 +1154,7 @@ impl Command for ExternalCommand {
               Metadata::default(),
             )),
           };
-          drawable
+          geometry
         }))
         .collect::<Vec<_>>()
         .into_iter(),
@@ -1262,8 +1231,6 @@ impl Command for ExternalCommand {
 #[cfg(test)]
 mod tests {
 
-  use egui::Color32;
-
   use crate::{
     map::{
       coordinates::PixelCoordinate,
@@ -1304,7 +1271,7 @@ mod tests {
       .into(),
       coordinate_template: "{lat},{lon}".to_string(),
       coordinates_template: "{lat},{lon}:".to_string(),
-      parser: Parsers::TTJson(TTJsonParser::new().with_color(Color(Color32::DARK_GREEN))),
+      parser: Parsers::TTJson(TTJsonParser::new().with_color(Color::DARK_GREEN)),
     };
 
     let cmd = ExternalCommand::new(ExCommand::Curl(curl));
@@ -1383,9 +1350,7 @@ mod tests {
       .into(),
       coordinate_template: "{lat},{lon}".to_string(),
       coordinates_template: "{lat},{lon}:".to_string(),
-      parser: Parsers::Grep(
-        crate::parser::GrepParser::new(false).with_color(Color(Color32::DARK_GREEN)),
-      ),
+      parser: Parsers::Grep(crate::parser::GrepParser::new(false).with_color(Color::DARK_GREEN)),
       executable: "echo".to_string(),
       args_templates: vec!["{origin}\n {destination}\n {via}".to_string()],
     };

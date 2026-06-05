@@ -1,0 +1,53 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -18,7 +18,7 @@
+   remote::{MapState, Remote, RepaintSignal},
+ };
+ use arboard::Clipboard;
+-use egui::{InputState, PointerButton, Rect, Response, Sense, Ui, Widget};
++use egui::{InputState, PointerButton, Rect, Response, Sense, Ui};
+ use helpers::{
+   MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
+ };
+@@ -857,13 +857,6 @@
+   }
+ }
+ 
+-impl Widget for &mut Map {
+-  fn ui(self, ui: &mut Ui) -> Response {
+-    profile_scope!("Map::ui");
+-    self.ui_egui(ui)
+-  }
+-}
+-
+ impl Map {
+   pub fn set_headless(&mut self) {
+     if let Ok(mut layers) = self.layers.lock() {
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -1,6 +1,4 @@
+ use std::{path::PathBuf, rc::Rc};
+-
+-use egui::Widget as _;
+ 
+ use crate::{
+   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
+@@ -437,7 +435,7 @@
+         profile_scope!("MapApp::central_panel");
+         match self.ui_mode {
+           MapUiMode::Egui => {
+-            (&mut self.map).ui(ui);
++            self.map.ui_egui(ui);
+           }
+           MapUiMode::Native => {
+             self.map.ui_native(ui);
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -109,6 +109,7 @@
+ 105. `105-rename-layer-controls-egui.patch`
+ 106. `106-reexport-neutral-map-api.patch`
+ 107. `107-use-neutral-interval-lock-reexport.patch`
++108. `108-remove-map-widget-impl.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

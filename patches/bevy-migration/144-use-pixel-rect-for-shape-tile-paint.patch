@@ -1,0 +1,33 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 47e43ad..0578403 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -145,6 +145,7 @@ Apply these patches in order from the repository root:
+ 141. `141-use-pixel-rect-for-geometry-rasterizer.patch`
+ 142. `142-use-pixel-rect-for-highlight-rasterizer.patch`
+ 143. `143-use-pixel-rect-for-egui-tile-paint-helpers.patch`
++144. `144-use-pixel-rect-for-shape-tile-paint.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index 6134227..b8caca8 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -564,12 +564,12 @@ impl ShapeLayer {
+     transform: &Transform,
+   ) {
+     let (nw, se) = tile.position();
+-    let screen_nw = pixel_to_pos(transform.apply(nw));
+-    let screen_se = pixel_to_pos(transform.apply(se));
+-    let tile_rect = egui::Rect::from_min_max(screen_nw, screen_se);
++    let tile_rect = PixelRect::from_min_max(transform.apply(nw), transform.apply(se));
++    let egui_tile_rect =
++      egui::Rect::from_min_max(pixel_to_pos(tile_rect.min), pixel_to_pos(tile_rect.max));
+     painter.image(
+       handle.id(),
+-      tile_rect,
++      egui_tile_rect,
+       egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+       Color32::WHITE,
+     );

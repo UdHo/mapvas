@@ -1,11 +1,12 @@
 use crate::{
   config::HeadingStyle,
   map::{
-    coordinates::{Coordinate, PixelCoordinate, Transform},
+    coordinates::{Coordinate, PixelCoordinate, PixelRect, Transform},
     geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+    mapvas_egui::helpers::color_to_color32,
   },
 };
-use egui::{Color32, Rect};
+use egui::Color32;
 use tiny_skia::{
   Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform as SkiaTransform,
 };
@@ -21,7 +22,7 @@ fn color32_to_skia(c: Color32) -> tiny_skia::Color {
 }
 
 /// Convert a `PixelCoordinate` to screen-relative position within the pixmap.
-fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: Rect) -> (f32, f32) {
+fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: PixelRect) -> (f32, f32) {
   let pos = transform.apply(coord.as_pixel_coordinate());
   (pos.x - rect.min.x, pos.y - rect.min.y)
 }
@@ -34,7 +35,7 @@ fn to_screen(coord: &impl Coordinate, transform: &Transform, rect: Rect) -> (f32
 pub fn rasterize_geometries<'a>(
   geometries: impl Iterator<Item = &'a Geometry<PixelCoordinate>>,
   transform: &Transform,
-  rect: Rect,
+  rect: PixelRect,
   heading_style: HeadingStyle,
 ) -> Option<Pixmap> {
   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -58,7 +59,7 @@ fn rasterize_geometry(
   pixmap: &mut Pixmap,
   geometry: &Geometry<PixelCoordinate>,
   transform: &Transform,
-  rect: Rect,
+  rect: PixelRect,
   heading_style: HeadingStyle,
 ) {
   for el in geometry
@@ -71,7 +72,7 @@ fn rasterize_geometry(
       }
       Geometry::Point(coord, metadata) => {
         let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-        let color = style.color().gamma_multiply(0.7);
+        let color = color_to_color32(style.color().gamma_multiply(0.7));
         let (cx, cy) = to_screen(&coord, transform, rect);
 
         draw_circle(pixmap, cx, cy, DEFAULT_POINT_RADIUS, color, color);
@@ -82,7 +83,7 @@ fn rasterize_geometry(
       }
       Geometry::LineString(coords, metadata) => {
         let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-        let stroke_color = style.color().gamma_multiply(0.7);
+        let stroke_color = color_to_color32(style.color().gamma_multiply(0.7));
         let points: Vec<(f32, f32)> = coords
           .iter()
           .map(|c| to_screen(c, transform, rect))
@@ -91,11 +92,12 @@ fn rasterize_geometry(
       }
       Geometry::Polygon(coords, metadata) => {
         let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-        let stroke_color = style.color().gamma_multiply(0.7);
-        let fill_color = if style.fill_color() == Color32::TRANSPARENT {
+        let stroke_color = color_to_color32(style.color().gamma_multiply(0.7));
+        let fill_color = style.fill_color();
+        let fill_color = if fill_color.a() == 0 {
           Color32::TRANSPARENT
         } else {
-          style.fill_color().gamma_multiply(0.7)
+          color_to_color32(fill_color.gamma_multiply(0.7))
         };
         let points: Vec<(f32, f32)> = coords
           .iter()

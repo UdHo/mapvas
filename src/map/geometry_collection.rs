@@ -2,13 +2,13 @@ use std::iter::once;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use egui::Color32;
 use itertools::Either;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::coordinates::{BoundingBox, Coordinate, PixelCoordinate, WGS84Coordinate};
-
-type Color = Color32;
+use super::{
+  color::Color,
+  coordinates::{BoundingBox, Coordinate, PixelCoordinate, WGS84Coordinate},
+};
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Style {
@@ -18,7 +18,7 @@ pub struct Style {
 }
 
 pub const DEFAULT_STYLE: Style = Style {
-  color: Some(Color32::BLUE),
+  color: Some(Color::BLUE),
   fill_color: None,
   visible: true,
 };
@@ -62,12 +62,12 @@ impl Style {
 
   #[must_use]
   pub fn color(&self) -> Color {
-    self.color.unwrap_or(Color32::BLUE)
+    self.color.unwrap_or(Color::BLUE)
   }
 
   #[must_use]
   pub fn fill_color(&self) -> Color {
-    self.fill_color.unwrap_or(Color32::TRANSPARENT)
+    self.fill_color.unwrap_or(Color::TRANSPARENT)
   }
 }
 
@@ -464,7 +464,7 @@ mod tests {
     let red = Metadata {
       label: None,
       style: Some(Style {
-        color: Some(Color32::RED),
+        color: Some(Color::RED),
         fill_color: None,
         visible: false,
       }),
@@ -474,8 +474,8 @@ mod tests {
     let blue = Metadata {
       label: None,
       style: Some(Style {
-        color: Some(Color32::BLUE),
-        fill_color: Some(Color32::BLUE),
+        color: Some(Color::BLUE),
+        fill_color: Some(Color::BLUE),
         visible: true,
       }),
       heading: None,
@@ -484,8 +484,8 @@ mod tests {
     let green = Metadata {
       label: None,
       style: Some(Style {
-        color: Some(Color32::GREEN),
-        fill_color: Some(Color32::GREEN),
+        color: Some(Color::GREEN),
+        fill_color: Some(Color::GREEN),
         visible: true,
       }),
       heading: None,
@@ -603,17 +603,17 @@ mod tests {
   #[test]
   fn style_defaults() {
     let s = Style::default();
-    assert_eq!(s.color(), Color32::BLUE);
-    assert_eq!(s.fill_color(), Color32::TRANSPARENT);
+    assert_eq!(s.color(), Color::BLUE);
+    assert_eq!(s.fill_color(), Color::TRANSPARENT);
   }
 
   #[test]
   fn style_builder_methods() {
     let s = Style::default()
-      .with_color(Color32::RED)
-      .with_fill_color(Color32::GREEN);
-    assert_eq!(s.color(), Color32::RED);
-    assert_eq!(s.fill_color(), Color32::GREEN);
+      .with_color(Color::RED)
+      .with_fill_color(Color::GREEN);
+    assert_eq!(s.color(), Color::RED);
+    assert_eq!(s.fill_color(), Color::GREEN);
 
     // Test with_visible via geometry visibility
     let hidden = Style::default().with_visible(false);
@@ -627,16 +627,16 @@ mod tests {
   #[test]
   fn style_overwrite_with_merging() {
     let base = Style::default()
-      .with_color(Color32::RED)
-      .with_fill_color(Color32::GREEN);
+      .with_color(Color::RED)
+      .with_fill_color(Color::GREEN);
     let overlay = Style {
-      color: Some(Color32::YELLOW),
+      color: Some(Color::YELLOW),
       fill_color: None,
       visible: true,
     };
     let result = base.overwrite_with(&overlay);
-    assert_eq!(result.color(), Color32::YELLOW);
-    assert_eq!(result.fill_color(), Color32::GREEN);
+    assert_eq!(result.color(), Color::YELLOW);
+    assert_eq!(result.fill_color(), Color::GREEN);
   }
 
   #[test]

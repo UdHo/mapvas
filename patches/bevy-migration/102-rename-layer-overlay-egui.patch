@@ -1,0 +1,73 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -742,7 +742,7 @@
+     for layer in layer_guard.iter_mut() {
+       layer.process_pending_events();
+     }
+-    Self::draw_layer_overlays(layer_guard.as_mut_slice(), ui, &self.transform, rect);
++    Self::draw_egui_layer_overlays(layer_guard.as_mut_slice(), ui, &self.transform, rect);
+   }
+ 
+   fn draw_egui_layer_frame(&mut self, ui: &mut Ui, rect: Rect) {
+@@ -766,15 +766,15 @@
+     );
+   }
+ 
+-  fn draw_layer_overlays(
++  fn draw_egui_layer_overlays(
+     layers: &mut [Box<dyn Layer>],
+     ui: &mut Ui,
+     transform: &Transform,
+     rect: Rect,
+   ) {
+     for layer in layers {
+-      profile_scope!("Layer::draw_overlay", layer.name());
+-      layer.draw_overlay(ui, transform, rect);
++      profile_scope!("Layer::draw_egui_overlay", layer.name());
++      layer.draw_egui_overlay(ui, transform, rect);
+     }
+   }
+ 
+@@ -796,7 +796,7 @@
+     for layer in layers.iter() {
+       layer.draw_attribution(ui, rect);
+     }
+-    Self::draw_layer_overlays(layers, ui, transform, rect);
++    Self::draw_egui_layer_overlays(layers, ui, transform, rect);
+   }
+ 
+   fn allocate_map_response(ui: &mut Ui, sense: Sense) -> (Rect, Response) {
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -38,7 +38,7 @@
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+   fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
+-  fn draw_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _rect: Rect) {}
++  fn draw_egui_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _rect: Rect) {}
+   fn handle_hover(&mut self, _pos: Option<Pos2>, _transform: &Transform) {}
+   fn clear(&mut self) {}
+   fn name(&self) -> &str;
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -769,8 +769,8 @@
+     self.update_hover_highlighting(pos, transform);
+   }
+ 
+-  fn draw_overlay(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
+-    profile_scope!("ShapeLayer::draw_overlay");
++  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
++    profile_scope!("ShapeLayer::draw_egui_overlay");
+ 
+     self.current_transform = *transform;
+     if !self.visible() {
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -103,6 +103,7 @@
+ 99. `099-construct-native-mapapp-directly.patch`
+ 100. `100-type-map-construction-options.patch`
+ 101. `101-rename-layer-draw-egui.patch`
++102. `102-rename-layer-overlay-egui.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,9 +1,10 @@
 use crate::map::{
-  coordinates::{PixelCoordinate, Transform},
+  coordinates::{PixelCoordinate, PixelPosition, PixelRect, Transform},
   geometry_collection::{DEFAULT_STYLE, Geometry, Metadata},
+  mapvas_egui::helpers::{color_to_color32, pixel_to_pos},
 };
 use egui::{
-  Color32, ColorImage, Painter, Pos2, Rect, Shape, Stroke,
+  Color32, ColorImage, Painter, Shape, Stroke,
   epaint::{CircleShape, PathShape, PathStroke},
 };
 use std::collections::HashMap;
@@ -157,8 +158,8 @@ fn draw_highlighted_point(
   painter: &Painter,
   transform: &Transform,
 ) {
-  let center = transform.apply(coord).into();
-  let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+  let center = pixel_to_pos(transform.apply(coord));
+  let base_color = color_to_color32(metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color());
 
   // Draw highlighted point filled with original color
   let highlight_fill = base_color;
@@ -180,11 +181,14 @@ fn draw_highlighted_linestring(
   painter: &Painter,
   transform: &Transform,
 ) {
-  let base_color = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color();
+  let base_color = color_to_color32(metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE).color());
 
   // Draw highlighted linestring as solid thick line
   let shape = Shape::Path(PathShape {
-    points: coords.iter().map(|c| transform.apply(*c).into()).collect(),
+    points: coords
+      .iter()
+      .map(|c| pixel_to_pos(transform.apply(*c)))
+      .collect(),
     closed: false,
     fill: Color32::TRANSPARENT,
     stroke: PathStroke::new(6.0, base_color), // Thicker and solid
@@ -201,9 +205,9 @@ fn draw_highlighted_linestring(
 pub fn rasterize_highlighted_polygons(
   geometry: &Geometry<PixelCoordinate>,
   transform: &Transform,
-  viewport: Rect,
-) -> Option<(ColorImage, Rect)> {
-  let mut bbox: Option<Rect> = None;
+  viewport: PixelRect,
+) -> Option<(ColorImage, PixelRect)> {
+  let mut bbox: Option<PixelRect> = None;
   collect_polygon_bbox(geometry, transform, &mut bbox);
   // Pad for the stroke half-width plus a feathering margin.
   let pad = HIGHLIGHT_STROKE_WIDTH * 0.5 + 1.0;
@@ -248,13 +252,13 @@ pub fn rasterize_highlighted_polygons(
 fn collect_polygon_bbox(
   geometry: &Geometry<PixelCoordinate>,
   transform: &Transform,
-  acc: &mut Option<Rect>,
+  acc: &mut Option<PixelRect>,
 ) {
   match geometry {
     Geometry::Polygon(coords, _) => {
       for c in coords {
-        let p: Pos2 = transform.apply(*c).into();
-        let r = Rect::from_min_max(p, p);
+        let p = transform.apply(*c);
+        let r = PixelRect::from_min_max(p, p);
         *acc = Some(acc.map_or(r, |a| a.union(r)));
       }
     }
@@ -271,19 +275,19 @@ fn fill_polygons_into_pixmap(
   geometry: &Geometry<PixelCoordinate>,
   transform: &Transform,
   pixmap: &mut Pixmap,
-  origin: Pos2,
+  origin: PixelPosition,
 ) {
   match geometry {
     Geometry::Polygon(coords, metadata) => {
       let style = metadata.style.as_ref().unwrap_or(&DEFAULT_STYLE);
-      let color = style.color();
+      let color = color_to_color32(style.color());
       let mut iter = coords.iter();
       let Some(first) = iter.next() else { return };
       let mut pb = PathBuilder::new();
-      let p: Pos2 = transform.apply(*first).into();
+      let p = transform.apply(*first);
       pb.move_to(p.x - origin.x, p.y - origin.y);
       for c in iter {
-        let p: Pos2 = transform.apply(*c).into();
+        let p = transform.apply(*c);
         pb.line_to(p.x - origin.x, p.y - origin.y);
       }
       pb.close();

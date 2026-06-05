@@ -1,0 +1,113 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -2,7 +2,10 @@
+   cell::RefCell,
+   path::PathBuf,
+   rc::Rc,
+-  sync::{Mutex, MutexGuard, mpsc::Receiver},
++  sync::{
++    Mutex, MutexGuard,
++    mpsc::{Receiver, Sender},
++  },
+ };
+ 
+ use crate::{
+@@ -49,6 +52,7 @@
+   last_viewport: Option<MapViewport>,
+   render_mode: MapRenderMode,
+   screenshot_requests: Vec<PathBuf>,
++  screenshot_sender: Option<Sender<MapEvent>>,
+ }
+ 
+ #[derive(Clone, Copy, PartialEq, Eq)]
+@@ -123,13 +127,12 @@
+ 
+     let (command, command_sender) = layer::CommandLayer::new();
+ 
+-    let (screenshot_layer, screenshot_layer_sender) = if render_mode.uses_native_rendering() {
+-      let (sender, _receiver) = std::sync::mpsc::channel();
+-      (None, sender)
++    let (screenshot_layer, screenshot_sender) = if render_mode.uses_native_rendering() {
++      (None, None)
+     } else {
+       let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
+       let screenshot_layer_sender = screenshot_layer.get_sender();
+-      (Some(screenshot_layer), screenshot_layer_sender)
++      (Some(screenshot_layer), Some(screenshot_layer_sender))
+     };
+ 
+     let timeline = Rc::new(RefCell::new(layer::TimelineLayer::new()));
+@@ -161,7 +164,6 @@
+       focus: send.clone(),
+       clear: send.clone(),
+       shutdown: shape_layer_sender,
+-      screenshot: screenshot_layer_sender,
+       command: command_sender,
+       layer_vis: shape_layer_vis_sender,
+       shape_vis: shape_layer_shape_vis_sender,
+@@ -185,6 +187,7 @@
+         last_viewport: None,
+         render_mode,
+         screenshot_requests: Vec::new(),
++        screenshot_sender,
+       },
+       remote,
+       map_data_holder,
+@@ -553,7 +556,9 @@
+           } else {
+             // Screenshots are handled by their dedicated layer, but we forward them
+             // here to ensure proper timing after focus events
+-            let _ = self.remote.screenshot.send(event.clone());
++            if let Some(sender) = &self.screenshot_sender {
++              let _ = sender.send(event.clone());
++            }
+           }
+         }
+         MapEvent::Clear => {
+@@ -627,7 +632,9 @@
+       if self.render_mode.uses_native_rendering() {
+         self.screenshot_requests.push(path);
+       } else {
+-        let _ = self.remote.screenshot.send(MapEvent::Screenshot(path));
++        if let Some(sender) = &self.screenshot_sender {
++          let _ = sender.send(MapEvent::Screenshot(path));
++        }
+       }
+     }
+   }
+--- a/src/remote.rs
++++ b/src/remote.rs
+@@ -204,7 +204,6 @@
+   pub focus: Sender<MapEvent>,
+   pub clear: Sender<MapEvent>,
+   pub shutdown: Sender<MapEvent>,
+-  pub screenshot: Sender<MapEvent>,
+   pub command: Sender<ParameterUpdate>,
+   pub layer_vis: Sender<(String, bool)>,
+   pub shape_vis: Sender<(String, usize, bool)>,
+@@ -328,7 +327,6 @@
+     let (focus_tx, focus_rx) = mpsc::channel();
+     let (clear_tx, clear_rx) = mpsc::channel();
+     let (shutdown_tx, shutdown_rx) = mpsc::channel();
+-    let (screenshot_tx, _screenshot_rx) = mpsc::channel();
+     let (command_tx, _command_rx) = mpsc::channel();
+     let (layer_vis_tx, _layer_vis_rx) = mpsc::channel();
+     let (shape_vis_tx, _shape_vis_rx) = mpsc::channel();
+@@ -337,7 +335,6 @@
+       focus: focus_tx,
+       clear: clear_tx,
+       shutdown: shutdown_tx,
+-      screenshot: screenshot_tx,
+       command: command_tx,
+       layer_vis: layer_vis_tx,
+       shape_vis: shape_vis_tx,
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -75,6 +75,7 @@
+ 71. `071-native-bevy-remote-screenshot-handoff.patch`
+ 72. `072-route-native-screenshot-through-mapapp.patch`
+ 73. `073-omit-egui-screenshot-layer-in-native-mode.patch`
++74. `074-remove-remote-screenshot-sender.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

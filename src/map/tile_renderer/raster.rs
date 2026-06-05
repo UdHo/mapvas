@@ -1,6 +1,4 @@
-use egui::ColorImage;
-
-use super::{TileRenderError, TileRenderer};
+use super::{TileImage, TileRenderError, TileRenderer};
 use crate::map::coordinates::Tile;
 
 /// Raster tile renderer that decodes PNG/JPEG images.
@@ -17,7 +15,7 @@ impl RasterTileRenderer {
 }
 
 impl TileRenderer for RasterTileRenderer {
-  fn render(&self, tile: &Tile, data: &[u8]) -> Result<ColorImage, TileRenderError> {
+  fn render(&self, tile: &Tile, data: &[u8]) -> Result<TileImage, TileRenderError> {
     let start = std::time::Instant::now();
 
     let img_reader = image::ImageReader::new(std::io::Cursor::new(data))
@@ -37,7 +35,10 @@ impl TileRenderer for RasterTileRenderer {
     let total_time = start.elapsed();
     log::info!("Tile {tile:?} (raster) decoded in {total_time:?}");
 
-    Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
+    Ok(TileImage::from_rgba_unmultiplied(
+      size,
+      pixels.as_slice().to_vec(),
+    ))
   }
 
   fn name(&self) -> &'static str {

@@ -1,4 +1,3 @@
-use egui::Color32;
 use serde::{Deserialize, Serialize};
 
 use crate::map::{
@@ -61,7 +60,7 @@ impl TTJsonParser {
               points,
               Metadata {
                 label: Some(format!("Leg {i}").into()),
-                style: Some(Style::default().with_color(Into::<Color32>::into(self.color))),
+                style: Some(Style::default().with_color(self.color)),
                 heading: None,
                 time_data: None,
               },
@@ -91,8 +90,8 @@ impl TTJsonParser {
         label: Some("Range boundary".into()),
         style: Some(
           Style::default()
-            .with_color(Into::<Color32>::into(self.color))
-            .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+            .with_color(self.color)
+            .with_fill_color(self.color.gamma_multiply(0.4)),
         ),
         heading: None,
         time_data: None,
@@ -105,8 +104,8 @@ impl TTJsonParser {
           label: Some("Range center".into()),
           style: Some(
             Style::default()
-              .with_color(Into::<Color32>::into(self.color))
-              .with_fill_color(Into::<Color32>::into(self.color).gamma_multiply(0.4)),
+              .with_color(self.color)
+              .with_fill_color(self.color.gamma_multiply(0.4)),
           ),
           heading: None,
           time_data: None,
@@ -275,7 +274,7 @@ mod tests {
 
   #[test]
   fn with_color_builder() {
-    let parser = TTJsonParser::new().with_color(Color::from(egui::Color32::RED));
-    assert_eq!(parser.color, Color::from(egui::Color32::RED));
+    let parser = TTJsonParser::new().with_color(Color::RED);
+    assert_eq!(parser.color, Color::RED);
   }
 }

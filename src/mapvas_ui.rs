@@ -1,17 +1,15 @@
-use std::rc::Rc;
-
-use egui::Widget as _;
+use std::{path::PathBuf, rc::Rc};
 
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
   config::{Config, HeadingStyle, TileProvider, TileType},
   map::{
-    mapvas_egui::{Map, MapLayerHolder, timeline_widget::IntervalLock},
+    IntervalLock, Map, MapLayerHolder,
     tile_renderer::{
       MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
       set_style_config, style_config,
     },
-    viewport::MapViewport,
+    viewport::{GeometrySnapshot, MapViewport},
   },
   profile_scope,
   remote::Remote,
@@ -28,26 +26,87 @@ pub struct MapApp {
   settings_dialog: std::rc::Rc<std::cell::RefCell<SettingsDialog>>,
   previous_had_highlighted: bool,
   last_heading_style: HeadingStyle,
+  last_output_config: Option<Config>,
   command_line: CommandLine,
   runtime_monitor: Option<RuntimeMonitor>,
   headless: bool,
-  transparent_map_background: bool,
+  ui_mode: MapUiMode,
+  quit_requested: bool,
+}
+
+#[derive(Clone, Copy)]
+enum MapUiMode {
+  Egui,
+  Bevy,
+}
+
+impl MapUiMode {
+  fn map_frame(self, ctx: &egui::Context) -> egui::Frame {
+    match self {
+      Self::Egui => egui::Frame::default().fill(ctx.style().visuals.panel_fill),
+      Self::Bevy => egui::Frame::NONE,
+    }
+  }
 }
 
 pub struct MapAppOutput {
   pub viewport: Option<MapViewport>,
-  pub current_config: Config,
-  pub geometry_snapshot_version: u64,
+  pub config_update: Option<Config>,
+  pub bevy_geometry_snapshot: Option<GeometrySnapshot>,
+  pub screenshot_requests: Vec<PathBuf>,
+  pub quit_requested: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct KnownBevyGeometrySnapshot {
+  pub snapshot_version: u64,
+  pub geometry_version: u64,
 }
 
 impl MapApp {
   #[allow(clippy::needless_pass_by_value)]
-  pub fn new(
+  pub fn new_egui(
     map: Map,
     remote: Remote,
     map_content: Rc<dyn MapLayerHolder>,
     config: Config,
     runtime_monitor: Option<RuntimeMonitor>,
+  ) -> Self {
+    Self::new_with_ui_mode(
+      map,
+      remote,
+      map_content,
+      config,
+      runtime_monitor,
+      MapUiMode::Egui,
+    )
+  }
+
+  #[allow(clippy::needless_pass_by_value)]
+  pub fn new_bevy(
+    map: Map,
+    remote: Remote,
+    map_content: Rc<dyn MapLayerHolder>,
+    config: Config,
+    runtime_monitor: Option<RuntimeMonitor>,
+  ) -> Self {
+    Self::new_with_ui_mode(
+      map,
+      remote,
+      map_content,
+      config,
+      runtime_monitor,
+      MapUiMode::Bevy,
+    )
+  }
+
+  fn new_with_ui_mode(
+    map: Map,
+    remote: Remote,
+    map_content: Rc<dyn MapLayerHolder>,
+    config: Config,
+    runtime_monitor: Option<RuntimeMonitor>,
+    ui_mode: MapUiMode,
   ) -> Self {
     let settings_dialog =
       std::rc::Rc::new(std::cell::RefCell::new(SettingsDialog::new(config.clone())));
@@ -58,10 +117,12 @@ impl MapApp {
       settings_dialog,
       previous_had_highlighted: false,
       last_heading_style: config.heading_style,
+      last_output_config: None,
       command_line: CommandLine::new(),
       runtime_monitor,
       headless: false,
-      transparent_map_background: false,
+      ui_mode,
+      quit_requested: false,
     }
   }
 
@@ -69,57 +130,53 @@ impl MapApp {
     self.headless = true;
   }
 
-  pub fn set_transparent_map_background(&mut self) {
-    self.transparent_map_background = true;
-  }
-
-  pub fn set_external_viewport_input(&mut self, external_viewport_input: bool) {
-    self
-      .map
-      .set_external_viewport_input(external_viewport_input);
-  }
-
-  pub fn set_native_geometry_rendering(&mut self, native_geometry_rendering: bool) {
-    self
-      .map
-      .set_native_geometry_rendering(native_geometry_rendering);
-  }
-
   pub fn set_map_transform(&mut self, transform: crate::map::coordinates::Transform) {
     self.map.set_transform(transform);
   }
 
-  #[must_use]
-  pub fn map_transform(&self) -> crate::map::coordinates::Transform {
-    self.map.transform()
+  pub fn handle_map_double_click(&mut self, pos: crate::map::coordinates::PixelPosition) {
+    self.map.handle_double_click(pos);
   }
 
-  #[must_use]
-  pub fn viewport(&self) -> Option<crate::map::viewport::MapViewport> {
-    self.map.viewport()
+  pub fn handle_map_command_drag(
+    &mut self,
+    pos: crate::map::coordinates::PixelPosition,
+    delta: crate::map::coordinates::PixelPosition,
+    transform: crate::map::coordinates::Transform,
+  ) {
+    self.map.handle_command_drag(pos, delta, transform);
   }
 
-  #[must_use]
-  pub fn geometry_snapshot(&self) -> crate::map::viewport::GeometrySnapshot {
-    self.map.geometry_snapshot()
+  pub fn open_map_context_menu(&mut self, pos: crate::map::coordinates::PixelPosition) {
+    self.map.open_command_context_menu(pos);
   }
 
-  #[must_use]
-  pub fn geometry_snapshot_since(
-    &self,
-    geometry_version: u64,
-  ) -> crate::map::viewport::GeometrySnapshot {
-    self.map.geometry_snapshot_since(geometry_version)
+  pub fn handle_bevy_map_hover(&mut self, pos: Option<crate::map::coordinates::PixelPosition>) {
+    self.map.handle_bevy_hover(pos);
   }
 
-  #[must_use]
-  pub fn geometry_snapshot_version(&self) -> u64 {
-    self.map.geometry_snapshot_version()
+  pub fn handle_map_dropped_file(&mut self, path: PathBuf) {
+    self.map.handle_dropped_file(path);
   }
 
-  #[must_use]
-  pub fn current_config(&self) -> Config {
-    self.settings_dialog.borrow().get_current_config()
+  pub fn clear_map(&mut self) {
+    self.map.clear();
+  }
+
+  pub fn focus_map(&mut self) {
+    self.map.focus_all_layers();
+  }
+
+  pub fn paste_map(&self) {
+    self.map.paste();
+  }
+
+  pub fn copy_map(&self) {
+    self.map.copy();
+  }
+
+  pub fn request_map_screenshot(&mut self) {
+    self.map.request_screenshot();
   }
 
   #[must_use]
@@ -178,15 +235,25 @@ impl MapApp {
 
 impl MapApp {
   #[allow(clippy::too_many_lines)]
-  pub fn show(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
-    self.show_with_map_layer_controls(ui, &mut |_| {})
+  pub fn show_egui(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
+    self.show_with_map_layer_controls(ui, &mut |_| {}, None)
   }
 
-  #[allow(clippy::too_many_lines)]
-  pub fn show_with_map_layer_controls(
+  pub fn show_bevy(
     &mut self,
     ui: &mut egui::Ui,
     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+    known_geometry_snapshot: KnownBevyGeometrySnapshot,
+  ) -> MapAppOutput {
+    self.show_with_map_layer_controls(ui, map_layer_controls, Some(known_geometry_snapshot))
+  }
+
+  #[allow(clippy::too_many_lines)]
+  fn show_with_map_layer_controls(
+    &mut self,
+    ui: &mut egui::Ui,
+    map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+    known_geometry_snapshot: Option<KnownBevyGeometrySnapshot>,
   ) -> MapAppOutput {
     let ctx_owned = ui.ctx().clone();
     let ctx = &ctx_owned;
@@ -368,20 +435,21 @@ impl MapApp {
 
     // Handle command line input and execute commands
     if let Some(command) = handle_command_line_input(&mut self.command_line, ctx) {
-      self.execute_command(command, ctx);
+      self.execute_command(command);
     }
 
-    let map_frame = if self.transparent_map_background {
-      egui::Frame::NONE
-    } else {
-      egui::Frame::default().fill(ctx.style().visuals.panel_fill)
-    };
-
     egui::CentralPanel::default()
-      .frame(map_frame)
+      .frame(self.ui_mode.map_frame(ctx))
       .show_inside(ui, |ui| {
         profile_scope!("MapApp::central_panel");
-        (&mut self.map).ui(ui);
+        match self.ui_mode {
+          MapUiMode::Egui => {
+            self.map.ui_egui(ui);
+          }
+          MapUiMode::Bevy => {
+            self.map.ui_bevy(ui);
+          }
+        }
       });
 
     // Show command line UI (must be after CentralPanel to appear on top)
@@ -392,25 +460,38 @@ impl MapApp {
       ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
+    let bevy_geometry_snapshot_version = self.map.geometry_snapshot_version();
+    let bevy_geometry_snapshot = known_geometry_snapshot.and_then(|known| {
+      (known.snapshot_version != bevy_geometry_snapshot_version)
+        .then(|| self.map.geometry_snapshot_since(known.geometry_version))
+    });
+    let config_update = if self.last_output_config.as_ref() == Some(&current_config) {
+      None
+    } else {
+      self.last_output_config = Some(current_config.clone());
+      Some(current_config)
+    };
+
+    let quit_requested =
+      std::mem::take(&mut self.quit_requested) || self.map.take_shutdown_requested();
+
     MapAppOutput {
       viewport: self.map.viewport(),
-      current_config: self.settings_dialog.borrow().get_current_config(),
-      geometry_snapshot_version: self.map.geometry_snapshot_version(),
+      config_update,
+      bevy_geometry_snapshot,
+      screenshot_requests: self.map.take_screenshot_requests(),
+      quit_requested,
     }
-  }
-
-  pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-    self.show(ui);
   }
 }
 
 impl MapApp {
   /// Execute a command from the command line
   #[allow(clippy::too_many_lines)]
-  fn execute_command(&mut self, command: Command, ctx: &egui::Context) {
+  fn execute_command(&mut self, command: Command) {
     match command {
       Command::Quit => {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.quit_requested = true;
         self.command_line.set_message("Goodbye!".to_string(), false);
       }
       Command::Write => {
@@ -421,7 +502,7 @@ impl MapApp {
       }
       Command::WriteQuit => {
         // TODO: Implement save functionality, then quit
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.quit_requested = true;
         self
           .command_line
           .set_message("Write and quit".to_string(), false);
@@ -663,25 +744,13 @@ impl TemporalControls {
     let mut earliest: Option<DateTime<Utc>> = None;
     let mut latest: Option<DateTime<Utc>> = None;
 
-    // We need to access the actual geometries to extract temporal data
-    // Since the layer system doesn't directly expose geometries, we'll use a different approach
-    // For now, we'll extract temporal range through the shapelayer if possible
-
-    // Scan for temporal data by accessing the layers
-    let mut layer_reader = map_content.get_reader();
-    for layer in layer_reader.get_layers() {
-      // Get temporal range directly from the layer trait method
-      let (layer_earliest, layer_latest) = layer.get_temporal_range();
-
-      if let Some(layer_earliest) = layer_earliest {
-        earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
-      }
-
-      if let Some(layer_latest) = layer_latest {
-        latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
-      }
+    let (layer_earliest, layer_latest) = map_content.layer_temporal_range();
+    if let Some(layer_earliest) = layer_earliest {
+      earliest = Some(earliest.map_or(layer_earliest, |e| e.min(layer_earliest)));
     }
-    drop(layer_reader);
+    if let Some(layer_latest) = layer_latest {
+      latest = Some(latest.map_or(layer_latest, |l| l.max(layer_latest)));
+    }
 
     let (tl_earliest, tl_latest) = map_content.timeline_temporal_range();
     if let Some(tl_earliest) = tl_earliest {
@@ -1046,13 +1115,8 @@ impl Sidebar {
             .show(ui, |ui| {
               ui.vertical(|ui| {
                 map_layer_controls(ui);
-                {
-                  let mut layer_reader = self.map_content.get_reader();
-                  for layer in layer_reader.get_layers() {
-                    layer.ui(ui);
-                  }
-                }
-                self.map_content.timeline_ui(ui);
+                self.map_content.layer_egui_controls(ui);
+                self.map_content.timeline_egui_controls(ui);
               });
             });
 

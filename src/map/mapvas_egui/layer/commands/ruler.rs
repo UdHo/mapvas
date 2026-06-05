@@ -1,14 +1,13 @@
 use std::iter::once;
 use std::rc::Rc;
 
-use crate::map::coordinates::Coordinate;
+use crate::map::{color::Color, coordinates::Coordinate};
 use crate::map::{
   coordinates::{PixelCoordinate, distance_in_meters},
   geometry_collection::{Geometry, Metadata, Style},
-  mapvas_egui::layer::drawable::Drawable,
 };
 
-use super::{Command, ParameterUpdate, update_closest};
+use super::{Command, CommandGeometry, ParameterUpdate, update_closest};
 
 pub struct Ruler {
   origin: Option<PixelCoordinate>,
@@ -62,18 +61,18 @@ impl Command for Ruler {
 
   fn run(&mut self) {}
 
-  fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>> {
+  fn result(&self) -> Box<dyn Iterator<Item = CommandGeometry>> {
     let mut geom = vec![];
     if let Some(origin) = self.origin {
       geom.push(Geometry::Point(
         origin,
-        Metadata::default().with_style(Style::default().with_color(egui::Color32::GREEN)),
+        Metadata::default().with_style(Style::default().with_color(Color::GREEN)),
       ));
     }
     if let Some(destination) = self.destination {
       geom.push(Geometry::Point(
         destination,
-        Metadata::default().with_style(Style::default().with_color(egui::Color32::RED)),
+        Metadata::default().with_style(Style::default().with_color(Color::RED)),
       ));
     }
     if let (Some(origin), Some(destination)) = (self.origin, self.destination) {
@@ -83,9 +82,9 @@ impl Command for Ruler {
         Metadata::default().with_label(format!("Dist: {dist:.2}m")),
       ));
     }
-    let drawable: Rc<dyn Drawable> =
+    let geometry: CommandGeometry =
       Rc::new(Geometry::GeometryCollection(geom, Metadata::default()));
-    Box::new(once(drawable))
+    Box::new(once(geometry))
   }
 
   fn geometry_version(&self) -> u64 {

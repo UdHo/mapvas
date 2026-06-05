@@ -1,0 +1,100 @@
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -52,31 +52,13 @@
+   keys: Vec<String>,
+   config: Config,
+   last_viewport: Option<MapViewport>,
+-  render_mode: MapRenderMode,
+   screenshot_target: ScreenshotTarget,
+   shutdown_requested: bool,
+ }
+ 
+-#[derive(Clone, Copy, PartialEq, Eq)]
+-enum MapRenderMode {
+-  Egui,
+-  EguiWithoutTiles,
+-  Native,
+-}
+-
+ enum ScreenshotTarget {
+   Egui(Sender<MapEvent>),
+   Native(Vec<PathBuf>),
+-}
+-
+-impl MapRenderMode {
+-  fn uses_egui_tiles(self) -> bool {
+-    self == Self::Egui
+-  }
+-
+-  fn uses_native_rendering(self) -> bool {
+-    self == Self::Native
+-  }
+ }
+ 
+ impl Map {
+@@ -86,7 +68,7 @@
+     cfg: crate::config::Config,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+     let repaint = RepaintSignal::egui(ctx.clone());
+-    Self::new_impl(ctx, cfg, MapRenderMode::Egui, repaint)
++    Self::new_impl(ctx, cfg, true, false, repaint)
+   }
+ 
+   #[must_use]
+@@ -95,7 +77,7 @@
+     cfg: crate::config::Config,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+     let repaint = RepaintSignal::egui(ctx.clone());
+-    Self::new_impl(ctx, cfg, MapRenderMode::EguiWithoutTiles, repaint)
++    Self::new_impl(ctx, cfg, false, false, repaint)
+   }
+ 
+   #[must_use]
+@@ -104,16 +86,17 @@
+     cfg: crate::config::Config,
+     repaint: RepaintSignal,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+-    Self::new_impl(ctx, cfg, MapRenderMode::Native, repaint)
++    Self::new_impl(ctx, cfg, false, true, repaint)
+   }
+ 
+   fn new_impl(
+     ctx: egui::Context,
+     cfg: crate::config::Config,
+-    render_mode: MapRenderMode,
++    include_egui_tiles: bool,
++    use_native_screenshots: bool,
+     repaint: RepaintSignal,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+-    let tile_layer = if render_mode.uses_egui_tiles() {
++    let tile_layer = if include_egui_tiles {
+       Some(layer::TileLayer::from_config(ctx.clone(), &cfg))
+     } else {
+       None
+@@ -127,7 +110,7 @@
+ 
+     let (command, command_sender) = layer::CommandLayer::new();
+ 
+-    let (screenshot_layer, screenshot_target) = if render_mode.uses_native_rendering() {
++    let (screenshot_layer, screenshot_target) = if use_native_screenshots {
+       (None, ScreenshotTarget::Native(Vec::new()))
+     } else {
+       let screenshot_layer = layer::ScreenshotLayer::new(ctx.clone());
+@@ -188,7 +171,6 @@
+         keys,
+         config: cfg,
+         last_viewport: None,
+-        render_mode,
+         screenshot_target,
+         shutdown_requested: false,
+       },
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -99,6 +99,7 @@
+ 95. `095-split-map-ui-entrypoints.patch`
+ 96. `096-call-native-map-ui-explicitly.patch`
+ 97. `097-make-map-widget-egui-only.patch`
++98. `098-remove-map-render-mode-state.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,0 +1,66 @@
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index cba00c9..fe079c9 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -1,4 +1,4 @@
+-use super::super::helpers::{pixel_to_pos, pos_to_pixel};
++use super::super::helpers::{pixel_to_pos, pos_to_pixel, rect_to_pixel};
+ use super::{
+   GeometrySnapshot, Layer, LayerProperties, Searchable, SubLayerInfo,
+   geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
+@@ -9,7 +9,7 @@ use crate::{
+   config::{Config, HeadingStyle},
+   map::{
+     coordinates::{
+-      BoundingBox, PixelCoordinate, PixelPosition, Tile, TileCoordinate, Transform,
++      BoundingBox, PixelCoordinate, PixelPosition, PixelRect, Tile, TileCoordinate, Transform,
+       tile_zoom_for_transform, tiles_in_box,
+     },
+     geometry_collection::{Geometry, Style},
+@@ -512,12 +512,12 @@ impl ShapeLayer {
+ 
+   /// Return the `Tile`s visible in the current viewport, using the same zoom formula as `TileLayer`.
+   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+-  fn compute_visible_geo_tiles(transform: &Transform, rect: Rect) -> Vec<Tile> {
++  fn compute_visible_geo_tiles(transform: &Transform, rect: PixelRect) -> Vec<Tile> {
+     let zoom = tile_zoom_for_transform(transform);
+     let zoom = zoom.min(19); // cap at OSM max zoom to avoid explosion of tiny tiles
+     let inv = transform.invert();
+-    let min_pos = TileCoordinate::from_pixel_position(inv.apply(pos_to_pixel(rect.min)), zoom);
+-    let max_pos = TileCoordinate::from_pixel_position(inv.apply(pos_to_pixel(rect.max)), zoom);
++    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min), zoom);
++    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max), zoom);
+     tiles_in_box(min_pos, max_pos).collect()
+   }
+ 
+@@ -805,7 +805,8 @@ impl Layer for ShapeLayer {
+     });
+     let use_sync_render = self.headless || (!has_heatmap && total_geometries <= 10_000);
+     let painter = ui.painter_at(rect);
+-    for tile in Self::compute_visible_geo_tiles(transform, rect) {
++    let pixel_rect = rect_to_pixel(rect);
++    for tile in Self::compute_visible_geo_tiles(transform, pixel_rect) {
+       // Quick reject: check if the R-tree has any geometry overlapping this tile.
+       let (nw, se) = tile.position();
+       let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
+@@ -875,7 +876,7 @@ impl Layer for ShapeLayer {
+     // Pre-render tiles one zoom level deeper so they are ready when the user zooms in.
+     // Only in async mode — sync mode renders instantly on demand anyway.
+     if !use_sync_render {
+-      for tile in Self::compute_visible_geo_tiles(transform, rect)
++      for tile in Self::compute_visible_geo_tiles(transform, pixel_rect)
+         .into_iter()
+         .flat_map(|t| t.children())
+       {
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index cbdc791..8b9db26 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -140,6 +140,7 @@ Apply these patches in order from the repository root:
+ 136. `136-use-pixel-position-for-layer-selection.patch`
+ 137. `137-use-pixel-rect-for-map-focus.patch`
+ 138. `138-share-neutral-viewport-fit-helpers.patch`
++139. `139-use-pixel-rect-for-shape-geo-tiles.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

@@ -1,9 +1,8 @@
-use eframe::App;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use mapvas::{
   config::Config,
-  map::{map_event::MapEvent, mapvas_egui::Map},
+  map::{Map, map_event::MapEvent},
   mapvas_ui::MapApp,
   parser::{FileParser, KmlParser},
 };
@@ -13,7 +12,7 @@ use std::io::Cursor;
 fn create_test_app_with_popup_kml() -> MapApp {
   let config = Config::default();
   let ctx = egui::Context::default();
-  let (mut map, remote, data_holder) = Map::new(ctx, config.clone());
+  let (mut map, remote, data_holder) = Map::new_egui(ctx, config.clone());
   map.set_headless();
 
   // Read and parse the test KML file with MultiGeometry
@@ -32,7 +31,7 @@ fn create_test_app_with_popup_kml() -> MapApp {
   // Send a focus event to center the view on the geometries
   remote.handle_map_event(MapEvent::Focus);
 
-  MapApp::new(map, remote, data_holder, config, None)
+  MapApp::new_egui(map, remote, data_holder, config, None)
 }
 
 #[tokio::test]
@@ -41,8 +40,7 @@ async fn test_popup_initial_state() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );
@@ -68,8 +66,7 @@ async fn test_multigeometry_popup_functionality() {
 
   let mut harness = Harness::new_ui_state(
     |ui, app: &mut MapApp| {
-      let mut frame = eframe::Frame::_new_kittest();
-      app.ui(ui, &mut frame);
+      app.show_egui(ui);
     },
     app,
   );

@@ -11,7 +11,7 @@ use std::{
 use tower_http::trace::{self, TraceLayer};
 
 use crate::{
-  map::{map_event::MapEvent, mapvas_egui::ParameterUpdate},
+  map::{ParameterUpdate, map_event::MapEvent},
   task_tracker::{TaskCategory, TaskGuard},
 };
 
@@ -23,9 +23,19 @@ struct EguiRepaintRequester {
   ctx: egui::Context,
 }
 
+struct ChannelRepaintRequester {
+  sender: Sender<()>,
+}
+
 impl RepaintRequester for EguiRepaintRequester {
   fn request_repaint(&self) {
     self.ctx.request_repaint();
+  }
+}
+
+impl RepaintRequester for ChannelRepaintRequester {
+  fn request_repaint(&self) {
+    let _ = self.sender.send(());
   }
 }
 
@@ -39,6 +49,13 @@ impl RepaintSignal {
   pub fn egui(ctx: egui::Context) -> Self {
     Self {
       requester: Arc::new(EguiRepaintRequester { ctx }),
+    }
+  }
+
+  #[must_use]
+  pub fn channel(sender: Sender<()>) -> Self {
+    Self {
+      requester: Arc::new(ChannelRepaintRequester { sender }),
     }
   }
 
@@ -201,10 +218,7 @@ struct SetShapeVisible {
 #[derive(Clone)]
 pub struct Remote {
   pub layer: Sender<MapEvent>,
-  pub focus: Sender<MapEvent>,
-  pub clear: Sender<MapEvent>,
-  pub shutdown: Sender<MapEvent>,
-  pub screenshot: Sender<MapEvent>,
+  pub map_events: Sender<MapEvent>,
   pub command: Sender<ParameterUpdate>,
   pub layer_vis: Sender<(String, bool)>,
   pub shape_vis: Sender<(String, usize, bool)>,
@@ -225,50 +239,50 @@ impl Remote {
       }
       MapEvent::Focus => {
         self
-          .focus
+          .map_events
           .send(MapEvent::Focus)
           .inspect_err(|e| warn!("Failed to send focus event: {e}"))
           .ok();
       }
       f @ MapEvent::FocusOn { .. } => {
         self
-          .focus
+          .map_events
           .send(f)
           .inspect_err(|e| warn!("Failed to send focus_on event: {e}"))
           .ok();
       }
       f @ MapEvent::FocusLayer { .. } => {
         self
-          .focus
+          .map_events
           .send(f)
           .inspect_err(|e| warn!("Failed to send focus_layer event: {e}"))
           .ok();
       }
       f @ MapEvent::FocusShape { .. } => {
         self
-          .focus
+          .map_events
           .send(f)
           .inspect_err(|e| warn!("Failed to send focus_shape event: {e}"))
           .ok();
       }
       MapEvent::Clear => {
         self
-          .clear
+          .map_events
           .send(MapEvent::Clear)
           .inspect_err(|e| warn!("Failed to send clear event: {e}"))
           .ok();
       }
-      MapEvent::Shutdown => {
+      e @ MapEvent::Shutdown => {
         self
-          .shutdown
-          .send(MapEvent::Shutdown)
+          .map_events
+          .send(e)
           .inspect_err(|e| warn!("Failed to send shutdown event: {e}"))
           .ok();
       }
       e @ MapEvent::Screenshot(_) => {
         // Send screenshot events through the main event channel for proper ordering
         self
-          .focus
+          .map_events
           .send(e)
           .inspect_err(|e| warn!("Failed to send screenshot event: {e}"))
           .ok();
@@ -318,26 +332,18 @@ mod tests {
   struct TestRemote {
     remote: Remote,
     layer_rx: mpsc::Receiver<MapEvent>,
-    focus_rx: mpsc::Receiver<MapEvent>,
-    clear_rx: mpsc::Receiver<MapEvent>,
-    shutdown_rx: mpsc::Receiver<MapEvent>,
+    map_events_rx: mpsc::Receiver<MapEvent>,
   }
 
   fn create_remote() -> TestRemote {
     let (layer_tx, layer_rx) = mpsc::channel();
-    let (focus_tx, focus_rx) = mpsc::channel();
-    let (clear_tx, clear_rx) = mpsc::channel();
-    let (shutdown_tx, shutdown_rx) = mpsc::channel();
-    let (screenshot_tx, _screenshot_rx) = mpsc::channel();
+    let (map_events_tx, map_events_rx) = mpsc::channel();
     let (command_tx, _command_rx) = mpsc::channel();
     let (layer_vis_tx, _layer_vis_rx) = mpsc::channel();
     let (shape_vis_tx, _shape_vis_rx) = mpsc::channel();
     let remote = Remote {
       layer: layer_tx,
-      focus: focus_tx,
-      clear: clear_tx,
-      shutdown: shutdown_tx,
-      screenshot: screenshot_tx,
+      map_events: map_events_tx,
       command: command_tx,
       layer_vis: layer_vis_tx,
       shape_vis: shape_vis_tx,
@@ -348,9 +354,7 @@ mod tests {
     TestRemote {
       remote,
       layer_rx,
-      focus_rx,
-      clear_rx,
-      shutdown_rx,
+      map_events_rx,
     }
   }
 
@@ -371,7 +375,7 @@ mod tests {
     let t = create_remote();
     t.remote.handle_map_event(MapEvent::Focus);
     let received = t
-      .focus_rx
+      .map_events_rx
       .recv_timeout(std::time::Duration::from_secs(1))
       .unwrap();
     assert!(matches!(received, MapEvent::Focus));
@@ -386,7 +390,7 @@ mod tests {
     };
     t.remote.handle_map_event(event);
     let received = t
-      .focus_rx
+      .map_events_rx
       .recv_timeout(std::time::Duration::from_secs(1))
       .unwrap();
     assert!(matches!(received, MapEvent::FocusOn { .. }));
@@ -397,18 +401,18 @@ mod tests {
     let t = create_remote();
     t.remote.handle_map_event(MapEvent::Clear);
     let received = t
-      .clear_rx
+      .map_events_rx
       .recv_timeout(std::time::Duration::from_secs(1))
       .unwrap();
     assert!(matches!(received, MapEvent::Clear));
   }
 
   #[test]
-  fn handle_shutdown_event() {
+  fn handle_shutdown_event_goes_to_focus() {
     let t = create_remote();
     t.remote.handle_map_event(MapEvent::Shutdown);
     let received = t
-      .shutdown_rx
+      .map_events_rx
       .recv_timeout(std::time::Duration::from_secs(1))
       .unwrap();
     assert!(matches!(received, MapEvent::Shutdown));
@@ -420,7 +424,7 @@ mod tests {
     t.remote
       .handle_map_event(MapEvent::Screenshot(PathBuf::from("/tmp/test.png")));
     let received = t
-      .focus_rx
+      .map_events_rx
       .recv_timeout(std::time::Duration::from_secs(1))
       .unwrap();
     assert!(matches!(received, MapEvent::Screenshot(_)));

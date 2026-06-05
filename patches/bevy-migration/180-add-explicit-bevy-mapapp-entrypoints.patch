@@ -1,0 +1,178 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 7df8479..c6200d1 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -181,6 +181,7 @@ Apply these patches in order from the repository root:
+ 177. `177-move-map-layer-holder-to-layer-store.patch`
+ 178. `178-add-explicit-native-mapapp-show-api.patch`
+ 179. `179-rename-native-geometry-snapshot-handoff.patch`
++180. `180-add-explicit-bevy-mapapp-entrypoints.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index c0d3f5f..89d2400 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -52,10 +52,10 @@ impl MapvasBevyState {
+     let config = self.initial_config.clone();
+     init_style_config(config.vector_style_file.as_deref());
+ 
+-    let (map, remote, data_holder) = Map::new_native(config.clone(), self.repaint_signal.clone());
++    let (map, remote, data_holder) = Map::new_bevy(config.clone(), self.repaint_signal.clone());
+     spawn_remote_runner_on_handle(self.runtime.handle().clone(), remote.clone());
+ 
+-    let app = MapApp::new_native(
++    let app = MapApp::new_bevy(
+       map,
+       remote,
+       data_holder,
+@@ -171,7 +171,7 @@ fn mapvas_ui_system(
+             native_tiles.ui(ui);
+             native_geometry.ui(ui);
+           };
+-          output = Some(app.show_native(ui, &mut map_layer_controls, known_geometry_snapshot));
++          output = Some(app.show_bevy(ui, &mut map_layer_controls, known_geometry_snapshot));
+         }
+       }
+     });
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index ec26d82..1c5b478 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -66,7 +66,7 @@ enum ScreenshotTarget {
+ #[derive(Clone, Copy)]
+ enum MapConstructionMode {
+   Egui { include_tiles: bool },
+-  Native,
++  Bevy,
+ }
+ 
+ impl Map {
+@@ -102,12 +102,20 @@ impl Map {
+     )
+   }
+ 
++  #[must_use]
++  pub fn new_bevy(
++    cfg: crate::config::Config,
++    repaint: RepaintSignal,
++  ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
++    Self::new_impl(None, cfg, MapConstructionMode::Bevy, repaint)
++  }
++
+   #[must_use]
+   pub fn new_native(
+     cfg: crate::config::Config,
+     repaint: RepaintSignal,
+   ) -> (Self, Remote, Rc<dyn MapLayerHolder>) {
+-    Self::new_impl(None, cfg, MapConstructionMode::Native, repaint)
++    Self::new_bevy(cfg, repaint)
+   }
+ 
+   fn new_impl(
+@@ -128,7 +136,7 @@ impl Map {
+       MapConstructionMode::Egui {
+         include_tiles: false,
+       }
+-      | MapConstructionMode::Native => None,
++      | MapConstructionMode::Bevy => None,
+     };
+     let shape_info = std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+     let shape_layer = layer::ShapeLayer::new(cfg.clone(), repaint.clone(), shape_info.clone());
+@@ -140,7 +148,7 @@ impl Map {
+     let (command, command_sender) = layer::CommandLayer::new();
+ 
+     let (screenshot_layer, screenshot_target) = match mode {
+-      MapConstructionMode::Native => (None, ScreenshotTarget::Native(Vec::new())),
++      MapConstructionMode::Bevy => (None, ScreenshotTarget::Native(Vec::new())),
+       MapConstructionMode::Egui { .. } => {
+         let ctx = ctx
+           .as_ref()
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index c009910..ed92e8a 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -37,14 +37,14 @@ pub struct MapApp {
+ #[derive(Clone, Copy)]
+ enum MapUiMode {
+   Egui,
+-  Native,
++  Bevy,
+ }
+ 
+ impl MapUiMode {
+   fn map_frame(self, ctx: &egui::Context) -> egui::Frame {
+     match self {
+       Self::Egui => egui::Frame::default().fill(ctx.style().visuals.panel_fill),
+-      Self::Native => egui::Frame::NONE,
++      Self::Bevy => egui::Frame::NONE,
+     }
+   }
+ }
+@@ -83,7 +83,7 @@ impl MapApp {
+   }
+ 
+   #[allow(clippy::needless_pass_by_value)]
+-  pub fn new_native(
++  pub fn new_bevy(
+     map: Map,
+     remote: Remote,
+     map_content: Rc<dyn MapLayerHolder>,
+@@ -96,10 +96,21 @@ impl MapApp {
+       map_content,
+       config,
+       runtime_monitor,
+-      MapUiMode::Native,
++      MapUiMode::Bevy,
+     )
+   }
+ 
++  #[allow(clippy::needless_pass_by_value)]
++  pub fn new_native(
++    map: Map,
++    remote: Remote,
++    map_content: Rc<dyn MapLayerHolder>,
++    config: Config,
++    runtime_monitor: Option<RuntimeMonitor>,
++  ) -> Self {
++    Self::new_bevy(map, remote, map_content, config, runtime_monitor)
++  }
++
+   fn new_with_ui_mode(
+     map: Map,
+     remote: Remote,
+@@ -239,7 +250,7 @@ impl MapApp {
+     self.show_with_map_layer_controls(ui, &mut |_| {}, None)
+   }
+ 
+-  pub fn show_native(
++  pub fn show_bevy(
+     &mut self,
+     ui: &mut egui::Ui,
+     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
+@@ -248,6 +259,15 @@ impl MapApp {
+     self.show_with_map_layer_controls(ui, map_layer_controls, Some(known_geometry_snapshot))
+   }
+ 
++  pub fn show_native(
++    &mut self,
++    ui: &mut egui::Ui,
++    map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
++    known_geometry_snapshot: KnownNativeGeometrySnapshot,
++  ) -> MapAppOutput {
++    self.show_bevy(ui, map_layer_controls, known_geometry_snapshot)
++  }
++
+   #[allow(clippy::too_many_lines)]
+   fn show_with_map_layer_controls(
+     &mut self,
+@@ -446,7 +466,7 @@ impl MapApp {
+           MapUiMode::Egui => {
+             self.map.ui_egui(ui);
+           }
+-          MapUiMode::Native => {
++          MapUiMode::Bevy => {
+             self.map.ui_native(ui);
+           }
+         }

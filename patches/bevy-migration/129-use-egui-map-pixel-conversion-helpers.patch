@@ -1,0 +1,173 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -130,6 +130,7 @@ Apply these patches in order from the repository root:
+ 126. `126-return-tile-image-from-tile-renderers.patch`
+ 127. `127-keep-tile-image-egui-conversion-in-egui-layer.patch`
+ 128. `128-remove-egui-rect-adapter-from-map-viewport.patch`
++129. `129-use-egui-map-pixel-conversion-helpers.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -20,7 +20,8 @@ use crate::{
+ use arboard::Clipboard;
+ use egui::{InputState, PointerButton, Rect, Response, Sense, Ui};
+ use helpers::{
+-  MAX_ZOOM, MIN_ZOOM, fit_to_screen, point_to_coordinate, set_coordinate_to_pixel, show_box,
++  MAX_ZOOM, MIN_ZOOM, fit_to_screen, pixel_rect_to_rect, pixel_to_pos, point_to_coordinate,
++  pos_to_pixel, rect_to_pixel, set_coordinate_to_pixel, show_box,
+ };
+ use layer::{Layer, TimelineLayer};
+ use log::{debug, warn};
+@@ -212,7 +213,7 @@ impl Map {
+ 
+   pub fn handle_double_click(&mut self, pos: PixelPosition) {
+     log::debug!("Map: Double-click detected at {pos:?}");
+-    let screen_pos: egui::Pos2 = pos.into();
++    let screen_pos = pixel_to_pos(pos);
+ 
+     if let Ok(mut layers) = self.layers.lock() {
+       log::debug!(
+@@ -260,7 +261,7 @@ impl Map {
+ 
+   pub fn open_command_context_menu(&mut self, pos: PixelPosition) {
+     self.right_click = Some(point_to_coordinate(pos, &self.transform));
+-    self.right_click_screen_pos = Some(pos.into());
++    self.right_click_screen_pos = Some(pixel_to_pos(pos));
+     self.right_click_open_requested = true;
+   }
+ 
+@@ -361,10 +362,10 @@ impl Map {
+           }
+ 
+           egui::Key::Minus => {
+-            self.zoom_with_center(0.9, rect.center().into());
++            self.zoom_with_center(0.9, pos_to_pixel(rect.center()));
+           }
+           egui::Key::Plus | egui::Key::Equals => {
+-            self.zoom_with_center(1. / 0.9, rect.center().into());
++            self.zoom_with_center(1. / 0.9, pos_to_pixel(rect.center()));
+           }
+ 
+           egui::Key::F => {
+@@ -402,7 +403,7 @@ impl Map {
+ 
+   pub fn focus_all_layers(&mut self) {
+     if let Some(viewport) = self.last_viewport {
+-      self.show_bounding_box(viewport.rect.into());
++      self.show_bounding_box(pixel_rect_to_rect(viewport.rect));
+     }
+   }
+ 
+@@ -454,7 +455,11 @@ impl Map {
+     self.transform.zoom = transform_zoom_for_tile_zoom(tile_zoom).clamp(1.0, 524_288.0);
+ 
+     // Center the map on the coordinate
+-    helpers::set_coordinate_to_pixel(pixel_coord, rect.center().into(), &mut self.transform);
++    helpers::set_coordinate_to_pixel(
++      pixel_coord,
++      pos_to_pixel(rect.center()),
++      &mut self.transform,
++    );
+ 
+     log::info!(
+       "Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}",
+@@ -507,7 +512,7 @@ impl Map {
+         })
+         .map(|d| (d.y / 1. + 1.).clamp(0.8, 1.4).sqrt());
+       if let Some(delta) = delta {
+-        let cursor = response.hover_pos().unwrap_or_default().into();
++        let cursor = pos_to_pixel(response.hover_pos().unwrap_or_default());
+         self.zoom_with_center(delta, cursor);
+       }
+     }
+@@ -691,7 +696,7 @@ impl Map {
+     if response.double_clicked()
+       && let Some(pos) = response.hover_pos()
+     {
+-      self.handle_double_click(pos.into());
++      self.handle_double_click(pos_to_pixel(pos));
+     }
+ 
+     if !self.right_click_open_requested && !response.context_menu_opened() {
+@@ -700,7 +705,7 @@ impl Map {
+     if response.secondary_clicked()
+       && let Some(pos) = response.hover_pos()
+     {
+-      self.open_command_context_menu(pos.into());
++      self.open_command_context_menu(pos_to_pixel(pos));
+     }
+ 
+     let mut close_menu = false;
+@@ -726,7 +731,7 @@ impl Map {
+         y: response.drag_delta().y,
+       };
+ 
+-      self.handle_command_drag(hover_pos.into(), delta, self.transform);
++      self.handle_command_drag(pos_to_pixel(hover_pos), delta, self.transform);
+     }
+ 
+     if response.dragged() && response.dragged_by(PointerButton::Primary) {
+@@ -819,7 +824,7 @@ impl Map {
+       fit_to_screen(&mut self.transform, &rect);
+       set_coordinate_to_pixel(
+         PixelCoordinate { x: 500., y: 500. },
+-        rect.center().into(),
++        pos_to_pixel(rect.center()),
+         &mut self.transform,
+       );
+ 
+@@ -835,7 +840,7 @@ impl Map {
+     fit_to_screen(&mut self.transform, &rect);
+     self.last_viewport = Some(MapViewport {
+       transform: self.transform,
+-      rect: rect.into(),
++      rect: rect_to_pixel(rect),
+     });
+   }
+ 
+diff --git a/src/map/mapvas_egui/helpers.rs b/src/map/mapvas_egui/helpers.rs
+--- a/src/map/mapvas_egui/helpers.rs
++++ b/src/map/mapvas_egui/helpers.rs
+@@ -3,12 +3,28 @@ use std::path::PathBuf;
+ use egui::Rect;
+ 
+ use crate::map::coordinates::{
+-  BoundingBox, CANVAS_SIZE, PixelCoordinate, PixelPosition, Transform,
++  BoundingBox, CANVAS_SIZE, PixelCoordinate, PixelPosition, PixelRect, Transform,
+ };
+ 
+ pub const MAX_ZOOM: f32 = 524_288.;
+ pub const MIN_ZOOM: f32 = 1.;
+ 
++pub(crate) fn pos_to_pixel(pos: egui::Pos2) -> PixelPosition {
++  PixelPosition { x: pos.x, y: pos.y }
++}
++
++pub(crate) fn pixel_to_pos(pos: PixelPosition) -> egui::Pos2 {
++  egui::pos2(pos.x, pos.y)
++}
++
++pub(crate) fn rect_to_pixel(rect: Rect) -> PixelRect {
++  PixelRect::from_min_max(pos_to_pixel(rect.min), pos_to_pixel(rect.max))
++}
++
++pub(crate) fn pixel_rect_to_rect(rect: PixelRect) -> Rect {
++  Rect::from_min_max(pixel_to_pos(rect.min), pixel_to_pos(rect.max))
++}
++
+ /// Sets a coordinate to the position in the map.
+ pub(crate) fn set_coordinate_to_pixel(
+   coord: PixelCoordinate,
+@@ -92,7 +108,7 @@ pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect)
+     let height_zoom: f32 = 1. / (bb.height() * transform.zoom / rect.height());
+     transform.zoom(width_zoom.min(height_zoom));
+     transform.zoom(0.95);
+-    set_coordinate_to_pixel(bb.center(), rect.center().into(), transform);
++    set_coordinate_to_pixel(bb.center(), pos_to_pixel(rect.center()), transform);
+   }
+ }
+ 

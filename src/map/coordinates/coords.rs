@@ -67,15 +67,112 @@ impl From<WGS84Coordinate> for PixelCoordinate {
   }
 }
 
-impl From<egui::Pos2> for PixelPosition {
-  fn from(pos: egui::Pos2) -> Self {
-    PixelPosition { x: pos.x, y: pos.y }
-  }
+#[derive(Debug, Default, PartialEq, Copy, Clone, Serialize, Deserialize)]
+pub struct PixelRect {
+  pub min: PixelPosition,
+  pub max: PixelPosition,
 }
 
-impl From<PixelPosition> for egui::Pos2 {
-  fn from(pp: PixelPosition) -> Self {
-    egui::Pos2::new(pp.x, pp.y)
+impl Eq for PixelRect {}
+
+impl PixelRect {
+  #[must_use]
+  pub fn from_min_max(min: PixelPosition, max: PixelPosition) -> Self {
+    Self { min, max }
+  }
+
+  #[must_use]
+  pub fn from_min_size(min: PixelPosition, size: PixelPosition) -> Self {
+    Self {
+      min,
+      max: min + size,
+    }
+  }
+
+  #[must_use]
+  pub fn width(&self) -> f32 {
+    self.max.x - self.min.x
+  }
+
+  #[must_use]
+  pub fn height(&self) -> f32 {
+    self.max.y - self.min.y
+  }
+
+  #[must_use]
+  pub fn size(&self) -> PixelPosition {
+    PixelPosition {
+      x: self.width(),
+      y: self.height(),
+    }
+  }
+
+  #[must_use]
+  pub fn center(&self) -> PixelPosition {
+    PixelPosition {
+      x: (self.min.x + self.max.x) * 0.5,
+      y: (self.min.y + self.max.y) * 0.5,
+    }
+  }
+
+  #[must_use]
+  pub fn expand(&self, by: f32) -> Self {
+    Self {
+      min: PixelPosition {
+        x: self.min.x - by,
+        y: self.min.y - by,
+      },
+      max: PixelPosition {
+        x: self.max.x + by,
+        y: self.max.y + by,
+      },
+    }
+  }
+
+  #[must_use]
+  pub fn union(&self, other: Self) -> Self {
+    Self {
+      min: PixelPosition {
+        x: self.min.x.min(other.min.x),
+        y: self.min.y.min(other.min.y),
+      },
+      max: PixelPosition {
+        x: self.max.x.max(other.max.x),
+        y: self.max.y.max(other.max.y),
+      },
+    }
+  }
+
+  #[must_use]
+  pub fn intersect(&self, other: Self) -> Self {
+    Self {
+      min: PixelPosition {
+        x: self.min.x.max(other.min.x),
+        y: self.min.y.max(other.min.y),
+      },
+      max: PixelPosition {
+        x: self.max.x.min(other.max.x),
+        y: self.max.y.min(other.max.y),
+      },
+    }
+  }
+
+  #[must_use]
+  pub fn contains(&self, pos: PixelPosition) -> bool {
+    self.min.x <= pos.x && pos.x <= self.max.x && self.min.y <= pos.y && pos.y <= self.max.y
+  }
+
+  #[must_use]
+  pub fn intersects(&self, other: Self) -> bool {
+    self.min.x <= other.max.x
+      && other.min.x <= self.max.x
+      && self.min.y <= other.max.y
+      && other.min.y <= self.max.y
+  }
+
+  #[must_use]
+  pub fn exact_eq(&self, other: &Self) -> bool {
+    self.min.exact_eq(&other.min) && self.max.exact_eq(&other.max)
   }
 }
 
@@ -306,7 +403,7 @@ impl WGS84Coordinate {
   }
 }
 
-/// Meant for actual pixel in the UI. Handled equivalently to a ``egui::Pos2``.
+/// Meant for an actual UI pixel position.
 #[derive(Debug, Default, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub struct PixelPosition {
   pub x: f32,
@@ -537,15 +634,38 @@ mod tests {
   }
 
   #[test]
-  fn test_pixel_position_from_egui() {
-    let pos = egui::Pos2::new(10.0, 20.0);
-    let pp = PixelPosition::from(pos);
-    assert_eq!(pp.x, 10.0);
-    assert_eq!(pp.y, 20.0);
+  fn test_pixel_rect_helpers() {
+    let rect = PixelRect::from_min_size(
+      PixelPosition { x: 10.0, y: 20.0 },
+      PixelPosition { x: 30.0, y: 40.0 },
+    );
 
-    let back: egui::Pos2 = pp.into();
-    assert_eq!(back.x, 10.0);
-    assert_eq!(back.y, 20.0);
+    assert_eq!(rect.max, PixelPosition { x: 40.0, y: 60.0 });
+    assert_eq!(rect.width(), 30.0);
+    assert_eq!(rect.height(), 40.0);
+    assert_eq!(rect.size(), PixelPosition { x: 30.0, y: 40.0 });
+    assert_eq!(rect.center(), PixelPosition { x: 25.0, y: 40.0 });
+    assert!(rect.contains(PixelPosition { x: 15.0, y: 25.0 }));
+    assert!(!rect.contains(PixelPosition { x: 45.0, y: 25.0 }));
+  }
+
+  #[test]
+  fn test_pixel_rect_intersects() {
+    let rect = PixelRect::from_min_max(
+      PixelPosition { x: 10.0, y: 20.0 },
+      PixelPosition { x: 40.0, y: 60.0 },
+    );
+    let overlapping = PixelRect::from_min_max(
+      PixelPosition { x: 30.0, y: 50.0 },
+      PixelPosition { x: 50.0, y: 80.0 },
+    );
+    let disjoint = PixelRect::from_min_max(
+      PixelPosition { x: 50.0, y: 70.0 },
+      PixelPosition { x: 60.0, y: 80.0 },
+    );
+
+    assert!(rect.intersects(overlapping));
+    assert!(!rect.intersects(disjoint));
   }
 
   #[test]

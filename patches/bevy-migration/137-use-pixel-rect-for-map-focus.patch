@@ -1,0 +1,192 @@
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 4d21320..80297eb 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -20,14 +20,14 @@ use crate::{
+ use arboard::Clipboard;
+ use egui::{InputState, PointerButton, Rect, Response, Sense, Ui};
+ use helpers::{
+-  MAX_ZOOM, MIN_ZOOM, fit_to_screen, pixel_rect_to_rect, pixel_to_pos, point_to_coordinate,
+-  pos_to_pixel, rect_to_pixel, set_coordinate_to_pixel, show_box,
++  MAX_ZOOM, MIN_ZOOM, fit_to_screen, pixel_to_pos, point_to_coordinate, pos_to_pixel,
++  rect_to_pixel, set_coordinate_to_pixel, show_box,
+ };
+ use layer::{Layer, TimelineLayer};
+ use log::{debug, warn};
+ 
+ use super::{
+-  coordinates::{BoundingBox, PixelPosition},
++  coordinates::{BoundingBox, PixelPosition, PixelRect},
+   map_event::MapEvent,
+ };
+ 
+@@ -367,7 +367,7 @@ impl Map {
+           }
+ 
+           egui::Key::F => {
+-            self.show_bounding_box(rect);
++            self.show_bounding_box(rect_to_pixel(rect));
+           }
+ 
+           egui::Key::V => self.paste(),
+@@ -381,7 +381,7 @@ impl Map {
+     }
+   }
+ 
+-  fn show_bounding_box(&mut self, rect: Rect) {
++  fn show_bounding_box(&mut self, rect: PixelRect) {
+     let Ok(layer_guard) = self.layers.try_lock() else {
+       warn!("Failed to lock layers for bounding box calculation");
+       return;
+@@ -401,11 +401,11 @@ impl Map {
+ 
+   pub fn focus_all_layers(&mut self) {
+     if let Some(viewport) = self.last_viewport {
+-      self.show_bounding_box(pixel_rect_to_rect(viewport.rect));
++      self.show_bounding_box(viewport.rect);
+     }
+   }
+ 
+-  fn show_layer_bounding_box(&mut self, id: &str, rect: Rect) {
++  fn show_layer_bounding_box(&mut self, id: &str, rect: PixelRect) {
+     let Ok(layer_guard) = self.layers.try_lock() else {
+       warn!("Failed to lock layers for layer bounding box calculation");
+       return;
+@@ -422,7 +422,7 @@ impl Map {
+     }
+   }
+ 
+-  fn show_shape_bounding_box(&mut self, layer_id: &str, shape_idx: usize, rect: Rect) {
++  fn show_shape_bounding_box(&mut self, layer_id: &str, shape_idx: usize, rect: PixelRect) {
+     let Ok(layer_guard) = self.layers.try_lock() else {
+       return;
+     };
+@@ -442,7 +442,7 @@ impl Map {
+     &mut self,
+     coordinate: WGS84Coordinate,
+     zoom_level: Option<u8>,
+-    rect: Rect,
++    rect: PixelRect,
+   ) {
+     use crate::map::coordinates::PixelCoordinate;
+ 
+@@ -453,11 +453,7 @@ impl Map {
+     self.transform.zoom = transform_zoom_for_tile_zoom(tile_zoom).clamp(1.0, 524_288.0);
+ 
+     // Center the map on the coordinate
+-    helpers::set_coordinate_to_pixel(
+-      pixel_coord,
+-      pos_to_pixel(rect.center()),
+-      &mut self.transform,
+-    );
++    helpers::set_coordinate_to_pixel(pixel_coord, rect.center(), &mut self.transform);
+ 
+     log::info!(
+       "Focused on coordinate: {:.4}, {:.4} with transform zoom: {:.2}, tile_zoom: {:?}",
+@@ -536,7 +532,7 @@ impl Map {
+     }
+   }
+ 
+-  fn handle_map_events(&mut self, rect: Rect) {
++  fn handle_map_events(&mut self, rect: PixelRect) {
+     profile_scope!("Map::handle_map_events");
+     let events = self.recv.try_iter().collect::<Vec<_>>();
+ 
+@@ -819,10 +815,11 @@ impl Map {
+ 
+   fn initialize_transform_if_needed(&mut self, rect: Rect) {
+     if self.transform.is_invalid() {
+-      fit_to_screen(&mut self.transform, &rect);
++      let pixel_rect = rect_to_pixel(rect);
++      fit_to_screen(&mut self.transform, pixel_rect);
+       set_coordinate_to_pixel(
+         PixelCoordinate { x: 500., y: 500. },
+-        pos_to_pixel(rect.center()),
++        pixel_rect.center(),
+         &mut self.transform,
+       );
+ 
+@@ -835,10 +832,11 @@ impl Map {
+   }
+ 
+   fn update_frame_viewport(&mut self, rect: Rect) {
+-    fit_to_screen(&mut self.transform, &rect);
++    let pixel_rect = rect_to_pixel(rect);
++    fit_to_screen(&mut self.transform, pixel_rect);
+     self.last_viewport = Some(MapViewport {
+       transform: self.transform,
+-      rect: rect_to_pixel(rect),
++      rect: pixel_rect,
+     });
+   }
+ 
+@@ -850,7 +848,7 @@ impl Map {
+     self.handle_egui_map_input(ui, &response, rect);
+     self.update_frame_viewport(rect);
+     self.draw_egui_layer_frame(ui, rect);
+-    self.handle_map_events(rect);
++    self.handle_map_events(rect_to_pixel(rect));
+ 
+     response
+   }
+@@ -864,7 +862,7 @@ impl Map {
+     self.right_click_open_requested = false;
+     self.update_frame_viewport(rect);
+     self.prepare_native_layer_frame(ui, rect);
+-    self.handle_map_events(rect);
++    self.handle_map_events(rect_to_pixel(rect));
+ 
+     response
+   }
+diff --git a/src/map/mapvas_egui/helpers.rs b/src/map/mapvas_egui/helpers.rs
+index ff0af18..67abd34 100644
+--- a/src/map/mapvas_egui/helpers.rs
++++ b/src/map/mapvas_egui/helpers.rs
+@@ -31,10 +31,6 @@ pub(crate) fn rect_to_pixel(rect: Rect) -> PixelRect {
+   PixelRect::from_min_max(pos_to_pixel(rect.min), pos_to_pixel(rect.max))
+ }
+ 
+-pub(crate) fn pixel_rect_to_rect(rect: PixelRect) -> Rect {
+-  Rect::from_min_max(pixel_to_pos(rect.min), pixel_to_pos(rect.max))
+-}
+-
+ /// Sets a coordinate to the position in the map.
+ pub(crate) fn set_coordinate_to_pixel(
+   coord: PixelCoordinate,
+@@ -57,7 +53,7 @@ pub(crate) fn coordinate_to_point(point: PixelCoordinate, transform: &Transform)
+ }
+ 
+ /// Sets reasonable zoom defaults.
+-pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
++pub(crate) fn fit_to_screen(transform: &mut Transform, rect: PixelRect) {
+   transform.zoom = transform.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+ 
+   let inv = transform.invert();
+@@ -112,13 +108,13 @@ pub(crate) fn fit_to_screen(transform: &mut Transform, rect: &Rect) {
+ }
+ 
+ /// Shows a given bounding box on the map.
+-pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: Rect) {
++pub(crate) fn show_box(transform: &mut Transform, bb: &BoundingBox, rect: PixelRect) {
+   if bb.is_valid() {
+     let width_zoom: f32 = 1. / (bb.width() * transform.zoom / rect.width());
+     let height_zoom: f32 = 1. / (bb.height() * transform.zoom / rect.height());
+     transform.zoom(width_zoom.min(height_zoom));
+     transform.zoom(0.95);
+-    set_coordinate_to_pixel(bb.center(), pos_to_pixel(rect.center()), transform);
++    set_coordinate_to_pixel(bb.center(), rect.center(), transform);
+   }
+ }
+ 
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index a3c7649..873dcc6 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -138,6 +138,7 @@ Apply these patches in order from the repository root:
+ 134. `134-move-neutral-color-module.patch`
+ 135. `135-use-neutral-geometry-style-color.patch`
+ 136. `136-use-pixel-position-for-layer-selection.patch`
++137. `137-use-pixel-rect-for-map-focus.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

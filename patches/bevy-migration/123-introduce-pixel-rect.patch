@@ -1,0 +1,160 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -124,6 +124,7 @@ Apply these patches in order from the repository root:
+ 120. `120-use-pixel-position-for-native-geometry-screen-space.patch`
+ 121. `121-use-pixel-position-for-native-tile-screen-space.patch`
+ 122. `122-use-map-viewport-pixel-accessors.patch`
++123. `123-introduce-pixel-rect.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/map/coordinates/coords.rs b/src/map/coordinates/coords.rs
+--- a/src/map/coordinates/coords.rs
++++ b/src/map/coordinates/coords.rs
+@@ -79,6 +79,88 @@ impl From<PixelPosition> for egui::Pos2 {
+   }
+ }
+ 
++#[derive(Debug, Default, PartialEq, Copy, Clone, Serialize, Deserialize)]
++pub struct PixelRect {
++  pub min: PixelPosition,
++  pub max: PixelPosition,
++}
++
++impl Eq for PixelRect {}
++
++impl PixelRect {
++  #[must_use]
++  pub fn from_min_max(min: PixelPosition, max: PixelPosition) -> Self {
++    Self { min, max }
++  }
++
++  #[must_use]
++  pub fn from_min_size(min: PixelPosition, size: PixelPosition) -> Self {
++    Self {
++      min,
++      max: min + size,
++    }
++  }
++
++  #[must_use]
++  pub fn width(&self) -> f32 {
++    self.max.x - self.min.x
++  }
++
++  #[must_use]
++  pub fn height(&self) -> f32 {
++    self.max.y - self.min.y
++  }
++
++  #[must_use]
++  pub fn size(&self) -> PixelPosition {
++    PixelPosition {
++      x: self.width(),
++      y: self.height(),
++    }
++  }
++
++  #[must_use]
++  pub fn center(&self) -> PixelPosition {
++    PixelPosition {
++      x: (self.min.x + self.max.x) * 0.5,
++      y: (self.min.y + self.max.y) * 0.5,
++    }
++  }
++
++  #[must_use]
++  pub fn contains(&self, pos: PixelPosition) -> bool {
++    self.min.x <= pos.x && pos.x <= self.max.x && self.min.y <= pos.y && pos.y <= self.max.y
++  }
++
++  #[must_use]
++  pub fn intersects(&self, other: Self) -> bool {
++    self.min.x <= other.max.x
++      && other.min.x <= self.max.x
++      && self.min.y <= other.max.y
++      && other.min.y <= self.max.y
++  }
++
++  #[must_use]
++  pub fn exact_eq(&self, other: &Self) -> bool {
++    self.min.exact_eq(&other.min) && self.max.exact_eq(&other.max)
++  }
++}
++
++impl From<egui::Rect> for PixelRect {
++  fn from(rect: egui::Rect) -> Self {
++    Self {
++      min: rect.min.into(),
++      max: rect.max.into(),
++    }
++  }
++}
++
++impl From<PixelRect> for egui::Rect {
++  fn from(rect: PixelRect) -> Self {
++    egui::Rect::from_min_max(rect.min.into(), rect.max.into())
++  }
++}
++
+ impl PixelCoordinate {
+   #[must_use]
+   pub fn clamp(&self) -> Self {
+@@ -546,9 +628,56 @@ mod tests {
+     let back: egui::Pos2 = pp.into();
+     assert_eq!(back.x, 10.0);
+     assert_eq!(back.y, 20.0);
++  }
++
++  #[test]
++  fn test_pixel_rect_helpers() {
++    let rect = PixelRect::from_min_size(
++      PixelPosition { x: 10.0, y: 20.0 },
++      PixelPosition { x: 30.0, y: 40.0 },
++    );
++
++    assert_eq!(rect.max, PixelPosition { x: 40.0, y: 60.0 });
++    assert_eq!(rect.width(), 30.0);
++    assert_eq!(rect.height(), 40.0);
++    assert_eq!(rect.size(), PixelPosition { x: 30.0, y: 40.0 });
++    assert_eq!(rect.center(), PixelPosition { x: 25.0, y: 40.0 });
++    assert!(rect.contains(PixelPosition { x: 15.0, y: 25.0 }));
++    assert!(!rect.contains(PixelPosition { x: 45.0, y: 25.0 }));
+   }
+ 
+   #[test]
++  fn test_pixel_rect_intersects() {
++    let rect = PixelRect::from_min_max(
++      PixelPosition { x: 10.0, y: 20.0 },
++      PixelPosition { x: 40.0, y: 60.0 },
++    );
++    let overlapping = PixelRect::from_min_max(
++      PixelPosition { x: 30.0, y: 50.0 },
++      PixelPosition { x: 50.0, y: 80.0 },
++    );
++    let disjoint = PixelRect::from_min_max(
++      PixelPosition { x: 50.0, y: 70.0 },
++      PixelPosition { x: 60.0, y: 80.0 },
++    );
++
++    assert!(rect.intersects(overlapping));
++    assert!(!rect.intersects(disjoint));
++  }
++
++  #[test]
++  fn test_pixel_rect_from_egui() {
++    let rect = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(30.0, 40.0));
++    let pixel_rect = PixelRect::from(rect);
++    assert_eq!(pixel_rect.min, PixelPosition { x: 10.0, y: 20.0 });
++    assert_eq!(pixel_rect.max, PixelPosition { x: 30.0, y: 40.0 });
++
++    let back: egui::Rect = pixel_rect.into();
++    assert_eq!(back.min, rect.min);
++    assert_eq!(back.max, rect.max);
++  }
++
++  #[test]
+   fn test_xy_trait() {
+     let pc = PixelCoordinate::new(5.0, 10.0);
+     assert_eq!(pc.x(), 5.0);

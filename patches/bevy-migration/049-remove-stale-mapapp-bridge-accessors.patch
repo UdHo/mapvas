@@ -1,0 +1,87 @@
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -37,7 +37,6 @@
+ pub struct MapAppOutput {
+   pub viewport: Option<MapViewport>,
+   pub current_config: Config,
+-  pub geometry_snapshot_version: u64,
+   pub geometry_snapshot: Option<GeometrySnapshot>,
+ }
+ 
+@@ -85,39 +84,6 @@
+   }
+ 
+   #[must_use]
+-  pub fn map_transform(&self) -> crate::map::coordinates::Transform {
+-    self.map.transform()
+-  }
+-
+-  #[must_use]
+-  pub fn viewport(&self) -> Option<crate::map::viewport::MapViewport> {
+-    self.map.viewport()
+-  }
+-
+-  #[must_use]
+-  pub fn geometry_snapshot(&self) -> crate::map::viewport::GeometrySnapshot {
+-    self.map.geometry_snapshot()
+-  }
+-
+-  #[must_use]
+-  pub fn geometry_snapshot_since(
+-    &self,
+-    geometry_version: u64,
+-  ) -> crate::map::viewport::GeometrySnapshot {
+-    self.map.geometry_snapshot_since(geometry_version)
+-  }
+-
+-  #[must_use]
+-  pub fn geometry_snapshot_version(&self) -> u64 {
+-    self.map.geometry_snapshot_version()
+-  }
+-
+-  #[must_use]
+-  pub fn current_config(&self) -> Config {
+-    self.settings_dialog.borrow().get_current_config()
+-  }
+-
+-  #[must_use]
+   pub fn has_pending_work(&self) -> bool {
+     self.map.has_pending_work()
+   }
+@@ -406,7 +372,6 @@
+     MapAppOutput {
+       viewport: self.map.viewport(),
+       current_config: self.settings_dialog.borrow().get_current_config(),
+-      geometry_snapshot_version,
+       geometry_snapshot,
+     }
+   }
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -752,16 +752,6 @@
+ 
+   pub fn set_transform(&mut self, transform: Transform) {
+     self.transform = transform;
+-  }
+-
+-  #[must_use]
+-  pub fn transform(&self) -> Transform {
+-    self.transform
+-  }
+-
+-  #[must_use]
+-  pub fn geometry_snapshot(&self) -> GeometrySnapshot {
+-    self.geometry_snapshot_since_version(None)
+   }
+ 
+   #[must_use]
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -50,6 +50,7 @@
+ 46. `046-return-native-geometry-snapshot-in-frame-output.patch`
+ 47. `047-use-mapapp-show-in-tests.patch`
+ 48. `048-remove-direct-eframe-dev-dependency.patch`
++49. `049-remove-stale-mapapp-bridge-accessors.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.

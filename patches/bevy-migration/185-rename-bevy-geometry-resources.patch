@@ -1,0 +1,463 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index 6394215..5e148e4 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -186,6 +186,7 @@ Apply these patches in order from the repository root:
+ 182. `182-add-explicit-bevy-map-surface-methods.patch`
+ 183. `183-rename-bevy-repaint-screenshot-resources.patch`
+ 184. `184-rename-bevy-map-input-resources.patch`
++185. `185-rename-bevy-geometry-resources.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index 57cd0b9..d79c8ef 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -9,7 +9,7 @@ use mapvas::{
+ use tokio_metrics::RuntimeMonitor;
+ 
+ use crate::{
+-  bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin},
++  bevy_geometry::{BevyGeometryLayer, BevyGeometryPlugin},
+   bevy_map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
+   bevy_repaint::{BevyRepaintPlugin, BevyRepaintRequests},
+   bevy_screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
+@@ -113,7 +113,7 @@ fn handle_bevy_map_shortcut(app: &mut MapApp, shortcut: BevyMapShortcut) {
+ fn apply_map_app_output(
+   output: MapAppOutput,
+   bevy_viewport: &mut BevyMapViewport,
+-  native_geometry: &mut NativeGeometryLayer,
++  bevy_geometry: &mut BevyGeometryLayer,
+   bevy_screenshots: &mut BevyScreenshotRequests,
+   native_tiles: &mut NativeTileLayer,
+   app_exit: &mut MessageWriter<AppExit>,
+@@ -123,11 +123,11 @@ fn apply_map_app_output(
+   }
+   bevy_viewport.set(output.viewport);
+   if let Some(snapshot) = output.bevy_geometry_snapshot {
+-    native_geometry.update_snapshot(snapshot);
++    bevy_geometry.update_snapshot(snapshot);
+   }
+   if let Some(config) = output.config_update {
+     native_tiles.update_config(&config);
+-    native_geometry.update_config(&config);
++    bevy_geometry.update_config(&config);
+   }
+   if output.quit_requested {
+     app_exit.write(AppExit::Success);
+@@ -139,7 +139,7 @@ fn mapvas_ui_system(
+   mut state: NonSendMut<MapvasBevyState>,
+   mut bevy_map: ResMut<BevyMapControl>,
+   mut bevy_viewport: ResMut<BevyMapViewport>,
+-  mut native_geometry: ResMut<NativeGeometryLayer>,
++  mut bevy_geometry: ResMut<BevyGeometryLayer>,
+   mut bevy_screenshots: ResMut<BevyScreenshotRequests>,
+   mut native_tiles: ResMut<NativeTileLayer>,
+   mut app_exit: MessageWriter<AppExit>,
+@@ -161,13 +161,13 @@ fn mapvas_ui_system(
+         app.handle_bevy_map_hover(bevy_map.hover_pos());
+         {
+           let known_geometry_snapshot = KnownBevyGeometrySnapshot {
+-            snapshot_version: native_geometry.snapshot_version(),
+-            geometry_version: native_geometry.geometry_version(),
++            snapshot_version: bevy_geometry.snapshot_version(),
++            geometry_version: bevy_geometry.geometry_version(),
+           };
+           let mut map_layer_controls = |ui: &mut egui::Ui| {
+             bevy_map.ui(ui, bevy_viewport.get());
+             native_tiles.ui(ui);
+-            native_geometry.ui(ui);
++            bevy_geometry.ui(ui);
+           };
+           output = Some(app.show_bevy(ui, &mut map_layer_controls, known_geometry_snapshot));
+         }
+@@ -177,7 +177,7 @@ fn mapvas_ui_system(
+     apply_map_app_output(
+       output,
+       &mut bevy_viewport,
+-      &mut native_geometry,
++      &mut bevy_geometry,
+       &mut bevy_screenshots,
+       &mut native_tiles,
+       &mut app_exit,
+@@ -209,7 +209,7 @@ pub(crate) fn run() {
+       config.clone(),
+       repaint_signal,
+     ))
+-    .init_resource::<NativeGeometryLayer>()
++    .init_resource::<BevyGeometryLayer>()
+     .insert_resource(NativeTileRuntime(runtime_handle))
+     .insert_resource(NativeTileLayer::new(config))
+     .add_plugins(
+@@ -229,7 +229,7 @@ pub(crate) fn run() {
+     .add_plugins(BevyRepaintPlugin)
+     .add_plugins(BevyScreenshotPlugin)
+     .add_plugins(NativeTilePlugin)
+-    .add_plugins(NativeGeometryPlugin)
++    .add_plugins(BevyGeometryPlugin)
+     .add_systems(Startup, setup_camera)
+     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
+     .run();
+diff --git a/src/bin/mapvas/bevy_geometry.rs b/src/bin/mapvas/bevy_geometry.rs
+index 06d720a..84359a5 100644
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -25,25 +25,25 @@ const GEOMETRY_FILL_Z: f32 = -5.0;
+ const HIGHLIGHT_FILL_Z: f32 = -4.5;
+ const POINT_FILL_Z: f32 = -4.0;
+ 
+-pub struct NativeGeometryPlugin;
++pub struct BevyGeometryPlugin;
+ 
+-impl Plugin for NativeGeometryPlugin {
++impl Plugin for BevyGeometryPlugin {
+   fn build(&self, app: &mut App) {
+     app
+-      .init_gizmo_group::<NativeGeometryGizmos>()
+-      .init_gizmo_group::<NativeHighlightGizmos>()
+-      .add_systems(Startup, configure_native_geometry_gizmos)
+-      .add_systems(Update, draw_native_geometry);
++      .init_gizmo_group::<BevyGeometryGizmos>()
++      .init_gizmo_group::<BevyHighlightGizmos>()
++      .add_systems(Startup, configure_bevy_geometry_gizmos)
++      .add_systems(Update, draw_bevy_geometry);
+   }
+ }
+ 
+ #[derive(Default, Reflect, GizmoConfigGroup)]
+ #[reflect(Default)]
+-struct NativeGeometryGizmos;
++struct BevyGeometryGizmos;
+ 
+ #[derive(Default, Reflect, GizmoConfigGroup)]
+ #[reflect(Default)]
+-struct NativeHighlightGizmos;
++struct BevyHighlightGizmos;
+ 
+ #[derive(Clone, Copy, Default)]
+ struct GeometryStats {
+@@ -55,7 +55,7 @@ struct GeometryStats {
+ }
+ 
+ #[derive(Resource)]
+-pub struct NativeGeometryLayer {
++pub struct BevyGeometryLayer {
+   enabled: bool,
+   snapshot_version: u64,
+   geometries_version: u64,
+@@ -72,7 +72,7 @@ pub struct NativeGeometryLayer {
+   heading_style: HeadingStyle,
+ }
+ 
+-impl Default for NativeGeometryLayer {
++impl Default for BevyGeometryLayer {
+   fn default() -> Self {
+     Self {
+       enabled: true,
+@@ -102,19 +102,19 @@ struct GeometryBounds {
+ }
+ 
+ #[derive(Component)]
+-struct NativePolygonFill {
++struct BevyPolygonFill {
+   bounds: GeometryBounds,
+   wrap_offset: f32,
+ }
+ 
+ #[derive(Component)]
+-struct NativeHighlightPolygonFill {
++struct BevyHighlightPolygonFill {
+   bounds: GeometryBounds,
+   wrap_offset: f32,
+ }
+ 
+ #[derive(Component)]
+-struct NativePointFill {
++struct BevyPointFill {
+   coord: PixelCoordinate,
+ }
+ 
+@@ -129,21 +129,21 @@ struct PointFillSpec {
+   color: Color,
+ }
+ 
+-fn configure_native_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+-  let (config, _) = config_store.config_mut::<NativeGeometryGizmos>();
++fn configure_bevy_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
++  let (config, _) = config_store.config_mut::<BevyGeometryGizmos>();
+   config.line.width = GEOMETRY_STROKE_WIDTH;
+   config.line.joints = GizmoLineJoint::Round(4);
+   config.depth_bias = -1.0;
+ 
+-  let (config, _) = config_store.config_mut::<NativeHighlightGizmos>();
++  let (config, _) = config_store.config_mut::<BevyHighlightGizmos>();
+   config.line.width = HIGHLIGHT_STROKE_WIDTH;
+   config.line.joints = GizmoLineJoint::Round(4);
+   config.depth_bias = -1.0;
+ }
+ 
+-impl NativeGeometryLayer {
++impl BevyGeometryLayer {
+   pub fn ui(&mut self, ui: &mut egui::Ui) {
+-    ui.collapsing("Native Geometry Layer", |ui| {
++    ui.collapsing("Bevy Geometry Layer", |ui| {
+       ui.checkbox(&mut self.enabled, "visible");
+ 
+       ui.separator();
+@@ -201,33 +201,27 @@ impl NativeGeometryLayer {
+   }
+ }
+ 
+-fn draw_native_geometry(
++fn draw_bevy_geometry(
+   mut commands: Commands,
+-  mut layer: ResMut<NativeGeometryLayer>,
++  mut layer: ResMut<BevyGeometryLayer>,
+   viewport: Res<BevyMapViewport>,
+   windows: Query<&Window, With<PrimaryWindow>>,
+   mut meshes: ResMut<Assets<Mesh>>,
+   mut materials: ResMut<Assets<ColorMaterial>>,
+   mut fills: Query<
+-    (&NativePolygonFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativeHighlightPolygonFill>,
+-      Without<NativePointFill>,
+-    ),
++    (&BevyPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyHighlightPolygonFill>, Without<BevyPointFill>),
+   >,
+   mut highlight_fills: Query<
+-    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+-    (Without<NativePolygonFill>, Without<NativePointFill>),
++    (&BevyHighlightPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyPointFill>),
+   >,
+   mut point_fills: Query<
+-    (&NativePointFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativePolygonFill>,
+-      Without<NativeHighlightPolygonFill>,
+-    ),
++    (&BevyPointFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyHighlightPolygonFill>),
+   >,
+-  mut gizmos: Gizmos<NativeGeometryGizmos>,
+-  mut highlight_gizmos: Gizmos<NativeHighlightGizmos>,
++  mut gizmos: Gizmos<BevyGeometryGizmos>,
++  mut highlight_gizmos: Gizmos<BevyHighlightGizmos>,
+ ) {
+   let mut draw_stats = GeometryStats::default();
+   if !layer.enabled {
+@@ -280,11 +274,8 @@ fn draw_native_geometry(
+ 
+ fn set_fill_visibility(
+   fills: &mut Query<
+-    (&NativePolygonFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativeHighlightPolygonFill>,
+-      Without<NativePointFill>,
+-    ),
++    (&BevyPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyHighlightPolygonFill>, Without<BevyPointFill>),
+   >,
+   visible: bool,
+ ) {
+@@ -299,8 +290,8 @@ fn set_fill_visibility(
+ 
+ fn set_highlight_fill_visibility(
+   fills: &mut Query<
+-    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+-    (Without<NativePolygonFill>, Without<NativePointFill>),
++    (&BevyHighlightPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyPointFill>),
+   >,
+   visible: bool,
+ ) {
+@@ -315,11 +306,8 @@ fn set_highlight_fill_visibility(
+ 
+ fn set_point_fill_visibility(
+   fills: &mut Query<
+-    (&NativePointFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativePolygonFill>,
+-      Without<NativeHighlightPolygonFill>,
+-    ),
++    (&BevyPointFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyHighlightPolygonFill>),
+   >,
+   visible: bool,
+ ) {
+@@ -336,7 +324,7 @@ fn rebuild_polygon_fills_if_needed(
+   commands: &mut Commands,
+   meshes: &mut Assets<Mesh>,
+   materials: &mut Assets<ColorMaterial>,
+-  layer: &mut NativeGeometryLayer,
++  layer: &mut BevyGeometryLayer,
+ ) {
+   if layer.fill_snapshot_version == layer.geometries_version {
+     return;
+@@ -357,7 +345,7 @@ fn rebuild_polygon_fills_if_needed(
+           Mesh2d(mesh.clone()),
+           MeshMaterial2d(material.clone()),
+           Transform::default(),
+-          NativePolygonFill {
++          BevyPolygonFill {
+             bounds: spec.bounds,
+             wrap_offset,
+           },
+@@ -375,7 +363,7 @@ fn rebuild_point_fills_if_needed(
+   commands: &mut Commands,
+   meshes: &mut Assets<Mesh>,
+   materials: &mut Assets<ColorMaterial>,
+-  layer: &mut NativeGeometryLayer,
++  layer: &mut BevyGeometryLayer,
+ ) {
+   if layer.point_fill_snapshot_version == layer.geometries_version {
+     return;
+@@ -396,7 +384,7 @@ fn rebuild_point_fills_if_needed(
+         MeshMaterial2d(material),
+         Transform::default(),
+         Visibility::Hidden,
+-        NativePointFill { coord: spec.coord },
++        BevyPointFill { coord: spec.coord },
+       ))
+       .id();
+     point_fill_entities.push(entity);
+@@ -410,7 +398,7 @@ fn rebuild_highlight_polygon_fills_if_needed(
+   commands: &mut Commands,
+   meshes: &mut Assets<Mesh>,
+   materials: &mut Assets<ColorMaterial>,
+-  layer: &mut NativeGeometryLayer,
++  layer: &mut BevyGeometryLayer,
+ ) {
+   if layer.highlight_fill_snapshot_version == layer.snapshot_version {
+     return;
+@@ -431,7 +419,7 @@ fn rebuild_highlight_polygon_fills_if_needed(
+           Mesh2d(mesh.clone()),
+           MeshMaterial2d(material.clone()),
+           Transform::default(),
+-          NativeHighlightPolygonFill {
++          BevyHighlightPolygonFill {
+             bounds: spec.bounds,
+             wrap_offset,
+           },
+@@ -449,11 +437,8 @@ fn update_polygon_fills(
+   viewport: MapViewport,
+   window: &Window,
+   fills: &mut Query<
+-    (&NativePolygonFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativeHighlightPolygonFill>,
+-      Without<NativePointFill>,
+-    ),
++    (&BevyPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyHighlightPolygonFill>, Without<BevyPointFill>),
+   >,
+ ) {
+   for (fill, mut transform, mut visibility) in fills.iter_mut() {
+@@ -470,8 +455,8 @@ fn update_highlight_polygon_fills(
+   viewport: MapViewport,
+   window: &Window,
+   fills: &mut Query<
+-    (&NativeHighlightPolygonFill, &mut Transform, &mut Visibility),
+-    (Without<NativePolygonFill>, Without<NativePointFill>),
++    (&BevyHighlightPolygonFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyPointFill>),
+   >,
+ ) {
+   for (fill, mut transform, mut visibility) in fills.iter_mut() {
+@@ -489,11 +474,8 @@ fn update_point_fills(
+   window: &Window,
+   left_x: f32,
+   fills: &mut Query<
+-    (&NativePointFill, &mut Transform, &mut Visibility),
+-    (
+-      Without<NativePolygonFill>,
+-      Without<NativeHighlightPolygonFill>,
+-    ),
++    (&BevyPointFill, &mut Transform, &mut Visibility),
++    (Without<BevyPolygonFill>, Without<BevyHighlightPolygonFill>),
+   >,
+ ) {
+   for (fill, mut transform, mut visibility) in fills.iter_mut() {
+@@ -739,7 +721,7 @@ fn draw_geometry(
+   window: &Window,
+   left_x: f32,
+   heading_style: HeadingStyle,
+-  gizmos: &mut Gizmos<NativeGeometryGizmos>,
++  gizmos: &mut Gizmos<BevyGeometryGizmos>,
+   stats: &mut GeometryStats,
+ ) {
+   if !geometry_intersects_viewport(geometry, viewport, left_x) {
+@@ -813,7 +795,7 @@ fn draw_lines(
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos<NativeGeometryGizmos>,
++  gizmos: &mut Gizmos<BevyGeometryGizmos>,
+ ) -> usize {
+   if coords.len() < 2 {
+     return 0;
+@@ -845,7 +827,7 @@ fn draw_segment(
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos<NativeGeometryGizmos>,
++  gizmos: &mut Gizmos<BevyGeometryGizmos>,
+ ) -> bool {
+   let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+     return false;
+@@ -870,7 +852,7 @@ fn draw_highlighted_geometry(
+   viewport: MapViewport,
+   window: &Window,
+   left_x: f32,
+-  gizmos: &mut Gizmos<NativeHighlightGizmos>,
++  gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+   if !geometry_intersects_viewport(geometry, viewport, left_x) {
+     return;
+@@ -928,7 +910,7 @@ fn draw_highlighted_lines(
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos<NativeHighlightGizmos>,
++  gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+   if coords.len() < 2 {
+     return;
+@@ -952,7 +934,7 @@ fn draw_highlighted_segment(
+   window: &Window,
+   left_x: f32,
+   color: Color,
+-  gizmos: &mut Gizmos<NativeHighlightGizmos>,
++  gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+   let Some(screen_start) = coordinate_to_screen(start, viewport, left_x) else {
+     return;
+@@ -972,7 +954,7 @@ fn draw_highlighted_segment(
+ }
+ 
+ fn draw_heading(
+-  gizmos: &mut Gizmos<NativeGeometryGizmos>,
++  gizmos: &mut Gizmos<BevyGeometryGizmos>,
+   center: Vec2,
+   heading_degrees: f32,
+   color: Color,
+@@ -1046,14 +1028,14 @@ fn heading_vectors(heading_degrees: f32) -> (Vec2, Vec2) {
+   (forward, right)
+ }
+ 
+-fn draw_line_loop(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
++fn draw_line_loop(gizmos: &mut Gizmos<BevyGeometryGizmos>, points: &[Vec2], color: Color) {
+   draw_heading_lines(gizmos, points, color);
+   if let (Some(first), Some(last)) = (points.first(), points.last()) {
+     gizmos.line_2d(*last, *first, color);
+   }
+ }
+ 
+-fn draw_heading_lines(gizmos: &mut Gizmos<NativeGeometryGizmos>, points: &[Vec2], color: Color) {
++fn draw_heading_lines(gizmos: &mut Gizmos<BevyGeometryGizmos>, points: &[Vec2], color: Color) {
+   for segment in points.windows(2) {
+     gizmos.line_2d(segment[0], segment[1], color);
+   }

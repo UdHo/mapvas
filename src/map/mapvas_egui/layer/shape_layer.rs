@@ -1,6 +1,6 @@
+use super::super::helpers::{pixel_to_pos, pos_to_pixel};
 use super::{
-  GeometrySnapshot, Layer, LayerProperties, Searchable, SubLayerInfo,
-  geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
+  EguiLayer, EguiMapFrame, geometry_highlighting::GeometryHighlighter, geometry_rasterizer,
 };
 use rstar::{AABB, RTree, RTreeObject};
 
@@ -8,17 +8,20 @@ use crate::{
   config::{Config, HeadingStyle},
   map::{
     coordinates::{
-      BoundingBox, PixelCoordinate, PixelPosition, Tile, TileCoordinate, Transform,
+      BoundingBox, PixelCoordinate, PixelPosition, PixelRect, Tile, TileCoordinate, Transform,
       tile_zoom_for_transform, tiles_in_box,
     },
     geometry_collection::{Geometry, Style},
+    layer::{Layer, LayerProperties, Searchable, SubLayerInfo},
     map_event::{Layer as EventLayer, MapEvent},
+    viewport::GeometrySnapshot,
   },
   profile_scope,
+  remote::RepaintSignal,
   task_tracker::{TaskCategory, TaskGuard},
 };
 use chrono::{DateTime, Duration, Utc};
-use egui::{Color32, ColorImage, Pos2, Rect, Ui};
+use egui::{Color32, ColorImage, Ui};
 use regex::Regex;
 use std::{
   collections::{HashMap, HashSet},
@@ -91,7 +94,7 @@ pub struct ShapeLayer {
   /// Scheduler task handles for queued (not yet executing) geo tile renders.
   /// Used to bump prefetch tiles to Current priority when they become visible.
   geo_tile_handles: HashMap<Tile, crate::render_scheduler::TaskHandle>,
-  ctx: egui::Context,
+  repaint: RepaintSignal,
   /// When true, render geo tiles synchronously (used in headless/test mode).
   headless: bool,
   /// Receives sub-layer visibility toggle commands from the HTTP server.
@@ -121,7 +124,7 @@ pub(super) struct HighlightCacheKey {
 pub(super) struct HighlightTextureCache {
   key: HighlightCacheKey,
   texture: egui::TextureHandle,
-  screen_rect: egui::Rect,
+  screen_rect: PixelRect,
 }
 
 mod search;
@@ -151,9 +154,12 @@ fn rasterize_geo_tile_to_image(
     });
 
   #[allow(clippy::cast_precision_loss)]
-  let tile_rect = egui::Rect::from_min_max(
-    egui::pos2(0.0, 0.0),
-    egui::pos2(GEO_TILE_PIXEL_SIZE as f32, GEO_TILE_PIXEL_SIZE as f32),
+  let tile_rect = PixelRect::from_min_size(
+    PixelPosition { x: 0.0, y: 0.0 },
+    PixelPosition {
+      x: GEO_TILE_PIXEL_SIZE as f32,
+      y: GEO_TILE_PIXEL_SIZE as f32,
+    },
   );
 
   let pixmap = geometry_rasterizer::rasterize_geometries(
@@ -205,7 +211,7 @@ impl ShapeLayer {
   #[must_use]
   pub fn new(
     config: Config,
-    ctx: egui::Context,
+    repaint: RepaintSignal,
     shape_info: Arc<
       std::sync::RwLock<std::collections::HashMap<String, Vec<crate::remote::ShapeInfo>>>,
     >,
@@ -241,7 +247,7 @@ impl ShapeLayer {
       geo_tile_receiver,
       in_flight_geo_tiles: Arc::new(Mutex::new(HashSet::new())),
       geo_tile_handles: HashMap::new(),
-      ctx,
+      repaint,
       headless: false,
       vis_receiver,
       vis_sender,
@@ -265,11 +271,11 @@ impl ShapeLayer {
   }
 
   /// Update highlighting based on mouse hover position
-  fn update_hover_highlighting(&mut self, mouse_pos: egui::Pos2, transform: &Transform) {
+  fn update_hover_highlighting(&mut self, mouse_pos: PixelPosition, transform: &Transform) {
     profile_scope!("ShapeLayer::update_hover_highlighting");
 
     // Use the R-tree to find only geometries near the mouse cursor.
-    let world_pos = transform.invert().apply(mouse_pos.into());
+    let world_pos = transform.invert().apply(mouse_pos);
     #[allow(clippy::cast_possible_truncation)]
     let world_radius = HIGLIGHT_PIXEL_DISTANCE as f32 / transform.zoom;
     let query = AABB::from_corners(
@@ -381,7 +387,7 @@ impl ShapeLayer {
     self.cache_version = self.version;
   }
 
-  fn prepare_interaction_frame(&mut self, ui: &egui::Ui, transform: &Transform) -> bool {
+  fn prepare_egui_draw_frame(&mut self, ui: &egui::Ui, transform: &Transform) -> bool {
     self.current_transform = *transform;
     self.handle_new_shapes();
 
@@ -390,7 +396,7 @@ impl ShapeLayer {
     }
 
     if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
-      self.update_hover_highlighting(mouse_pos, transform);
+      self.update_hover_highlighting(pos_to_pixel(mouse_pos), transform);
     }
 
     true
@@ -510,12 +516,12 @@ impl ShapeLayer {
 
   /// Return the `Tile`s visible in the current viewport, using the same zoom formula as `TileLayer`.
   #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-  fn compute_visible_geo_tiles(transform: &Transform, rect: Rect) -> Vec<Tile> {
+  fn compute_visible_geo_tiles(transform: &Transform, rect: PixelRect) -> Vec<Tile> {
     let zoom = tile_zoom_for_transform(transform);
     let zoom = zoom.min(19); // cap at OSM max zoom to avoid explosion of tiny tiles
     let inv = transform.invert();
-    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min.into()), zoom);
-    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max.into()), zoom);
+    let min_pos = TileCoordinate::from_pixel_position(inv.apply(rect.min), zoom);
+    let max_pos = TileCoordinate::from_pixel_position(inv.apply(rect.max), zoom);
     tiles_in_box(min_pos, max_pos).collect()
   }
 
@@ -559,12 +565,12 @@ impl ShapeLayer {
     transform: &Transform,
   ) {
     let (nw, se) = tile.position();
-    let screen_nw: egui::Pos2 = transform.apply(nw).into();
-    let screen_se: egui::Pos2 = transform.apply(se).into();
-    let tile_rect = egui::Rect::from_min_max(screen_nw, screen_se);
+    let tile_rect = PixelRect::from_min_max(transform.apply(nw), transform.apply(se));
+    let egui_tile_rect =
+      egui::Rect::from_min_max(pixel_to_pos(tile_rect.min), pixel_to_pos(tile_rect.max));
     painter.image(
       handle.id(),
-      tile_rect,
+      egui_tile_rect,
       egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
       Color32::WHITE,
     );
@@ -657,8 +663,7 @@ impl ShapeLayer {
     else {
       return Vec::new();
     };
-    if !nested_path.is_empty()
-      || !*self.layer_visibility.get(&layer_id).unwrap_or(&true)
+    if !*self.layer_visibility.get(&layer_id).unwrap_or(&true)
       || !*self
         .geometry_visibility
         .get(&(layer_id.clone(), shape_idx))
@@ -680,7 +685,7 @@ impl ShapeLayer {
 
     let default_style = Style::default();
     self
-      .filter_nested_visibility(&layer_id, shape_idx, &[], shape)
+      .highlighted_path_geometry(&layer_id, shape_idx, &[], &nested_path, shape)
       .map(|geometry| {
         geometry
           .flat_iterate_with_merged_style(&default_style)
@@ -690,56 +695,60 @@ impl ShapeLayer {
       .unwrap_or_default()
   }
 
+  fn highlighted_path_geometry(
+    &self,
+    layer_id: &str,
+    shape_idx: usize,
+    current_path: &[usize],
+    target_path: &[usize],
+    geometry: &Geometry<PixelCoordinate>,
+  ) -> Option<Geometry<PixelCoordinate>> {
+    let key = (layer_id.to_string(), shape_idx, current_path.to_vec());
+    if !*self.nested_geometry_visibility.get(&key).unwrap_or(&true) {
+      return None;
+    }
+
+    if current_path == target_path {
+      return self.filter_nested_visibility(layer_id, shape_idx, current_path, geometry);
+    }
+
+    let Geometry::GeometryCollection(geometries, metadata) = geometry else {
+      return None;
+    };
+    let child_idx = *target_path.get(current_path.len())?;
+    let child = geometries.get(child_idx)?;
+    let mut child_path = current_path.to_vec();
+    child_path.push(child_idx);
+    let child =
+      self.highlighted_path_geometry(layer_id, shape_idx, &child_path, target_path, child)?;
+    Some(Geometry::GeometryCollection(vec![child], metadata.clone()))
+  }
+
   fn base_geometry_snapshot_version(&self) -> u64 {
     self
       .version
       .wrapping_mul(31)
       .wrapping_add(u64::from(self.visible()))
   }
-}
 
-const NAME: &str = "Shape Layer";
+  fn draw_egui_overlay_content(&mut self, ui: &mut Ui, transform: &Transform) {
+    profile_scope!("ShapeLayer::draw_egui_overlay");
 
-impl Layer for ShapeLayer {
-  /// Get temporal range from all geometries in this layer
-  fn get_temporal_range(
-    &self,
-  ) -> (
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>,
-  ) {
-    self.get_temporal_range()
-  }
-  fn process_pending_events(&mut self) {
-    self.handle_new_shapes();
-    self.sync_geometry_cache();
-  }
-
-  fn discard_pending_events(&mut self) {
-    for _event in self.recv.try_iter() {}
-  }
-
-  fn set_headless(&mut self) {
-    self.headless = true;
-  }
-
-  fn draw_interaction_overlay(&mut self, ui: &mut Ui, transform: &Transform, _rect: Rect) {
-    profile_scope!("ShapeLayer::draw_interaction_overlay");
-
-    if !self.prepare_interaction_frame(ui, transform) {
+    self.current_transform = *transform;
+    if !self.visible() {
       return;
     }
 
-    self.collect_new_geo_tile_data(ui);
-    self.sync_geometry_cache();
     self.draw_detail_popup(ui);
   }
 
   #[allow(clippy::too_many_lines)]
-  fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
-    profile_scope!("ShapeLayer::draw");
+  fn draw_egui_content(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+    profile_scope!("ShapeLayer::draw_egui");
+    let rect = frame.rect;
+    let pixel_rect = frame.pixel_rect;
 
-    if !self.prepare_interaction_frame(ui, transform) {
+    if !self.prepare_egui_draw_frame(ui, transform) {
       return;
     }
 
@@ -758,7 +767,7 @@ impl Layer for ShapeLayer {
     });
     let use_sync_render = self.headless || (!has_heatmap && total_geometries <= 10_000);
     let painter = ui.painter_at(rect);
-    for tile in Self::compute_visible_geo_tiles(transform, rect) {
+    for tile in Self::compute_visible_geo_tiles(transform, pixel_rect) {
       // Quick reject: check if the R-tree has any geometry overlapping this tile.
       let (nw, se) = tile.position();
       let tile_envelope = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
@@ -795,7 +804,7 @@ impl Layer for ShapeLayer {
             } else {
               self.in_flight_geo_tiles.lock().unwrap().insert(tile);
               let sender = self.geo_tile_sender.clone();
-              let ctx = self.ctx.clone();
+              let repaint = self.repaint.clone();
               let in_flight = self.in_flight_geo_tiles.clone();
               let heading_style = self.config.heading_style;
               let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER
@@ -814,7 +823,7 @@ impl Layer for ShapeLayer {
                     in_flight.lock().unwrap().remove(&tile);
                   }
                 }
-                ctx.request_repaint();
+                repaint.request_repaint();
               });
             }
           }
@@ -828,7 +837,7 @@ impl Layer for ShapeLayer {
     // Pre-render tiles one zoom level deeper so they are ready when the user zooms in.
     // Only in async mode — sync mode renders instantly on demand anyway.
     if !use_sync_render {
-      for tile in Self::compute_visible_geo_tiles(transform, rect)
+      for tile in Self::compute_visible_geo_tiles(transform, pixel_rect)
         .into_iter()
         .flat_map(|t| t.children())
       {
@@ -855,7 +864,7 @@ impl Layer for ShapeLayer {
         }
         self.in_flight_geo_tiles.lock().unwrap().insert(tile);
         let sender = self.geo_tile_sender.clone();
-        let ctx = self.ctx.clone();
+        let repaint = self.repaint.clone();
         let in_flight = self.in_flight_geo_tiles.clone();
         let heading_style = self.config.heading_style;
         let (rx, task_handle) = crate::render_scheduler::RENDER_SCHEDULER.submit(
@@ -874,7 +883,7 @@ impl Layer for ShapeLayer {
               in_flight.lock().unwrap().remove(&tile);
             }
           }
-          ctx.request_repaint();
+          repaint.request_repaint();
         });
       }
     }
@@ -882,11 +891,103 @@ impl Layer for ShapeLayer {
     // Draw highlight overlay for the currently-hovered geometry.
     // Polygon fills go through tiny-skia (cached as a texture) to avoid egui's
     // fan-triangulation; points, lines, and polygon strokes go through egui.
-    self.draw_highlight_overlay(ui, transform, rect);
+    self.draw_highlight_overlay(ui, transform, frame);
+  }
+}
 
-    // Handle pending detail popup from double-click as lightweight positioned window
-    // This needs to be in draw() so it shows regardless of sidebar state
-    self.draw_detail_popup(ui);
+const NAME: &str = "Shape Layer";
+
+impl EguiLayer for ShapeLayer {
+  fn draw_egui(&mut self, ui: &mut Ui, transform: &Transform, frame: EguiMapFrame) {
+    self.draw_egui_content(ui, transform, frame);
+  }
+
+  fn draw_egui_overlay(&mut self, ui: &mut Ui, transform: &Transform) {
+    self.draw_egui_overlay_content(ui, transform);
+  }
+
+  fn ui_egui_controls(&mut self, ui: &mut Ui) {
+    let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
+    let layer_id = egui::Id::new("shape_layer_header");
+
+    let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned())
+      .id_salt(layer_id)
+      .default_open(has_highlighted_geometry);
+
+    // Open sidebar on double-click (but not hover)
+    if self.just_double_clicked.is_some() {
+      layer_header = layer_header.open(Some(true));
+    }
+
+    layer_header.show(ui, |ui| {
+      ui.checkbox(self.visible_mut(), "visible");
+      self.ui_egui_content(ui);
+    });
+  }
+
+  fn ui_egui_content(&mut self, ui: &mut Ui) {
+    profile_scope!("ShapeLayer::ui_egui_content");
+    let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
+    let shapes_header_id = egui::Id::new("shapes_header");
+
+    let mut shapes_header = egui::CollapsingHeader::new("Shapes")
+      .id_salt(shapes_header_id)
+      .default_open(has_highlighted_geometry);
+
+    // Open sidebar on double-click (but not hover)
+    if self.just_double_clicked.is_some() {
+      shapes_header = shapes_header.open(Some(true));
+    }
+
+    shapes_header.show(ui, |ui| {
+      self.show_shape_layers(ui);
+    });
+
+    let _ = self.geometry_highlighter.was_just_highlighted();
+    // Clear double-click flag after UI update
+    self.just_double_clicked = None;
+  }
+}
+
+impl Layer for ShapeLayer {
+  /// Get temporal range from all geometries in this layer
+  fn get_temporal_range(
+    &self,
+  ) -> (
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+  ) {
+    self.get_temporal_range()
+  }
+  fn process_pending_events(&mut self) {
+    self.handle_new_shapes();
+    self.sync_geometry_cache();
+  }
+
+  fn discard_pending_events(&mut self) {
+    for _event in self.recv.try_iter() {}
+  }
+
+  fn set_headless(&mut self) {
+    self.headless = true;
+  }
+
+  fn handle_hover(&mut self, pos: Option<PixelPosition>, transform: &Transform) {
+    profile_scope!("ShapeLayer::handle_hover");
+    self.current_transform = *transform;
+    self.handle_new_shapes();
+    self.sync_geometry_cache();
+
+    let Some(pos) = pos else {
+      self.geometry_highlighter.clear_highlighting();
+      return;
+    };
+    if !self.visible() {
+      self.geometry_highlighter.clear_highlighting();
+      return;
+    }
+
+    self.update_hover_highlighting(pos, transform);
   }
 
   fn bounding_box(&self) -> Option<BoundingBox> {
@@ -994,10 +1095,6 @@ impl Layer for ShapeLayer {
     self.base_geometry_snapshot_version()
   }
 
-  fn is_native_geometry_source(&self) -> bool {
-    true
-  }
-
   fn clear(&mut self) {
     self.shape_map.clear();
     self.layer_visibility.clear();
@@ -1021,52 +1118,6 @@ impl Layer for ShapeLayer {
     &mut self.layer_properties.visible
   }
 
-  fn ui(&mut self, ui: &mut Ui) {
-    let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
-    let layer_id = egui::Id::new("shape_layer_header");
-
-    let mut layer_header = egui::CollapsingHeader::new(self.name().to_owned())
-      .id_salt(layer_id)
-      .default_open(has_highlighted_geometry);
-
-    // Open sidebar on double-click (but not hover)
-    if self.just_double_clicked.is_some() {
-      layer_header = layer_header.open(Some(true));
-    }
-
-    layer_header.show(ui, |ui| {
-      ui.checkbox(self.visible_mut(), "visible");
-      self.ui_content(ui);
-    });
-  }
-
-  fn ui_content(&mut self, ui: &mut Ui) {
-    profile_scope!("ShapeLayer::ui_content");
-    let has_highlighted_geometry = self.geometry_highlighter.has_highlighted_geometry();
-    let shapes_header_id = egui::Id::new("shapes_header");
-
-    let mut shapes_header = egui::CollapsingHeader::new("Shapes")
-      .id_salt(shapes_header_id)
-      .default_open(has_highlighted_geometry);
-
-    // Open sidebar on double-click (but not hover)
-    if self.just_double_clicked.is_some() {
-      shapes_header = shapes_header.open(Some(true));
-    }
-
-    shapes_header.show(ui, |ui| {
-      self.show_shape_layers(ui);
-    });
-
-    let _ = self.geometry_highlighter.was_just_highlighted();
-    // Clear double-click flag after UI update
-    self.just_double_clicked = None;
-  }
-
-  fn has_highlighted_geometry(&self) -> bool {
-    self.geometry_highlighter.has_highlighted_geometry()
-  }
-
   fn has_double_click_action(&self) -> bool {
     self.just_double_clicked.is_some()
   }
@@ -1079,8 +1130,12 @@ impl Layer for ShapeLayer {
     Some(self)
   }
 
-  fn closest_geometry_with_selection(&mut self, pos: Pos2, transform: &Transform) -> Option<f64> {
-    let world_pos = transform.invert().apply(pos.into());
+  fn closest_geometry_with_selection(
+    &mut self,
+    click_pos: PixelPosition,
+    transform: &Transform,
+  ) -> Option<f64> {
+    let world_pos = transform.invert().apply(click_pos);
     #[allow(clippy::cast_possible_truncation)]
     let world_radius = HIGLIGHT_PIXEL_DISTANCE as f32 / transform.zoom;
     let query = AABB::from_corners(
@@ -1120,7 +1175,7 @@ impl Layer for ShapeLayer {
         shape_idx,
         &[],
         shape,
-        pos,
+        click_pos,
         transform,
         &mut closest_distance,
         &mut closest_geometry,
@@ -1135,7 +1190,7 @@ impl Layer for ShapeLayer {
           self.generate_geometry_detail_info(&layer_id, shape_idx, &nested_path)
         {
           // Convert click position to world coordinate for tracking
-          let click_world_coord = transform.invert().apply(pos.into());
+          let click_world_coord = transform.invert().apply(click_pos);
 
           // Store current time to ignore immediate clicks
           let creation_time = std::time::SystemTime::now()
@@ -1143,7 +1198,12 @@ impl Layer for ShapeLayer {
             .unwrap_or_default()
             .as_secs_f64();
           // Store click position and its world coordinate
-          self.pending_detail_popup = Some((pos, click_world_coord, detail_info, creation_time));
+          self.pending_detail_popup = Some((
+            pixel_to_pos(click_pos),
+            click_world_coord,
+            detail_info,
+            creation_time,
+          ));
         }
 
         // Handle collection expansion for double-clicks on GeometryCollections
@@ -1235,11 +1295,6 @@ impl Layer for ShapeLayer {
       .fold(BoundingBox::default(), |acc, b| acc.extend(&b));
     bb.is_valid().then_some(bb)
   }
-
-  fn handle_double_click(&mut self, _pos: Pos2, _transform: &Transform) -> bool {
-    // This method is not used - double-click handling happens in closest_geometry_with_selection
-    false
-  }
 }
 
 impl Searchable for ShapeLayer {
@@ -1270,10 +1325,9 @@ impl Searchable for ShapeLayer {
 mod tests {
   use super::*;
   use crate::map::{
-    coordinates::{PixelCoordinate, Transform},
-    geometry_collection::{Geometry, Metadata},
+    coordinates::{PixelCoordinate, PixelPosition, Transform},
+    geometry_collection::{Geometry, Metadata, Style},
   };
-  use egui::Pos2;
   use std::sync::mpsc;
 
   #[test]
@@ -1298,7 +1352,7 @@ mod tests {
     let transform = Transform::default();
 
     // Test case 1: Click closest to point1 (100, 100)
-    let click_pos = Pos2::new(105.0, 105.0); // Very close to point1
+    let click_pos = PixelPosition { x: 105.0, y: 105.0 }; // Very close to point1
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
@@ -1322,7 +1376,7 @@ mod tests {
     assert!(closest_distance < 10.0); // Should be very close
 
     // Test case 2: Click closest to point2 (200, 200)
-    let click_pos = Pos2::new(195.0, 195.0); // Very close to point2
+    let click_pos = PixelPosition { x: 195.0, y: 195.0 }; // Very close to point2
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
@@ -1346,7 +1400,7 @@ mod tests {
     assert!(closest_distance < 10.0); // Should be very close
 
     // Test case 3: Click closest to line1 (around 155, 155)
-    let click_pos = Pos2::new(155.0, 155.0); // On the line
+    let click_pos = PixelPosition { x: 155.0, y: 155.0 }; // On the line
     let mut closest_distance = f64::INFINITY;
     let mut closest_geometry: Option<(String, usize, Vec<usize>)> = None;
 
@@ -1370,6 +1424,41 @@ mod tests {
     assert!(closest_distance < 10.0); // Should be close to the line
   }
 
+  #[test]
+  fn highlighted_geometry_snapshot_includes_nested_geometry_with_parent_style() {
+    let mut shape_layer = ShapeLayer::new_with_test_receiver();
+    let layer_id = "test_layer".to_string();
+    let parent_style = Style::default().with_color(crate::map::color::Color::RED);
+    let point1 = Geometry::Point(PixelCoordinate { x: 100.0, y: 100.0 }, Metadata::default());
+    let point2 = Geometry::Point(PixelCoordinate { x: 200.0, y: 200.0 }, Metadata::default());
+    let collection = Geometry::GeometryCollection(
+      vec![point1, point2],
+      Metadata::default().with_style(parent_style),
+    );
+
+    shape_layer
+      .shape_map
+      .insert(layer_id.clone(), vec![collection]);
+    shape_layer.layer_visibility.insert(layer_id.clone(), true);
+    shape_layer
+      .geometry_visibility
+      .insert((layer_id.clone(), 0), true);
+    shape_layer
+      .geometry_highlighter
+      .highlight_geometry(&layer_id, 0, &[1]);
+
+    let snapshot = shape_layer.highlighted_geometry_snapshot();
+    assert_eq!(snapshot.len(), 1);
+    let Geometry::Point(coord, metadata) = &snapshot[0] else {
+      panic!("expected nested point highlight");
+    };
+    assert_eq!(*coord, PixelCoordinate { x: 200.0, y: 200.0 });
+    assert_eq!(
+      metadata.style.as_ref().map(Style::color),
+      Some(crate::map::color::Color::RED)
+    );
+  }
+
   impl ShapeLayer {
     // Helper method for testing
     #[allow(clippy::arc_with_non_send_sync)]
@@ -1383,7 +1472,7 @@ mod tests {
         nested_geometry_visibility: HashMap::new(),
         recv: Arc::new(recv),
         send,
-        layer_properties: crate::map::mapvas_egui::layer::LayerProperties { visible: true },
+        layer_properties: crate::map::layer::LayerProperties { visible: true },
         geometry_highlighter: GeometryHighlighter::new(),
         config: crate::config::Config::new(),
         temporal_current_time: None,
@@ -1407,7 +1496,7 @@ mod tests {
         },
         in_flight_geo_tiles: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         geo_tile_handles: HashMap::new(),
-        ctx: egui::Context::default(),
+        repaint: RepaintSignal::egui(egui::Context::default()),
         headless: false,
         vis_receiver: {
           let (_, r) = mpsc::channel();
