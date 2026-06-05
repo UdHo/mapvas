@@ -1,0 +1,308 @@
+diff --git a/patches/bevy-migration/README.md b/patches/bevy-migration/README.md
+index a872801..976f670 100644
+--- a/patches/bevy-migration/README.md
++++ b/patches/bevy-migration/README.md
+@@ -203,6 +203,7 @@ Apply these patches in order from the repository root:
+ 199. `199-use-shared-wrap-offset-for-bevy-line-segments.patch`
+ 200. `200-draw-all-visible-bevy-tile-world-copies.patch`
+ 201. `201-draw-all-visible-bevy-geometry-world-copies.patch`
++202. `202-block-bevy-map-input-over-timeline.patch`
+ 
+ Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
+ The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
+diff --git a/src/bin/mapvas/bevy_app.rs b/src/bin/mapvas/bevy_app.rs
+index 42d08d4..d7e1851 100644
+--- a/src/bin/mapvas/bevy_app.rs
++++ b/src/bin/mapvas/bevy_app.rs
+@@ -112,12 +112,14 @@ fn handle_bevy_map_shortcut(app: &mut MapApp, shortcut: BevyMapShortcut) {
+ 
+ fn apply_map_app_output(
+   output: MapAppOutput,
++  bevy_map: &mut BevyMapControl,
+   bevy_viewport: &mut BevyMapViewport,
+   bevy_geometry: &mut BevyGeometryLayer,
+   bevy_screenshots: &mut BevyScreenshotRequests,
+   bevy_tiles: &mut BevyTileLayer,
+   app_exit: &mut MessageWriter<AppExit>,
+ ) {
++  bevy_map.set_pointer_blocking_rects(output.bevy_pointer_blocking_rects);
+   for path in output.screenshot_requests {
+     bevy_screenshots.request_path(path);
+   }
+@@ -176,6 +178,7 @@ fn mapvas_ui_system(
+   if let Some(output) = output {
+     apply_map_app_output(
+       output,
++      &mut bevy_map,
+       &mut bevy_viewport,
+       &mut bevy_geometry,
+       &mut bevy_screenshots,
+@@ -183,6 +186,7 @@ fn mapvas_ui_system(
+       &mut app_exit,
+     );
+   } else {
++    bevy_map.set_pointer_blocking_rects(Vec::new());
+     bevy_viewport.set(None);
+   }
+   bevy_tiles.refresh_style_version();
+diff --git a/src/bin/mapvas/bevy_map.rs b/src/bin/mapvas/bevy_map.rs
+index ef7636e..aa1179c 100644
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -7,7 +7,7 @@ use bevy::{
+ };
+ use bevy_egui::{egui, input::EguiWantsInput};
+ use mapvas::map::{
+-  coordinates::{PixelPosition, Transform},
++  coordinates::{PixelPosition, PixelRect, Transform},
+   viewport::{MapViewport, fit_to_screen, zoom_with_center},
+ };
+ 
+@@ -47,6 +47,7 @@ pub struct BevyMapControl {
+   dragging: bool,
+   last_cursor_pos: Option<PixelPosition>,
+   hover_pos: Option<PixelPosition>,
++  pointer_blocking_rects: Vec<PixelRect>,
+   last_left_click: Option<(PixelPosition, f64)>,
+   secondary_drag_start: Option<PixelPosition>,
+   secondary_drag_moved: bool,
+@@ -82,6 +83,7 @@ impl Default for BevyMapControl {
+       dragging: false,
+       last_cursor_pos: None,
+       hover_pos: None,
++      pointer_blocking_rects: Vec::new(),
+       last_left_click: None,
+       secondary_drag_start: None,
+       secondary_drag_moved: false,
+@@ -114,6 +116,19 @@ impl BevyMapControl {
+   pub fn take_actions(&mut self) -> Vec<BevyMapAction> {
+     std::mem::take(&mut self.actions)
+   }
++
++  pub fn set_pointer_blocking_rects(&mut self, rects: Vec<PixelRect>) {
++    self.pointer_blocking_rects = rects;
++  }
++
++  fn pointer_blocked_at(&self, cursor: Option<PixelPosition>) -> bool {
++    cursor.is_some_and(|cursor| {
++      self
++        .pointer_blocking_rects
++        .iter()
++        .any(|rect| rect.contains(cursor))
++    })
++  }
+ }
+ 
+ fn bevy_map_input(
+@@ -147,21 +162,23 @@ fn bevy_map_input(
+   let cursor = cursor_pos(window);
+   let cursor_in_viewport = cursor.is_some_and(|pos| viewport.contains(pos));
+   let egui_popup_open = egui_wants_input.is_popup_open();
+-  control.hover_pos = if !egui_popup_open && cursor_in_viewport {
++  let egui_pointer_blocked =
++    egui_popup_open || egui_wants_input.is_using_pointer() || control.pointer_blocked_at(cursor);
++  control.hover_pos = if !egui_pointer_blocked && cursor_in_viewport {
+     cursor
+   } else {
+     None
+   };
+   let mut changed = false;
+ 
+-  if egui_popup_open {
++  if egui_pointer_blocked {
+     control.dragging = false;
+     control.last_cursor_pos = cursor;
+     control.secondary_drag_start = None;
+     control.secondary_drag_moved = false;
+   }
+ 
+-  if !egui_popup_open && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
++  if !egui_pointer_blocked && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
+     if let Some(current) = cursor {
+       let now = time.elapsed_secs_f64();
+       if let Some((previous, previous_time)) = control.last_left_click {
+@@ -185,7 +202,7 @@ fn bevy_map_input(
+     control.last_cursor_pos = cursor;
+   }
+   if control.dragging
+-    && !egui_popup_open
++    && !egui_pointer_blocked
+     && buttons.pressed(MouseButton::Left)
+     && let (Some(last), Some(current)) = (control.last_cursor_pos, cursor)
+   {
+@@ -197,11 +214,11 @@ fn bevy_map_input(
+     }
+   }
+ 
+-  if !egui_popup_open && buttons.just_pressed(MouseButton::Right) && cursor_in_viewport {
++  if !egui_pointer_blocked && buttons.just_pressed(MouseButton::Right) && cursor_in_viewport {
+     control.secondary_drag_start = cursor;
+     control.secondary_drag_moved = false;
+   }
+-  if !egui_popup_open
++  if !egui_pointer_blocked
+     && buttons.pressed(MouseButton::Right)
+     && let (Some(start), Some(current)) = (control.secondary_drag_start, cursor)
+   {
+@@ -220,7 +237,7 @@ fn bevy_map_input(
+   if buttons.just_released(MouseButton::Right) {
+     if let Some(start) = control.secondary_drag_start.take()
+       && !control.secondary_drag_moved
+-      && !egui_popup_open
++      && !egui_pointer_blocked
+       && cursor_in_viewport
+     {
+       control
+@@ -233,7 +250,7 @@ fn bevy_map_input(
+     control.secondary_drag_moved = false;
+   }
+ 
+-  if !egui_popup_open
++  if !egui_pointer_blocked
+     && cursor_in_viewport
+     && scroll.delta.y != 0.0
+     && let Some(cursor) = cursor
+diff --git a/src/map/mapvas_egui/layer/timeline_layer.rs b/src/map/mapvas_egui/layer/timeline_layer.rs
+index b2fe8ca..0b75519 100644
+--- a/src/map/mapvas_egui/layer/timeline_layer.rs
++++ b/src/map/mapvas_egui/layer/timeline_layer.rs
+@@ -151,22 +151,25 @@ impl TimelineLayer {
+ 
+   /// Draw the timeline controls
+   fn draw_timeline(&mut self, ui: &mut Ui, screen_rect: Rect) {
+-    // Position timeline at bottom with better margins - adjusted height for vertical layout
++    let timeline_rect = self.timeline_rect(screen_rect);
++
++    // Delegate to the timeline widget
++    self.widget.draw(ui, timeline_rect);
++  }
++
++  fn timeline_rect(&self, screen_rect: Rect) -> Rect {
+     let timeline_width = (screen_rect.width() * 0.9)
+       .max(500.0)
+       .min(screen_rect.width() - 20.0); // Wider
+     let timeline_x = screen_rect.center().x - timeline_width / 2.0;
+ 
+-    let timeline_rect = Rect::from_min_size(
++    Rect::from_min_size(
+       egui::Pos2::new(
+         timeline_x,
+         screen_rect.max.y - self.timeline_height - self.margin,
+       ),
+       egui::Vec2::new(timeline_width, self.timeline_height),
+-    );
+-
+-    // Delegate to the timeline widget
+-    self.widget.draw(ui, timeline_rect);
++    )
+   }
+ }
+ 
+@@ -222,6 +225,20 @@ impl TimelineLayer {
+     }
+   }
+ 
++  #[must_use]
++  pub fn input_rect(&self, screen_rect: Rect) -> Option<Rect> {
++    if !self.properties.visible {
++      return None;
++    }
++
++    let (time_start, time_end) = self.widget.get_time_range();
++    if time_start.is_some() && time_end.is_some() {
++      Some(self.timeline_rect(screen_rect))
++    } else {
++      None
++    }
++  }
++
+   pub fn name(&self) -> &'static str {
+     "Timeline"
+   }
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 02f77d0..775e5a5 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -54,6 +54,7 @@ pub struct Map {
+   keys: Vec<String>,
+   config: Config,
+   last_viewport: Option<MapViewport>,
++  bevy_pointer_blocking_rects: Vec<PixelRect>,
+   screenshot_target: ScreenshotTarget,
+   shutdown_requested: bool,
+ }
+@@ -204,6 +205,7 @@ impl Map {
+         keys,
+         config: cfg,
+         last_viewport: None,
++        bevy_pointer_blocking_rects: Vec::new(),
+         screenshot_target,
+         shutdown_requested: false,
+       },
+@@ -788,6 +790,18 @@ impl Map {
+     });
+   }
+ 
++  fn update_bevy_pointer_blocking_rects(&mut self, rect: Rect) {
++    self.bevy_pointer_blocking_rects.clear();
++    if let Some(timeline_rect) = self.timeline.borrow().input_rect(rect) {
++      self
++        .bevy_pointer_blocking_rects
++        .push(PixelRect::from_min_max(
++          pos_to_pixel(timeline_rect.min),
++          pos_to_pixel(timeline_rect.max),
++        ));
++    }
++  }
++
+   pub fn ui_egui(&mut self, ui: &mut Ui) -> Response {
+     profile_scope!("Map::ui_egui");
+     let (rect, response) = Self::allocate_map_response(ui, Sense::click_and_drag());
+@@ -812,6 +826,7 @@ impl Map {
+     self.show_bevy_command_context_menu(ui.ctx());
+     self.right_click_open_requested = false;
+     self.update_frame_viewport(pixel_rect);
++    self.update_bevy_pointer_blocking_rects(rect);
+     self.prepare_bevy_layer_frame(ui, rect);
+     self.handle_map_events(pixel_rect);
+ 
+@@ -867,6 +882,11 @@ impl Map {
+     self.last_viewport
+   }
+ 
++  #[must_use]
++  pub fn bevy_pointer_blocking_rects(&self) -> &[PixelRect] {
++    &self.bevy_pointer_blocking_rects
++  }
++
+   pub fn set_transform(&mut self, transform: Transform) {
+     self.transform = transform;
+   }
+diff --git a/src/mapvas_ui.rs b/src/mapvas_ui.rs
+index 08daee2..03f47b6 100644
+--- a/src/mapvas_ui.rs
++++ b/src/mapvas_ui.rs
+@@ -5,6 +5,7 @@ use crate::{
+   config::{Config, HeadingStyle, TileProvider, TileType},
+   map::{
+     IntervalLock, Map, MapLayerHolder,
++    coordinates::PixelRect,
+     tile_renderer::{
+       MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
+       set_style_config, style_config,
+@@ -51,6 +52,7 @@ impl MapUiMode {
+ 
+ pub struct MapAppOutput {
+   pub viewport: Option<MapViewport>,
++  pub bevy_pointer_blocking_rects: Vec<PixelRect>,
+   pub config_update: Option<Config>,
+   pub bevy_geometry_snapshot: Option<GeometrySnapshot>,
+   pub screenshot_requests: Vec<PathBuf>,
+@@ -477,6 +479,7 @@ impl MapApp {
+ 
+     MapAppOutput {
+       viewport: self.map.viewport(),
++      bevy_pointer_blocking_rects: self.map.bevy_pointer_blocking_rects().to_vec(),
+       config_update,
+       bevy_geometry_snapshot,
+       screenshot_requests: self.map.take_screenshot_requests(),

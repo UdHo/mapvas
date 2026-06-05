@@ -151,22 +151,25 @@ impl TimelineLayer {
 
   /// Draw the timeline controls
   fn draw_timeline(&mut self, ui: &mut Ui, screen_rect: Rect) {
-    // Position timeline at bottom with better margins - adjusted height for vertical layout
+    let timeline_rect = self.timeline_rect(screen_rect);
+
+    // Delegate to the timeline widget
+    self.widget.draw(ui, timeline_rect);
+  }
+
+  fn timeline_rect(&self, screen_rect: Rect) -> Rect {
     let timeline_width = (screen_rect.width() * 0.9)
       .max(500.0)
       .min(screen_rect.width() - 20.0); // Wider
     let timeline_x = screen_rect.center().x - timeline_width / 2.0;
 
-    let timeline_rect = Rect::from_min_size(
+    Rect::from_min_size(
       egui::Pos2::new(
         timeline_x,
         screen_rect.max.y - self.timeline_height - self.margin,
       ),
       egui::Vec2::new(timeline_width, self.timeline_height),
-    );
-
-    // Delegate to the timeline widget
-    self.widget.draw(ui, timeline_rect);
+    )
   }
 }
 
@@ -219,6 +222,20 @@ impl TimelineLayer {
     let (time_start, time_end) = self.widget.get_time_range();
     if time_start.is_some() && time_end.is_some() {
       self.draw_timeline(ui, screen_rect);
+    }
+  }
+
+  #[must_use]
+  pub fn input_rect(&self, screen_rect: Rect) -> Option<Rect> {
+    if !self.properties.visible {
+      return None;
+    }
+
+    let (time_start, time_end) = self.widget.get_time_range();
+    if time_start.is_some() && time_end.is_some() {
+      Some(self.timeline_rect(screen_rect))
+    } else {
+      None
     }
   }
 

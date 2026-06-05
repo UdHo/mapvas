@@ -7,7 +7,7 @@ use bevy::{
 };
 use bevy_egui::{egui, input::EguiWantsInput};
 use mapvas::map::{
-  coordinates::{PixelPosition, Transform},
+  coordinates::{PixelPosition, PixelRect, Transform},
   viewport::{MapViewport, fit_to_screen, zoom_with_center},
 };
 
@@ -47,6 +47,7 @@ pub struct BevyMapControl {
   dragging: bool,
   last_cursor_pos: Option<PixelPosition>,
   hover_pos: Option<PixelPosition>,
+  pointer_blocking_rects: Vec<PixelRect>,
   last_left_click: Option<(PixelPosition, f64)>,
   secondary_drag_start: Option<PixelPosition>,
   secondary_drag_moved: bool,
@@ -82,6 +83,7 @@ impl Default for BevyMapControl {
       dragging: false,
       last_cursor_pos: None,
       hover_pos: None,
+      pointer_blocking_rects: Vec::new(),
       last_left_click: None,
       secondary_drag_start: None,
       secondary_drag_moved: false,
@@ -113,6 +115,19 @@ impl BevyMapControl {
 
   pub fn take_actions(&mut self) -> Vec<BevyMapAction> {
     std::mem::take(&mut self.actions)
+  }
+
+  pub fn set_pointer_blocking_rects(&mut self, rects: Vec<PixelRect>) {
+    self.pointer_blocking_rects = rects;
+  }
+
+  fn pointer_blocked_at(&self, cursor: Option<PixelPosition>) -> bool {
+    cursor.is_some_and(|cursor| {
+      self
+        .pointer_blocking_rects
+        .iter()
+        .any(|rect| rect.contains(cursor))
+    })
   }
 }
 
@@ -147,21 +162,23 @@ fn bevy_map_input(
   let cursor = cursor_pos(window);
   let cursor_in_viewport = cursor.is_some_and(|pos| viewport.contains(pos));
   let egui_popup_open = egui_wants_input.is_popup_open();
-  control.hover_pos = if !egui_popup_open && cursor_in_viewport {
+  let egui_pointer_blocked =
+    egui_popup_open || egui_wants_input.is_using_pointer() || control.pointer_blocked_at(cursor);
+  control.hover_pos = if !egui_pointer_blocked && cursor_in_viewport {
     cursor
   } else {
     None
   };
   let mut changed = false;
 
-  if egui_popup_open {
+  if egui_pointer_blocked {
     control.dragging = false;
     control.last_cursor_pos = cursor;
     control.secondary_drag_start = None;
     control.secondary_drag_moved = false;
   }
 
-  if !egui_popup_open && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
+  if !egui_pointer_blocked && buttons.just_pressed(MouseButton::Left) && cursor_in_viewport {
     if let Some(current) = cursor {
       let now = time.elapsed_secs_f64();
       if let Some((previous, previous_time)) = control.last_left_click {
@@ -185,7 +202,7 @@ fn bevy_map_input(
     control.last_cursor_pos = cursor;
   }
   if control.dragging
-    && !egui_popup_open
+    && !egui_pointer_blocked
     && buttons.pressed(MouseButton::Left)
     && let (Some(last), Some(current)) = (control.last_cursor_pos, cursor)
   {
@@ -197,11 +214,11 @@ fn bevy_map_input(
     }
   }
 
-  if !egui_popup_open && buttons.just_pressed(MouseButton::Right) && cursor_in_viewport {
+  if !egui_pointer_blocked && buttons.just_pressed(MouseButton::Right) && cursor_in_viewport {
     control.secondary_drag_start = cursor;
     control.secondary_drag_moved = false;
   }
-  if !egui_popup_open
+  if !egui_pointer_blocked
     && buttons.pressed(MouseButton::Right)
     && let (Some(start), Some(current)) = (control.secondary_drag_start, cursor)
   {
@@ -220,7 +237,7 @@ fn bevy_map_input(
   if buttons.just_released(MouseButton::Right) {
     if let Some(start) = control.secondary_drag_start.take()
       && !control.secondary_drag_moved
-      && !egui_popup_open
+      && !egui_pointer_blocked
       && cursor_in_viewport
     {
       control
@@ -233,7 +250,7 @@ fn bevy_map_input(
     control.secondary_drag_moved = false;
   }
 
-  if !egui_popup_open
+  if !egui_pointer_blocked
     && cursor_in_viewport
     && scroll.delta.y != 0.0
     && let Some(cursor) = cursor
