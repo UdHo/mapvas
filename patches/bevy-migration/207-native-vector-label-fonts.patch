@@ -1,0 +1,145 @@
+diff --git a/src/bin/mapvas/bevy_tiles.rs b/src/bin/mapvas/bevy_tiles.rs
+index f331011..5a14acb 100644
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -1,5 +1,6 @@
+ use std::{
+   collections::{HashMap, HashSet},
++  path::Path,
+   sync::{
+     Arc, Mutex,
+     mpsc::{Receiver, Sender},
+@@ -60,17 +61,40 @@ const NATIVE_VECTOR_ROAD_CASING_Z: f32 = -26.0;
+ const NATIVE_VECTOR_ROAD_INNER_Z: f32 = -25.0;
+ const NATIVE_VECTOR_LABEL_MARKER_Z: f32 = -24.0;
+ const NATIVE_VECTOR_LABEL_TEXT_Z: f32 = -23.0;
++const EMBEDDED_MAP_LABEL_FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
++const PREFERRED_MAP_LABEL_FONT_PATHS: &[&str] = &[
++  "/System/Library/Fonts/Supplemental/NotoSans-Regular.ttf",
++  "/Library/Fonts/NotoSans-Regular.ttf",
++  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
++  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
++  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
++  "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
++  "/System/Library/Fonts/SFNS.ttf",
++  "C:\\Windows\\Fonts\\arial.ttf",
++  "C:\\Windows\\Fonts\\segoeui.ttf",
++];
+ 
+ #[derive(Resource)]
+ pub struct BevyTileRuntime(pub tokio::runtime::Handle);
+ 
++#[derive(Resource)]
++struct BevyTileLabelFonts {
++  map_label: Handle<Font>,
++}
++
+ pub struct BevyTilePlugin;
+ 
+ impl Plugin for BevyTilePlugin {
+   fn build(&self, app: &mut App) {
+     app
+       .init_gizmo_group::<BevyTileOverlayGizmos>()
+-      .add_systems(Startup, configure_bevy_tile_overlay_gizmos)
++      .add_systems(
++        Startup,
++        (
++          configure_bevy_tile_overlay_gizmos,
++          load_bevy_tile_label_fonts,
++        ),
++      )
+       .add_systems(
+         Update,
+         (
+@@ -302,6 +326,34 @@ fn configure_bevy_tile_overlay_gizmos(mut config_store: ResMut<GizmoConfigStore>
+   config.depth_bias = -1.0;
+ }
+ 
++fn load_bevy_tile_label_fonts(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
++  commands.insert_resource(BevyTileLabelFonts {
++    map_label: load_preferred_map_label_font(&mut fonts),
++  });
++}
++
++fn load_preferred_map_label_font(fonts: &mut Assets<Font>) -> Handle<Font> {
++  for path in PREFERRED_MAP_LABEL_FONT_PATHS {
++    if let Some(font) = load_font_from_path(path) {
++      return fonts.add(font);
++    }
++  }
++
++  fonts.add(
++    Font::try_from_bytes(EMBEDDED_MAP_LABEL_FONT_DATA.to_vec())
++      .expect("embedded Roboto map label font must be valid"),
++  )
++}
++
++fn load_font_from_path(path: &str) -> Option<Font> {
++  if !Path::new(path).exists() {
++    return None;
++  }
++  std::fs::read(path)
++    .ok()
++    .and_then(|bytes| Font::try_from_bytes(bytes).ok())
++}
++
+ impl BevyTileLayer {
+   #[must_use]
+   pub fn new(config: Config) -> Self {
+@@ -1343,6 +1395,7 @@ fn update_native_vector_tiles(
+ fn update_native_vector_tile_labels(
+   mut commands: Commands,
+   mut layer: ResMut<BevyTileLayer>,
++  label_fonts: Res<BevyTileLabelFonts>,
+   viewport: Res<BevyMapViewport>,
+   windows: Query<&Window, With<PrimaryWindow>>,
+   mut markers: NativeVectorLabelMarkerQuery<'_, '_>,
+@@ -1425,6 +1478,7 @@ fn update_native_vector_tile_labels(
+         window,
+         label,
+         &cfg,
++        &label_fonts.map_label,
+         &mut markers,
+         &mut texts,
+       );
+@@ -1521,6 +1575,7 @@ fn update_native_vector_tile_label_instance(
+   window: &Window,
+   label: &mut NativeVectorTileLabelInstance,
+   cfg: &StyleConfig,
++  label_font: &Handle<Font>,
+   markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
+   texts: &mut NativeVectorLabelTextQuery<'_, '_>,
+ ) {
+@@ -1558,6 +1613,7 @@ fn update_native_vector_tile_label_instance(
+       &label.text,
+       font_size,
+       text_color,
++      label_font,
+       texts,
+     );
+ 
+@@ -1609,6 +1665,7 @@ fn update_native_vector_tile_label_text(
+   value: &str,
+   font_size: f32,
+   color: Color,
++  label_font: &Handle<Font>,
+   texts: &mut NativeVectorLabelTextQuery<'_, '_>,
+ ) -> Entity {
+   if let Some(entity) = entity {
+@@ -1618,6 +1675,7 @@ fn update_native_vector_tile_label_text(
+       *text_transform = transform;
+       text.0.clear();
+       text.0.push_str(value);
++      font.font = label_font.clone();
+       font.font_size = font_size;
+       text_color.0 = color;
+       *visibility = Visibility::Visible;
+@@ -1629,7 +1687,7 @@ fn update_native_vector_tile_label_text(
+   commands
+     .spawn((
+       Text2d::new(value.to_string()),
+-      TextFont::from_font_size(font_size),
++      TextFont::from_font_size(font_size).with_font(label_font.clone()),
+       TextColor(color),
+       TextLayout::new_with_justify(Justify::Left),
+       Anchor::CENTER_LEFT,
