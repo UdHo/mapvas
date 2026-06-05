@@ -579,13 +579,17 @@ fn collect_finished_tiles(mut layer: ResMut<BevyTileLayer>, mut images: ResMut<A
         }
         layer.in_flight_tiles.remove(&tile);
         let image = images.add(tile_image_to_bevy(image));
-        layer.loaded_tiles.insert(
-          tile,
-          BevyTileEntry {
-            image,
-            entity: None,
-          },
-        );
+        if let Some(entry) = layer.loaded_tiles.get_mut(&tile) {
+          entry.image = image;
+        } else {
+          layer.loaded_tiles.insert(
+            tile,
+            BevyTileEntry {
+              image,
+              entity: None,
+            },
+          );
+        }
       }
       BevyTileResult::Failed { generation, tile } => {
         if generation != layer.generation {
@@ -603,7 +607,7 @@ fn update_bevy_tiles(
   viewport: Res<BevyMapViewport>,
   runtime: Res<BevyTileRuntime>,
   windows: Query<&Window, With<PrimaryWindow>>,
-  mut sprites: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
+  mut sprites: Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
   mut grid_sprites: Query<
     (&mut Transform, &mut Sprite, &mut Visibility),
     (With<BevyGridTileSprite>, Without<BevyTileSprite>),
@@ -650,12 +654,19 @@ fn update_bevy_tiles(
   >,
   mut overlay_gizmos: Gizmos<BevyTileOverlayGizmos>,
 ) {
-  for entity in layer.stale_entities.drain(..) {
-    commands.entity(entity).despawn();
+  let stale_entities = layer.stale_entities.drain(..).collect::<HashSet<_>>();
+  for entity in &stale_entities {
+    commands.entity(*entity).despawn();
   }
 
   if !layer.visible {
     hide_tile_sprites(&mut sprites);
+    despawn_untracked_tile_sprites(
+      &mut commands,
+      &tracked_tile_entities(&layer),
+      &stale_entities,
+      &mut sprites,
+    );
     hide_grid_tile_sprites(&mut grid_sprites);
     hide_tile_labels(&mut label_backgrounds, &mut label_texts);
     hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
@@ -664,6 +675,12 @@ fn update_bevy_tiles(
 
   let Some(viewport) = viewport.get() else {
     hide_tile_sprites(&mut sprites);
+    despawn_untracked_tile_sprites(
+      &mut commands,
+      &tracked_tile_entities(&layer),
+      &stale_entities,
+      &mut sprites,
+    );
     hide_grid_tile_sprites(&mut grid_sprites);
     hide_tile_labels(&mut label_backgrounds, &mut label_texts);
     hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
@@ -671,6 +688,12 @@ fn update_bevy_tiles(
   };
   let Ok(window) = windows.single() else {
     hide_tile_sprites(&mut sprites);
+    despawn_untracked_tile_sprites(
+      &mut commands,
+      &tracked_tile_entities(&layer),
+      &stale_entities,
+      &mut sprites,
+    );
     hide_grid_tile_sprites(&mut grid_sprites);
     hide_tile_labels(&mut label_backgrounds, &mut label_texts);
     hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
@@ -777,8 +800,9 @@ fn update_bevy_tiles(
 
     let entry = layer.loaded_tiles.get_mut(&tile).expect("tile was checked");
     if let Some(entity) = entry.entity {
-      if let Ok((mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
+      if let Ok((_, mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
         *sprite_transform = transform;
+        sprite.image = entry.image.clone();
         sprite.custom_size = Some(custom_size);
         sprite.color = tint;
         *visibility = Visibility::Visible;
@@ -802,18 +826,48 @@ fn update_bevy_tiles(
       continue;
     }
     if let Some(entity) = entry.entity
-      && let Ok((_, _, mut visibility)) = sprites.get_mut(entity)
+      && let Ok((_, _, _, mut visibility)) = sprites.get_mut(entity)
     {
       *visibility = Visibility::Hidden;
     }
   }
+
+  despawn_untracked_tile_sprites(
+    &mut commands,
+    &tracked_tile_entities(&layer),
+    &stale_entities,
+    &mut sprites,
+  );
 }
 
 fn hide_tile_sprites(
-  sprites: &mut Query<(&mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
+  sprites: &mut Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
 ) {
-  for (_, _, mut visibility) in sprites.iter_mut() {
+  for (_, _, _, mut visibility) in sprites.iter_mut() {
     *visibility = Visibility::Hidden;
+  }
+}
+
+fn tracked_tile_entities(layer: &BevyTileLayer) -> HashSet<Entity> {
+  layer
+    .loaded_tiles
+    .values()
+    .filter_map(|entry| entry.entity)
+    .collect()
+}
+
+fn despawn_untracked_tile_sprites(
+  commands: &mut Commands,
+  tracked_entities: &HashSet<Entity>,
+  stale_entities: &HashSet<Entity>,
+  sprites: &mut Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
+) {
+  for (entity, _, _, mut visibility) in sprites.iter_mut() {
+    if tracked_entities.contains(&entity) || stale_entities.contains(&entity) {
+      continue;
+    }
+    *visibility = Visibility::Hidden;
+    commands.entity(entity).despawn();
   }
 }
 
