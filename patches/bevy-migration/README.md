@@ -204,6 +204,7 @@ Apply these patches in order from the repository root:
 200. `200-draw-all-visible-bevy-tile-world-copies.patch`
 201. `201-draw-all-visible-bevy-geometry-world-copies.patch`
 202. `202-block-bevy-map-input-over-timeline.patch`
+203. `203-fix-wrapped-visible-tile-selection.patch`
 
 Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
 The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
