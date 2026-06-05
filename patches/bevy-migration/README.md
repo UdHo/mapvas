@@ -202,6 +202,7 @@ Apply these patches in order from the repository root:
 198. `198-use-local-polygon-fill-mesh-coordinates.patch`
 199. `199-use-shared-wrap-offset-for-bevy-line-segments.patch`
 200. `200-draw-all-visible-bevy-tile-world-copies.patch`
+201. `201-draw-all-visible-bevy-geometry-world-copies.patch`
 
 Each step was formatted with `cargo fmt --all` and verified with `cargo c`.
 The current environment cannot write `.git/index.lock`, so these patches replace the requested commits.
