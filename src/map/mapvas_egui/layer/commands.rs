@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::map::coordinates::{BoundingBox, PixelCoordinate, PixelPosition, Transform};
 use egui::Pos2;
 
-use super::{Layer, LayerProperties, drawable::Drawable};
+use super::{GeometrySnapshot, Layer, LayerProperties, drawable::Drawable};
 
 mod external_cmd;
 mod ruler;
@@ -94,6 +94,34 @@ impl CommandLayer {
       return Some(Box::new(command));
     }
     None
+  }
+
+  fn update_commands(&mut self) {
+    self.recv.try_iter().for_each(|update| {
+      for command in self
+        .commands
+        .iter_mut()
+        .filter(|command| !command.is_locked())
+      {
+        command.update_paramters(update.clone());
+      }
+    });
+
+    for command in &mut self.commands {
+      command.run();
+    }
+  }
+
+  fn command_snapshot_version(&self) -> u64 {
+    self
+      .commands
+      .iter()
+      .fold(u64::from(self.visible()), |version, command| {
+        version
+          .wrapping_mul(31)
+          .wrapping_add(u64::from(command.is_visible()))
+          .wrapping_add(command.geometry_version())
+      })
   }
 }
 
@@ -184,6 +212,7 @@ trait Command {
   fn update_paramters(&mut self, parameters: ParameterUpdate);
   fn run(&mut self);
   fn result(&self) -> Box<dyn Iterator<Item = Rc<dyn Drawable>>>;
+  fn geometry_version(&self) -> u64;
   fn is_locked(&self) -> bool;
   fn is_visible(&self) -> bool;
   fn locked(&mut self) -> &mut bool;
@@ -195,26 +224,16 @@ trait Command {
 }
 
 impl Layer for CommandLayer {
+  fn process_pending_events(&mut self) {
+    self.update_commands();
+  }
+
   fn draw(
     &mut self,
     ui: &mut egui::Ui,
     transform: &crate::map::coordinates::Transform,
     _rect: egui::Rect,
   ) {
-    self.recv.try_iter().for_each(|update| {
-      for command in self
-        .commands
-        .iter_mut()
-        .filter(|command| !command.is_locked())
-      {
-        command.update_paramters(update.clone());
-      }
-    });
-
-    for command in &mut self.commands {
-      command.run();
-    }
-
     if self.visible() {
       for command in self.commands.iter().filter(|command| command.is_visible()) {
         let drawable = command.result();
@@ -223,6 +242,37 @@ impl Layer for CommandLayer {
         }
       }
     }
+  }
+
+  fn geometry_snapshot(&self) -> GeometrySnapshot {
+    let version = self.geometry_snapshot_version();
+    if !self.visible() {
+      return GeometrySnapshot {
+        version,
+        geometries: Vec::new(),
+      };
+    }
+
+    let geometries = self
+      .commands
+      .iter()
+      .filter(|command| command.is_visible())
+      .flat_map(|command| command.result())
+      .filter_map(|drawable| drawable.as_pixel_geometry())
+      .collect();
+
+    GeometrySnapshot {
+      version,
+      geometries,
+    }
+  }
+
+  fn geometry_snapshot_version(&self) -> u64 {
+    self.command_snapshot_version()
+  }
+
+  fn is_native_geometry_source(&self) -> bool {
+    true
   }
 
   fn name(&self) -> &str {

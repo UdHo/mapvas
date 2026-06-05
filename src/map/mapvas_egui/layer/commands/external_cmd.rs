@@ -466,6 +466,7 @@ struct ExternalCommandCommon {
   last_update: std::time::Instant,
   result: Option<Rc<dyn Drawable>>,
   raw_response: Option<RawResponse>,
+  version: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -497,6 +498,7 @@ impl ExternalCommandCommon {
       last_update: std::time::Instant::now(),
       result: None,
       raw_response: None,
+      version: 0,
     }
   }
 
@@ -703,8 +705,8 @@ impl ExternalCommand {
   }
 
   fn display_geometry_info(ui: &mut egui::Ui, drawable: &dyn Drawable) {
-    if let Some(geometry) = drawable.as_geometry() {
-      Self::display_geometry_details(ui, geometry);
+    if let Some(geometry) = drawable.as_pixel_geometry() {
+      Self::display_geometry_details(ui, &geometry);
     } else if let Some(bbox) = drawable.bounding_box() {
       if bbox.is_valid() {
         let center = bbox.center().as_wgs84();
@@ -1118,20 +1120,24 @@ impl Command for ExternalCommand {
   fn update_paramters(&mut self, parameters: ParameterUpdate) {
     if self.cmd.update(parameters) {
       self.common.last_update = std::time::Instant::now();
+      self.common.version = self.common.version.wrapping_add(1);
     }
   }
 
   fn run(&mut self) {
+    let mut changed = false;
     for el in self.common.rcv.try_iter() {
       if let MapEvent::Layer(EventLayer { id: _, geometries }) = el {
         if geometries.len() == 1 {
           self.common.result = Some(Rc::new(geometries[0].clone()));
+          changed = true;
         }
         if geometries.len() > 1 {
           self.common.result = Some(Rc::new(Geometry::GeometryCollection(
             geometries,
             Metadata::default(),
           )));
+          changed = true;
         }
       }
     }
@@ -1139,6 +1145,11 @@ impl Command for ExternalCommand {
     // Handle raw responses
     for response in self.common.response_rcv.try_iter() {
       self.common.raw_response = Some(response);
+      changed = true;
+    }
+
+    if changed {
+      self.common.version = self.common.version.wrapping_add(1);
     }
 
     if self.common.last_request > self.common.last_update
@@ -1152,6 +1163,7 @@ impl Command for ExternalCommand {
       .run(self.common.send.clone(), self.common.response_send.clone())
     {
       self.common.last_request = std::time::Instant::now();
+      self.common.version = self.common.version.wrapping_add(1);
     }
   }
 
@@ -1178,6 +1190,10 @@ impl Command for ExternalCommand {
         .collect::<Vec<_>>()
         .into_iter(),
     )
+  }
+
+  fn geometry_version(&self) -> u64 {
+    self.common.version
   }
 
   fn is_locked(&self) -> bool {

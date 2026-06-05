@@ -19,37 +19,25 @@ use mapvas::{
       CANVAS_SIZE, Tile, TileCoordinate, TilePriority, Transform as MapTransform,
       generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
     },
-    mapvas_egui::MapViewport,
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
     tile_renderer::{RasterTileRenderer, TileRenderer, VectorTileRenderer, style_version},
+    viewport::MapViewport,
   },
   task_tracker::{TaskCategory, TaskGuard},
 };
 
+use crate::bevy_map::NativeMapViewport;
+
+const MAX_PRELOAD_TILES: usize = 20;
+
 #[derive(Resource)]
 pub struct NativeTileRuntime(pub tokio::runtime::Handle);
-
-#[derive(Resource, Default)]
-pub struct NativeMapViewport {
-  viewport: Option<MapViewport>,
-}
-
-impl NativeMapViewport {
-  pub fn set(&mut self, viewport: Option<MapViewport>) {
-    self.viewport = viewport;
-  }
-
-  #[must_use]
-  pub fn get(&self) -> Option<MapViewport> {
-    self.viewport
-  }
-}
 
 pub struct NativeTilePlugin;
 
 impl Plugin for NativeTilePlugin {
   fn build(&self, app: &mut App) {
-    app.init_resource::<NativeMapViewport>().add_systems(
+    app.add_systems(
       Update,
       (collect_finished_tiles, update_native_tiles).chain(),
     );
@@ -58,6 +46,13 @@ impl Plugin for NativeTilePlugin {
 
 #[derive(Component)]
 struct NativeTileSprite;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CoordinateDisplayMode {
+  Off,
+  Overlay,
+  GridOnly,
+}
 
 struct NativeTileEntry {
   image: Handle<Image>,
@@ -97,6 +92,7 @@ pub struct NativeTileLayer {
   current_ideal_zoom: u8,
   current_request_zoom: u8,
   current_max_zoom: u8,
+  coordinate_display_mode: CoordinateDisplayMode,
 }
 
 impl NativeTileLayer {
@@ -125,6 +121,7 @@ impl NativeTileLayer {
       current_ideal_zoom: 0,
       current_request_zoom: 0,
       current_max_zoom: 0,
+      coordinate_display_mode: CoordinateDisplayMode::Off,
     }
   }
 
@@ -161,7 +158,15 @@ impl NativeTileLayer {
   }
 
   pub fn draw_overlay(&self, ui: &mut egui::Ui, viewport: Option<MapViewport>) {
-    if !self.visible || self.loaded_tiles.is_empty() {
+    if !self.visible {
+      return;
+    }
+    if let Some(viewport) = viewport
+      && self.coordinate_display_mode != CoordinateDisplayMode::Off
+    {
+      self.draw_coordinate_grid(ui, viewport);
+    }
+    if self.loaded_tiles.is_empty() {
       return;
     }
     let Some(tile_loader) = self.tile_loader() else {
@@ -211,6 +216,24 @@ impl NativeTileLayer {
       }
 
       ui.checkbox(&mut self.preload_enabled, "preload adjacent tiles");
+
+      ui.separator();
+      ui.label("Tile Coordinate Display:");
+      ui.radio_value(
+        &mut self.coordinate_display_mode,
+        CoordinateDisplayMode::Off,
+        "Off",
+      );
+      ui.radio_value(
+        &mut self.coordinate_display_mode,
+        CoordinateDisplayMode::Overlay,
+        "Overlay",
+      );
+      ui.radio_value(
+        &mut self.coordinate_display_mode,
+        CoordinateDisplayMode::GridOnly,
+        "Grid Only",
+      );
 
       ui.separator();
       ui.label("Statistics:");
@@ -281,6 +304,135 @@ impl NativeTileLayer {
     }
   }
 
+  fn overlay_request_zoom(&self, viewport: MapViewport) -> Option<u8> {
+    let tile_loader = self.tile_loader()?;
+    let calculated_zoom = tile_zoom_for_transform(&viewport.transform);
+    let max_zoom = tile_loader.max_zoom();
+    let tile_type = tile_loader.tile_type();
+    Some(
+      if tile_type == TileType::Vector && calculated_zoom > max_zoom {
+        calculated_zoom.min(19)
+      } else {
+        calculated_zoom.min(max_zoom)
+      },
+    )
+  }
+
+  fn draw_coordinate_grid(&self, ui: &mut egui::Ui, viewport: MapViewport) {
+    let Some(request_zoom) = self.overlay_request_zoom(viewport) else {
+      return;
+    };
+    let painter = ui.painter_at(viewport.rect);
+    let inv = viewport.transform.invert();
+    let vp_min = inv.apply(viewport.rect.min.into());
+    let vp_max = inv.apply(viewport.rect.max.into());
+    let min_pos = TileCoordinate::from_pixel_position(vp_min, request_zoom);
+    let max_pos = TileCoordinate::from_pixel_position(vp_max, request_zoom);
+    let left_x = viewport_left_x(viewport.rect, &viewport.transform);
+
+    for tile in tiles_in_box(min_pos, max_pos) {
+      let Some(tile_rect) = tile_screen_rect(viewport, tile) else {
+        continue;
+      };
+      if !tile_rect.intersects(viewport.rect) {
+        continue;
+      }
+
+      if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+        let is_even_tile = (tile.x + tile.y).is_multiple_of(2);
+        let bg_color = if is_even_tile {
+          egui::Color32::from_rgba_unmultiplied(255, 240, 240, 120)
+        } else {
+          egui::Color32::from_rgba_unmultiplied(240, 240, 255, 120)
+        };
+        painter.rect_filled(tile_rect, egui::CornerRadius::ZERO, bg_color);
+      }
+
+      self.draw_tile_info(ui, viewport.rect, &tile, &tile_rect);
+
+      let (nw, _) = tile.position();
+      let dx = tile_world_offset(nw.x, left_x);
+      for offset in [dx - CANVAS_SIZE, dx + CANVAS_SIZE] {
+        let shifted_tile = Tile {
+          x: tile.x,
+          y: tile.y,
+          zoom: tile.zoom,
+        };
+        let (nw, se) = shifted_tile.position();
+        let nw_shifted = mapvas::map::coordinates::PixelCoordinate {
+          x: nw.x + offset,
+          y: nw.y,
+        };
+        let se_shifted = mapvas::map::coordinates::PixelCoordinate {
+          x: se.x + offset,
+          y: se.y,
+        };
+        let (nw_screen, se_screen) = (
+          viewport.transform.apply(nw_shifted),
+          viewport.transform.apply(se_shifted),
+        );
+        let wrap_rect = egui::Rect::from_min_max(nw_screen.into(), se_screen.into());
+        if wrap_rect.intersects(viewport.rect) {
+          self.draw_tile_info(ui, viewport.rect, &tile, &wrap_rect);
+        }
+      }
+    }
+  }
+
+  fn draw_tile_info(
+    &self,
+    ui: &mut egui::Ui,
+    clip_rect: egui::Rect,
+    tile: &Tile,
+    tile_rect: &egui::Rect,
+  ) {
+    let painter = ui.painter_at(clip_rect);
+    let bg_width = 100.0;
+    let bg_height = 60.0;
+    let bg_rect = egui::Rect::from_center_size(tile_rect.center(), egui::vec2(bg_width, bg_height));
+
+    if tile_rect.width() > bg_width && tile_rect.height() > bg_height {
+      painter.rect_filled(
+        bg_rect,
+        egui::CornerRadius::same(5),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+      );
+
+      let font_id = egui::FontId::monospace(11.0);
+      let text_color = egui::Color32::WHITE;
+      let lines = [
+        format!("Z:{}", tile.zoom),
+        format!("X:{}", tile.x),
+        format!("Y:{}", tile.y),
+      ];
+
+      for (index, line) in lines.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let text_pos = bg_rect.min + egui::vec2(8.0, 8.0 + index as f32 * 14.0);
+        painter.text(
+          text_pos,
+          egui::Align2::LEFT_TOP,
+          line,
+          font_id.clone(),
+          text_color,
+        );
+      }
+    }
+
+    let border_color = if self.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+      egui::Color32::from_rgb(80, 80, 80)
+    } else {
+      egui::Color32::from_rgb(100, 100, 100)
+    };
+
+    painter.rect_stroke(
+      *tile_rect,
+      egui::CornerRadius::ZERO,
+      egui::Stroke::new(1.0, border_color),
+      egui::epaint::StrokeKind::Outside,
+    );
+  }
+
   fn visible_tiles(&mut self, viewport: MapViewport) -> Vec<Tile> {
     let Some(tile_loader) = self.tile_loader() else {
       return Vec::new();
@@ -318,14 +470,17 @@ impl NativeTileLayer {
       return;
     };
     let max_zoom = tile_loader.max_zoom();
+    let tile_type = tile_loader.tile_type();
     if tile.zoom > max_zoom {
+      if tile_type == TileType::Vector && tile.zoom <= 19 {
+        self.request_super_resolution_tile(tile, priority, runtime);
+      }
       return;
     }
 
     self.in_flight_tiles.insert(tile);
 
     let sender = self.sender.clone();
-    let tile_type = tile_loader.tile_type();
     let renderer = self.renderer_for_tile_type(tile_type);
     let tile_source = self.tile_source;
     let generation = self.generation;
@@ -361,6 +516,100 @@ impl NativeTileLayer {
     });
   }
 
+  #[allow(clippy::cast_possible_truncation)]
+  fn request_super_resolution_tile(
+    &mut self,
+    tile: Tile,
+    priority: TilePriority,
+    runtime: tokio::runtime::Handle,
+  ) {
+    let Some(tile_loader) = self.tile_loader() else {
+      return;
+    };
+    let max_zoom = tile_loader.max_zoom();
+    let zoom_diff = tile.zoom - max_zoom;
+
+    let mut parent_tile = tile;
+    for _ in 0..zoom_diff {
+      let Some(parent) = parent_tile.parent() else {
+        return;
+      };
+      parent_tile = parent;
+    }
+
+    let grid_size = 1usize << zoom_diff;
+    let scale = grid_size as u32;
+    let base_x = parent_tile.x << zoom_diff;
+    let base_y = parent_tile.y << zoom_diff;
+
+    let mut child_tiles = Vec::with_capacity(grid_size * grid_size);
+    for ty in 0..grid_size {
+      for tx in 0..grid_size {
+        child_tiles.push(Tile {
+          x: base_x + tx as u32,
+          y: base_y + ty as u32,
+          zoom: tile.zoom,
+        });
+      }
+    }
+
+    if child_tiles
+      .iter()
+      .any(|tile| self.loaded_tiles.contains_key(tile) || self.in_flight_tiles.contains(tile))
+    {
+      return;
+    }
+
+    for child_tile in &child_tiles {
+      self.in_flight_tiles.insert(*child_tile);
+    }
+
+    let sender = self.sender.clone();
+    let renderer = self.vector_renderer.clone();
+    let tile_source = self.tile_source;
+    let generation = self.generation;
+    runtime.spawn(async move {
+      let task_name = format!(
+        "bevy-tile-superres-{}-{}-{}",
+        parent_tile.zoom, parent_tile.x, parent_tile.y
+      );
+      let _guard = TaskGuard::new(task_name, TaskCategory::TileSuperRes);
+
+      let Ok(tile_data) = tile_loader
+        .tile_data_with_priority(&parent_tile, tile_source, priority)
+        .await
+      else {
+        send_failed_tiles(&sender, generation, &child_tiles);
+        return;
+      };
+
+      let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
+        renderer.render_scaled(&parent_tile, &tile_data, scale)
+      });
+
+      let render_result = tokio::time::timeout(std::time::Duration::from_mins(1), render_rx).await;
+      let image = match render_result {
+        Ok(Ok(Ok(image))) => image,
+        _ => {
+          send_failed_tiles(&sender, generation, &child_tiles);
+          return;
+        }
+      };
+
+      for (tile, image) in child_tiles
+        .iter()
+        .copied()
+        .zip(split_image_into_tiles(&image, grid_size))
+      {
+        let _ = sender.send(NativeTileResult::Ready {
+          generation,
+          tile,
+          image,
+        });
+      }
+    });
+  }
+
   fn request_preload_tiles(&mut self, visible_tiles: &[Tile], runtime: tokio::runtime::Handle) {
     let Some(tile_loader) = self.tile_loader() else {
       return;
@@ -369,10 +618,51 @@ impl NativeTileLayer {
       return;
     }
 
-    for (tile, priority) in generate_preload_tiles(visible_tiles) {
+    for (tile, priority) in generate_preload_tiles(visible_tiles)
+      .into_iter()
+      .take(MAX_PRELOAD_TILES)
+    {
       self.request_tile(tile, priority, runtime.clone());
     }
   }
+}
+
+fn send_failed_tiles(sender: &Sender<NativeTileResult>, generation: u64, tiles: &[Tile]) {
+  for tile in tiles {
+    let _ = sender.send(NativeTileResult::Failed {
+      generation,
+      tile: *tile,
+    });
+  }
+}
+
+fn split_image_into_tiles(image: &egui::ColorImage, grid_size: usize) -> Vec<egui::ColorImage> {
+  let size = image.size[0];
+  let tile_size = size / grid_size;
+  let mut tiles = Vec::with_capacity(grid_size * grid_size);
+
+  for tile_y in 0..grid_size {
+    for tile_x in 0..grid_size {
+      let mut tile_rgba = Vec::with_capacity(tile_size * tile_size * 4);
+
+      for y in 0..tile_size {
+        for x in 0..tile_size {
+          let src_x = tile_x * tile_size + x;
+          let src_y = tile_y * tile_size + y;
+          let src_idx = src_y * size + src_x;
+          let color = image.pixels[src_idx];
+          tile_rgba.extend_from_slice(&[color.r(), color.g(), color.b(), color.a()]);
+        }
+      }
+
+      tiles.push(egui::ColorImage::from_rgba_unmultiplied(
+        [tile_size, tile_size],
+        &tile_rgba,
+      ));
+    }
+  }
+
+  tiles
 }
 
 fn collect_finished_tiles(mut layer: ResMut<NativeTileLayer>, mut images: ResMut<Assets<Image>>) {
@@ -432,7 +722,7 @@ fn update_native_tiles(
     return;
   }
 
-  let Some(viewport) = viewport.viewport else {
+  let Some(viewport) = viewport.get() else {
     return;
   };
   let Ok(window) = windows.single() else {
@@ -440,22 +730,41 @@ fn update_native_tiles(
   };
 
   let visible_tiles = layer.visible_tiles(viewport);
-  let visible_set: HashSet<Tile> = visible_tiles.iter().copied().collect();
   let runtime_handle = runtime.0.clone();
 
   for tile in &visible_tiles {
     if !layer.loaded_tiles.contains_key(tile) {
       layer.request_tile(*tile, TilePriority::Current, runtime_handle.clone());
-      continue;
     }
+  }
 
-    let Some(tile_rect) = tile_screen_rect(viewport, *tile) else {
+  if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+    layer.request_preload_tiles(&visible_tiles, runtime_handle);
+    for (_, _, mut visibility) in &mut sprites {
+      *visibility = Visibility::Hidden;
+    }
+    return;
+  }
+
+  let mut tiles_to_draw = visible_tiles
+    .iter()
+    .filter_map(|tile| loaded_tile_or_parent(&layer, *tile))
+    .collect::<Vec<_>>();
+  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
+  tiles_to_draw.dedup();
+  tiles_to_draw.reverse();
+
+  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
+  for tile in &tiles_to_draw {
+    let tile = *tile;
+
+    let Some(tile_rect) = tile_screen_rect(viewport, tile) else {
       continue;
     };
-    let transform = transform_for_screen_rect(tile_rect, window);
+    let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
     let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
 
-    let entry = layer.loaded_tiles.get_mut(tile).expect("tile was checked");
+    let entry = layer.loaded_tiles.get_mut(&tile).expect("tile was checked");
     if let Some(entity) = entry.entity {
       if let Ok((mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
         *sprite_transform = transform;
@@ -476,7 +785,7 @@ fn update_native_tiles(
   layer.request_preload_tiles(&visible_tiles, runtime_handle);
 
   for (tile, entry) in &mut layer.loaded_tiles {
-    if visible_set.contains(tile) {
+    if draw_set.contains(tile) {
       continue;
     }
     if let Some(entity) = entry.entity
@@ -484,6 +793,15 @@ fn update_native_tiles(
     {
       *visibility = Visibility::Hidden;
     }
+  }
+}
+
+fn loaded_tile_or_parent(layer: &NativeTileLayer, mut tile: Tile) -> Option<Tile> {
+  loop {
+    if layer.loaded_tiles.contains_key(&tile) {
+      return Some(tile);
+    }
+    tile = tile.parent()?;
   }
 }
 
@@ -533,12 +851,13 @@ fn tile_screen_rect(viewport: MapViewport, tile: Tile) -> Option<egui::Rect> {
   None
 }
 
-fn transform_for_screen_rect(rect: egui::Rect, window: &Window) -> Transform {
+fn transform_for_screen_rect(rect: egui::Rect, window: &Window, tile_zoom: u8) -> Transform {
   let center = rect.center();
+  let z = -10.0 + f32::from(tile_zoom) * 0.001;
   Transform::from_xyz(
     center.x - window.width() / 2.0,
     window.height() / 2.0 - center.y,
-    -10.0,
+    z,
   )
 }
 

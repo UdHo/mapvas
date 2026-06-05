@@ -33,14 +33,14 @@ pub trait Drawable {
   fn bounding_box(&self) -> Option<BoundingBox> {
     None
   }
-  /// Get the underlying geometry if this drawable is a geometry
-  fn as_geometry(&self) -> Option<&Geometry<PixelCoordinate>> {
+  /// Convert this drawable to pixel geometry if it is backed by geometry data.
+  fn as_pixel_geometry(&self) -> Option<Geometry<PixelCoordinate>> {
     None
   }
   /// Calculate distance from this drawable to a point
   fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {
-    if let Some(geometry) = self.as_geometry() {
-      distance::distance_to_geometry(geometry, point)
+    if let Some(geometry) = self.as_pixel_geometry() {
+      distance::distance_to_geometry(&geometry, point)
     } else if let Some(bbox) = self.bounding_box() {
       if bbox.is_valid() {
         let center = bbox.center();
@@ -151,8 +151,8 @@ impl<C: Coordinate + 'static> Drawable for Geometry<C> {
     Some(Geometry::bounding_box(self))
   }
 
-  fn as_geometry(&self) -> Option<&Geometry<PixelCoordinate>> {
-    None
+  fn as_pixel_geometry(&self) -> Option<Geometry<PixelCoordinate>> {
+    Some(self.convert_to_pixel_coordinates())
   }
 
   fn distance_to_point(&self, point: PixelCoordinate) -> Option<f64> {

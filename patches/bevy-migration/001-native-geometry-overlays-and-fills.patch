@@ -1,0 +1,563 @@
+diff --git a/src/bin/mapvas/bevy_geometry.rs b/src/bin/mapvas/bevy_geometry.rs
+index 68601d1..4c3748a 100644
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -1,4 +1,9 @@
+-use bevy::{prelude::*, window::PrimaryWindow};
++use bevy::{
++  asset::RenderAssetUsages,
++  mesh::{Indices, PrimitiveTopology},
++  prelude::*,
++  window::PrimaryWindow,
++};
+ use mapvas::map::{
+   coordinates::{CANVAS_SIZE, PixelCoordinate},
+   geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+@@ -10,6 +15,7 @@ use crate::bevy_tiles::NativeMapViewport;
+ const POINT_RADIUS: f32 = 4.0;
+ const HEADING_LENGTH: f32 = 16.0;
+ const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
++const GEOMETRY_FILL_Z: f32 = -5.0;
+ 
+ pub struct NativeGeometryPlugin;
+ 
+@@ -36,6 +42,8 @@ pub struct NativeGeometryLayer {
+   geometries: Vec<Geometry<PixelCoordinate>>,
+   snapshot_stats: GeometryStats,
+   draw_stats: GeometryStats,
++  fill_entities: Vec<Entity>,
++  fill_snapshot_version: u64,
+ }
+ 
+ impl Default for NativeGeometryLayer {
+@@ -47,10 +55,32 @@ impl Default for NativeGeometryLayer {
+       geometries: Vec::new(),
+       snapshot_stats: GeometryStats::default(),
+       draw_stats: GeometryStats::default(),
++      fill_entities: Vec::new(),
++      fill_snapshot_version: 0,
+     }
+   }
+ }
+ 
++#[derive(Clone, Copy)]
++struct GeometryBounds {
++  min_x: f32,
++  min_y: f32,
++  max_x: f32,
++  max_y: f32,
++}
++
++#[derive(Component)]
++struct NativePolygonFill {
++  bounds: GeometryBounds,
++  wrap_offset: f32,
++}
++
++struct PolygonFillSpec {
++  mesh: Mesh,
++  color: Color,
++  bounds: GeometryBounds,
++}
++
+ impl NativeGeometryLayer {
+   pub fn ui(&mut self, ui: &mut egui::Ui) {
+     ui.collapsing("Native Geometry Preview", |ui| {
+@@ -97,25 +127,35 @@ impl NativeGeometryLayer {
+ }
+ 
+ fn draw_native_geometry(
++  mut commands: Commands,
+   mut layer: ResMut<NativeGeometryLayer>,
+   viewport: Res<NativeMapViewport>,
+   windows: Query<&Window, With<PrimaryWindow>>,
++  mut meshes: ResMut<Assets<Mesh>>,
++  mut materials: ResMut<Assets<ColorMaterial>>,
++  mut fills: Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
+   mut gizmos: Gizmos,
+ ) {
+   let mut draw_stats = GeometryStats::default();
+   if !layer.enabled {
++    set_fill_visibility(&mut fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   }
+   let Some(viewport) = viewport.get() else {
++    set_fill_visibility(&mut fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   };
+   let Ok(window) = windows.single() else {
++    set_fill_visibility(&mut fills, false);
+     layer.draw_stats = draw_stats;
+     return;
+   };
+ 
++  rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
++  update_polygon_fills(viewport, window, &mut fills);
++
+   let left_x = viewport_left_x(viewport);
+   for geometry in &layer.geometries {
+     draw_geometry(
+@@ -130,6 +170,215 @@ fn draw_native_geometry(
+   layer.draw_stats = draw_stats;
+ }
+ 
++fn set_fill_visibility(
++  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
++  visible: bool,
++) {
++  for (_, _, mut visibility) in fills.iter_mut() {
++    *visibility = if visible {
++      Visibility::Visible
++    } else {
++      Visibility::Hidden
++    };
++  }
++}
++
++fn rebuild_polygon_fills_if_needed(
++  commands: &mut Commands,
++  meshes: &mut Assets<Mesh>,
++  materials: &mut Assets<ColorMaterial>,
++  layer: &mut NativeGeometryLayer,
++) {
++  if layer.fill_snapshot_version == layer.snapshot_version {
++    return;
++  }
++
++  for entity in layer.fill_entities.drain(..) {
++    commands.entity(entity).despawn();
++  }
++
++  let fill_specs = polygon_fill_specs(&layer.geometries);
++  let mut fill_entities = Vec::new();
++  for spec in fill_specs {
++    let mesh = meshes.add(spec.mesh);
++    let material = materials.add(ColorMaterial::from(spec.color));
++    for wrap_offset in [-CANVAS_SIZE, 0.0, CANVAS_SIZE] {
++      let entity = commands
++        .spawn((
++          Mesh2d(mesh.clone()),
++          MeshMaterial2d(material.clone()),
++          Transform::default(),
++          NativePolygonFill {
++            bounds: spec.bounds,
++            wrap_offset,
++          },
++        ))
++        .id();
++      fill_entities.push(entity);
++    }
++  }
++
++  layer.fill_entities = fill_entities;
++  layer.fill_snapshot_version = layer.snapshot_version;
++}
++
++fn update_polygon_fills(
++  viewport: MapViewport,
++  window: &Window,
++  fills: &mut Query<(&NativePolygonFill, &mut Transform, &mut Visibility)>,
++) {
++  for (fill, mut transform, mut visibility) in fills.iter_mut() {
++    *transform = polygon_fill_transform(viewport, window, fill.wrap_offset);
++    *visibility = if bounds_intersects_viewport(fill.bounds, viewport, fill.wrap_offset) {
++      Visibility::Visible
++    } else {
++      Visibility::Hidden
++    };
++  }
++}
++
++fn polygon_fill_transform(viewport: MapViewport, window: &Window, wrap_offset: f32) -> Transform {
++  Transform::from_xyz(
++    viewport.transform.trans.x + wrap_offset * viewport.transform.zoom - window.width() / 2.0,
++    window.height() / 2.0 - viewport.transform.trans.y,
++    GEOMETRY_FILL_Z,
++  )
++  .with_scale(Vec3::new(
++    viewport.transform.zoom,
++    -viewport.transform.zoom,
++    1.0,
++  ))
++}
++
++fn polygon_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PolygonFillSpec> {
++  let mut fills = Vec::new();
++  for geometry in geometries {
++    collect_polygon_fill_specs(geometry, &mut fills);
++  }
++  fills
++}
++
++fn collect_polygon_fill_specs(
++  geometry: &Geometry<PixelCoordinate>,
++  fills: &mut Vec<PolygonFillSpec>,
++) {
++  match geometry {
++    Geometry::GeometryCollection(geometries, _) => {
++      for geometry in geometries {
++        collect_polygon_fill_specs(geometry, fills);
++      }
++    }
++    Geometry::Polygon(coords, metadata) => {
++      let fill_color = metadata
++        .style
++        .as_ref()
++        .unwrap_or(&DEFAULT_STYLE)
++        .fill_color()
++        .gamma_multiply(0.7);
++      if fill_color.a() == 0 {
++        return;
++      }
++      let Some(bounds) = bounds_from_coords(coords) else {
++        return;
++      };
++      let Some(mesh) = polygon_fill_mesh(coords) else {
++        return;
++      };
++      fills.push(PolygonFillSpec {
++        mesh,
++        color: color32_to_bevy(fill_color),
++        bounds,
++      });
++    }
++    Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
++  }
++}
++
++fn polygon_fill_mesh(coords: &[PixelCoordinate]) -> Option<Mesh> {
++  let vertices = polygon_vertices(coords);
++  if vertices.len() < 3 {
++    return None;
++  }
++
++  let positions = vertices
++    .iter()
++    .map(|coord| [coord.x, coord.y, 0.0])
++    .collect::<Vec<_>>();
++  let normals = vec![[0.0, 0.0, 1.0]; vertices.len()];
++  let uvs = vec![[0.0, 0.0]; vertices.len()];
++  let mut indices = Vec::with_capacity((vertices.len() - 2) * 3);
++  for index in 1..vertices.len() - 1 {
++    let index = u32::try_from(index).ok()?;
++    indices.extend_from_slice(&[0, index, index + 1]);
++  }
++
++  Some(
++    Mesh::new(
++      PrimitiveTopology::TriangleList,
++      RenderAssetUsages::default(),
++    )
++    .with_inserted_indices(Indices::U32(indices))
++    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
++    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
++    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs),
++  )
++}
++
++fn polygon_vertices(coords: &[PixelCoordinate]) -> Vec<PixelCoordinate> {
++  let mut vertices = coords
++    .iter()
++    .copied()
++    .filter(PixelCoordinate::is_valid)
++    .collect::<Vec<_>>();
++  if vertices
++    .first()
++    .zip(vertices.last())
++    .is_some_and(|(first, last)| first.x == last.x && first.y == last.y)
++  {
++    vertices.pop();
++  }
++  vertices
++}
++
++fn bounds_from_coords(coords: &[PixelCoordinate]) -> Option<GeometryBounds> {
++  let mut coords = coords.iter().copied().filter(PixelCoordinate::is_valid);
++  let first = coords.next()?;
++  let mut bounds = GeometryBounds {
++    min_x: first.x,
++    min_y: first.y,
++    max_x: first.x,
++    max_y: first.y,
++  };
++
++  for coord in coords {
++    bounds.min_x = bounds.min_x.min(coord.x);
++    bounds.min_y = bounds.min_y.min(coord.y);
++    bounds.max_x = bounds.max_x.max(coord.x);
++    bounds.max_y = bounds.max_y.max(coord.y);
++  }
++
++  Some(bounds)
++}
++
++fn bounds_intersects_viewport(
++  bounds: GeometryBounds,
++  viewport: MapViewport,
++  wrap_offset: f32,
++) -> bool {
++  let inv = viewport.transform.invert();
++  let min_world = inv.apply(viewport.rect.min.into());
++  let max_world = inv.apply(viewport.rect.max.into());
++  let min_y = min_world.y.min(max_world.y);
++  let max_y = min_world.y.max(max_world.y);
++  if bounds.max_y < min_y || bounds.min_y > max_y {
++    return false;
++  }
++
++  let min_x = min_world.x.min(max_world.x);
++  let max_x = min_world.x.max(max_world.x);
++  bounds.max_x + wrap_offset >= min_x && bounds.min_x + wrap_offset <= max_x
++}
++
+ fn draw_geometry(
+   geometry: &Geometry<PixelCoordinate>,
+   viewport: MapViewport,
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index dd357eb..8c5dcb6 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -621,6 +621,8 @@ impl Widget for &mut Map {
+         for layer in layer_guard.iter_mut() {
+           layer.process_pending_events();
+           if self.native_geometry_rendering && layer.is_native_geometry_source() {
++            profile_scope!("Layer::draw_interaction_overlay", layer.name());
++            layer.draw_interaction_overlay(ui, &self.transform, rect);
+             continue;
+           }
+           profile_scope!("Layer::draw", layer.name());
+diff --git a/src/map/mapvas_egui/layer.rs b/src/map/mapvas_egui/layer.rs
+index 68bfc45..18cde6f 100644
+--- a/src/map/mapvas_egui/layer.rs
++++ b/src/map/mapvas_egui/layer.rs
+@@ -46,6 +46,7 @@ pub struct GeometrySnapshot {
+ /// E.g. a layer to draw the map tiles and one to draw the shapes.
+ pub trait Layer {
+   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect);
++  fn draw_interaction_overlay(&mut self, _ui: &mut Ui, _transform: &Transform, _rect: Rect) {}
+   fn clear(&mut self) {}
+   fn name(&self) -> &str;
+   fn visible(&self) -> bool;
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index 37db34e..b6d5515 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -381,6 +381,93 @@ impl ShapeLayer {
+     self.cache_version = self.version;
+   }
+ 
++  fn prepare_interaction_frame(&mut self, ui: &egui::Ui, transform: &Transform) -> bool {
++    self.current_transform = *transform;
++    self.handle_new_shapes();
++
++    if !self.visible() {
++      return false;
++    }
++
++    if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
++      self.update_hover_highlighting(mouse_pos, transform);
++    }
++
++    true
++  }
++
++  fn draw_detail_popup(&mut self, ui: &mut Ui) {
++    let Some((click_pos, click_world_coord, detail_info, creation_time)) =
++      &self.pending_detail_popup
++    else {
++      return;
++    };
++
++    let click_pos = *click_pos;
++    let click_world_coord = *click_world_coord;
++    let detail_info = detail_info.clone();
++    let creation_time = *creation_time;
++
++    let current_time = std::time::SystemTime::now()
++      .duration_since(std::time::UNIX_EPOCH)
++      .unwrap_or_default()
++      .as_secs_f64();
++    let time_since_creation = current_time - creation_time;
++
++    let screen_pos = if time_since_creation < 0.5 {
++      click_pos
++    } else if self.current_transform.is_invalid() {
++      click_pos
++    } else {
++      let pixel_pos = self.current_transform.apply(click_world_coord);
++      egui::pos2(pixel_pos.x, pixel_pos.y)
++    };
++
++    let mut show_popup = true;
++
++    egui::Window::new("Geometry Info")
++      .id(egui::Id::new("geometry_detail_context_menu"))
++      .open(&mut show_popup)
++      .collapsible(false)
++      .resizable(false)
++      .movable(false)
++      .title_bar(false)
++      .frame(egui::Frame::popup(ui.style()))
++      .fixed_pos(screen_pos)
++      .show(ui.ctx(), |ui| {
++        ui.set_min_width(280.0);
++        ui.set_max_width(400.0);
++
++        for line in detail_info.lines() {
++          if line.starts_with("📍")
++            || line.starts_with("📏")
++            || line.starts_with("⬟")
++            || line.starts_with("📦")
++          {
++            ui.strong(line);
++          } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
++            ui.label(line);
++          } else if line.starts_with("Label:") || line.starts_with("Timestamp:") {
++            ui.small(line);
++          } else {
++            ui.label(line);
++          }
++        }
++      });
++
++    if show_popup {
++      ui.ctx().input(|i| {
++        let ignore_clicks = time_since_creation < 0.2;
++
++        if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
++          self.pending_detail_popup = None;
++        }
++      });
++    } else {
++      self.pending_detail_popup = None;
++    }
++  }
++
+   /// Receive any geometry tiles that finished rendering on background threads.
+   fn collect_new_geo_tile_data(&mut self, ui: &egui::Ui) {
+     for (tile, image) in self.geo_tile_receiver.try_iter() {
+@@ -590,24 +677,27 @@ impl Layer for ShapeLayer {
+     self.headless = true;
+   }
+ 
++  fn draw_interaction_overlay(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
++    profile_scope!("ShapeLayer::draw_interaction_overlay");
++
++    if !self.prepare_interaction_frame(ui, transform) {
++      return;
++    }
++
++    self.collect_new_geo_tile_data(ui);
++    self.sync_geometry_cache();
++    self.draw_highlight_overlay(ui, transform, rect);
++    self.draw_detail_popup(ui);
++  }
++
+   #[allow(clippy::too_many_lines)]
+   fn draw(&mut self, ui: &mut Ui, transform: &Transform, rect: Rect) {
+     profile_scope!("ShapeLayer::draw");
+ 
+-    // Store current transform for popup positioning
+-    self.current_transform = *transform;
+-
+-    self.handle_new_shapes();
+-
+-    if !self.visible() {
++    if !self.prepare_interaction_frame(ui, transform) {
+       return;
+     }
+ 
+-    // Track mouse position and find closest geometry for hover highlighting
+-    if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+-      self.update_hover_highlighting(mouse_pos, transform);
+-    }
+-
+     // Receive any tiles that finished rendering on background threads.
+     self.collect_new_geo_tile_data(ui);
+ 
+@@ -751,82 +841,7 @@ impl Layer for ShapeLayer {
+ 
+     // Handle pending detail popup from double-click as lightweight positioned window
+     // This needs to be in draw() so it shows regardless of sidebar state
+-    if let Some((click_pos, click_world_coord, detail_info, creation_time)) =
+-      &self.pending_detail_popup
+-    {
+-      // Extract values to avoid borrow checker issues
+-      let click_pos = *click_pos;
+-      let click_world_coord = *click_world_coord;
+-      let detail_info = detail_info.clone();
+-      let creation_time = *creation_time;
+-
+-      // Calculate how long the popup has been visible
+-      let current_time = std::time::SystemTime::now()
+-        .duration_since(std::time::UNIX_EPOCH)
+-        .unwrap_or_default()
+-        .as_secs_f64();
+-      let time_since_creation = current_time - creation_time;
+-
+-      // For the first 500ms, use click position for better UX
+-      // After that, track the click world coordinate so popup follows map movement
+-      let screen_pos = if time_since_creation < 0.5 {
+-        click_pos
+-      } else if self.current_transform.is_invalid() {
+-        // Fallback to original click position if transform is invalid
+-        click_pos
+-      } else {
+-        // Convert click world coordinate to current screen position
+-        let pixel_pos = self.current_transform.apply(click_world_coord);
+-        egui::pos2(pixel_pos.x, pixel_pos.y)
+-      };
+-
+-      let mut show_popup = true;
+-
+-      egui::Window::new("Geometry Info")
+-        .id(egui::Id::new("geometry_detail_context_menu"))
+-        .open(&mut show_popup)
+-        .collapsible(false)
+-        .resizable(false)
+-        .movable(false)
+-        .title_bar(false)
+-        .frame(egui::Frame::popup(ui.style()))
+-        .fixed_pos(screen_pos)
+-        .show(ui.ctx(), |ui| {
+-          ui.set_min_width(280.0);
+-          ui.set_max_width(400.0);
+-
+-          // Split detail info into lines and format nicely
+-          for line in detail_info.lines() {
+-            if line.starts_with("📍")
+-              || line.starts_with("📏")
+-              || line.starts_with("⬟")
+-              || line.starts_with("📦")
+-            {
+-              ui.strong(line);
+-            } else if line.starts_with("Layer:") || line.starts_with("Coordinates:") {
+-              ui.label(line);
+-            } else if line.starts_with("Label:") || line.starts_with("Timestamp:") {
+-              ui.small(line);
+-            } else {
+-              ui.label(line);
+-            }
+-          }
+-        });
+-
+-      if show_popup {
+-        // Also close on any click or escape key, but ignore clicks for a short period after creation
+-        ui.ctx().input(|i| {
+-          // Ignore clicks for 200ms after popup creation to prevent immediate closure
+-          let ignore_clicks = time_since_creation < 0.2;
+-
+-          if (!ignore_clicks && i.pointer.any_click()) || i.key_pressed(egui::Key::Escape) {
+-            self.pending_detail_popup = None;
+-          }
+-        });
+-      } else {
+-        self.pending_detail_popup = None; // Clear if window was closed
+-      }
+-    }
++    self.draw_detail_popup(ui);
+   }
+ 
+   fn bounding_box(&self) -> Option<BoundingBox> {

@@ -1,0 +1,100 @@
+--- a/src/bin/mapvas/bevy_map.rs
++++ b/src/bin/mapvas/bevy_map.rs
+@@ -18,11 +18,28 @@
+ impl Plugin for NativeMapPlugin {
+   fn build(&self, app: &mut App) {
+     app
++      .init_resource::<NativeMapViewport>()
+       .init_resource::<NativeMapControl>()
+       .add_systems(Update, native_map_input);
+   }
+ }
+ 
++#[derive(Resource, Default)]
++pub struct NativeMapViewport {
++  viewport: Option<MapViewport>,
++}
++
++impl NativeMapViewport {
++  pub fn set(&mut self, viewport: Option<MapViewport>) {
++    self.viewport = viewport;
++  }
++
++  #[must_use]
++  pub fn get(&self) -> Option<MapViewport> {
++    self.viewport
++  }
++}
++
+ #[derive(Resource)]
+ pub struct NativeMapControl {
+   enabled: bool,
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -26,30 +26,16 @@
+   task_tracker::{TaskCategory, TaskGuard},
+ };
+ 
++use crate::bevy_map::NativeMapViewport;
++
+ #[derive(Resource)]
+ pub struct NativeTileRuntime(pub tokio::runtime::Handle);
+-
+-#[derive(Resource, Default)]
+-pub struct NativeMapViewport {
+-  viewport: Option<MapViewport>,
+-}
+-
+-impl NativeMapViewport {
+-  pub fn set(&mut self, viewport: Option<MapViewport>) {
+-    self.viewport = viewport;
+-  }
+-
+-  #[must_use]
+-  pub fn get(&self) -> Option<MapViewport> {
+-    self.viewport
+-  }
+-}
+ 
+ pub struct NativeTilePlugin;
+ 
+ impl Plugin for NativeTilePlugin {
+   fn build(&self, app: &mut App) {
+-    app.init_resource::<NativeMapViewport>().add_systems(
++    app.add_systems(
+       Update,
+       (collect_finished_tiles, update_native_tiles).chain(),
+     );
+@@ -432,7 +418,7 @@
+     return;
+   }
+ 
+-  let Some(viewport) = viewport.viewport else {
++  let Some(viewport) = viewport.get() else {
+     return;
+   };
+   let Ok(window) = windows.single() else {
+--- a/src/bin/mapvas/bevy_geometry.rs
++++ b/src/bin/mapvas/bevy_geometry.rs
+@@ -13,7 +13,7 @@
+   },
+ };
+ 
+-use crate::bevy_tiles::NativeMapViewport;
++use crate::bevy_map::NativeMapViewport;
+ 
+ const POINT_RADIUS: f32 = 4.0;
+ const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
+--- a/src/bin/mapvas/main.rs
++++ b/src/bin/mapvas/main.rs
+@@ -5,8 +5,8 @@
+ use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use bevy_geometry::{NativeGeometryLayer, NativeGeometryPlugin};
+-use bevy_map::{NativeMapControl, NativeMapPlugin};
+-use bevy_tiles::{NativeMapViewport, NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
++use bevy_map::{NativeMapControl, NativeMapPlugin, NativeMapViewport};
++use bevy_tiles::{NativeTileLayer, NativeTilePlugin, NativeTileRuntime};
+ use mapvas::{
+   config::Config,
+   map::{mapvas_egui::Map, tile_renderer::init_style_config},

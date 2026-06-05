@@ -11,6 +11,7 @@ use crate::{
       MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
       set_style_config, style_config,
     },
+    viewport::MapViewport,
   },
   profile_scope,
   remote::Remote,
@@ -31,6 +32,12 @@ pub struct MapApp {
   runtime_monitor: Option<RuntimeMonitor>,
   headless: bool,
   transparent_map_background: bool,
+}
+
+pub struct MapAppOutput {
+  pub viewport: Option<MapViewport>,
+  pub current_config: Config,
+  pub geometry_snapshot_version: u64,
 }
 
 impl MapApp {
@@ -88,12 +95,12 @@ impl MapApp {
   }
 
   #[must_use]
-  pub fn viewport(&self) -> Option<crate::map::mapvas_egui::MapViewport> {
+  pub fn viewport(&self) -> Option<crate::map::viewport::MapViewport> {
     self.map.viewport()
   }
 
   #[must_use]
-  pub fn geometry_snapshot(&self) -> crate::map::mapvas_egui::GeometrySnapshot {
+  pub fn geometry_snapshot(&self) -> crate::map::viewport::GeometrySnapshot {
     self.map.geometry_snapshot()
   }
 
@@ -163,8 +170,8 @@ impl MapApp {
 
 impl MapApp {
   #[allow(clippy::too_many_lines)]
-  pub fn show(&mut self, ui: &mut egui::Ui) {
-    self.show_with_map_layer_controls(ui, &mut |_| {});
+  pub fn show(&mut self, ui: &mut egui::Ui) -> MapAppOutput {
+    self.show_with_map_layer_controls(ui, &mut |_| {})
   }
 
   #[allow(clippy::too_many_lines)]
@@ -172,7 +179,7 @@ impl MapApp {
     &mut self,
     ui: &mut egui::Ui,
     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
-  ) {
+  ) -> MapAppOutput {
     let ctx_owned = ui.ctx().clone();
     let ctx = &ctx_owned;
     profile_scope!("MapApp::update");
@@ -375,6 +382,12 @@ impl MapApp {
     self.map.update_state_snapshot();
     if self.map.has_pending_work() {
       ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+
+    MapAppOutput {
+      viewport: self.map.viewport(),
+      current_config: self.settings_dialog.borrow().get_current_config(),
+      geometry_snapshot_version: self.map.geometry_snapshot_version(),
     }
   }
 
