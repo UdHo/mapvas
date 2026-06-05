@@ -1,0 +1,103 @@
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -811,6 +811,7 @@
+     let sender = self.sender.clone();
+     let tile_source = self.tile_source;
+     let generation = self.generation;
++    let style_zoom = native_vector_style_zoom(tile.zoom, self.tile_detail_factor);
+     runtime.spawn(async move {
+       let task_name = format!(
+         "bevy-native-vector-tile-{}-{}-{}",
+@@ -827,7 +828,7 @@
+       };
+ 
+       let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
+-        native_vector_tile_content(&tile, &tile_data)
++        native_vector_tile_content(&tile, style_zoom, &tile_data)
+       });
+ 
+       let render_result = tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
+@@ -2434,6 +2435,19 @@
+   let mut detail_transform = transform;
+   detail_transform.zoom *= effective_tile_detail_factor(detail_factor);
+   tile_zoom_for_transform(&detail_transform)
++}
++
++fn native_vector_style_zoom(tile_zoom: u8, detail_factor: f32) -> u8 {
++  tile_zoom.saturating_sub(tile_detail_zoom_offset(detail_factor))
++}
++
++#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++fn tile_detail_zoom_offset(detail_factor: f32) -> u8 {
++  effective_tile_detail_factor(detail_factor)
++    .max(1.0)
++    .log2()
++    .round()
++    .clamp(0.0, f32::from(u8::MAX)) as u8
+ }
+ 
+ fn effective_tile_detail_factor(detail_factor: f32) -> f32 {
+@@ -2459,6 +2473,7 @@
+ #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
+ fn native_vector_tile_content(
+   tile: &Tile,
++  style_zoom: u8,
+   data: &[u8],
+ ) -> Result<NativeVectorTileContent, TileRenderError> {
+   let reader = mvt_reader::Reader::new(data.to_vec())
+@@ -2506,6 +2521,7 @@
+         index,
+         layer_name,
+         tile,
++        style_zoom,
+         tile_nw,
+         tile_world_size,
+         mvt_to_world,
+@@ -2525,6 +2541,7 @@
+       index,
+       layer_name,
+       tile,
++      style_zoom,
+       tile_nw,
+       tile_world_size,
+       mvt_to_world,
+@@ -2546,6 +2563,7 @@
+   layer_index: usize,
+   layer_name: &str,
+   tile: &Tile,
++  style_zoom: u8,
+   tile_origin: PixelCoordinate,
+   tile_world_size: f32,
+   mvt_to_world: f32,
+@@ -2601,7 +2619,7 @@
+           line,
+           layer_name,
+           line_class,
+-          tile.zoom,
++          style_zoom,
+           tile_origin,
+           mvt_to_world,
+           style_pixel_to_world,
+@@ -2616,7 +2634,7 @@
+             line,
+             layer_name,
+             line_class,
+-            tile.zoom,
++            style_zoom,
+             tile_origin,
+             mvt_to_world,
+             style_pixel_to_world,
+@@ -3166,6 +3184,13 @@
+   }
+ 
+   #[test]
++  fn native_vector_style_zoom_removes_detail_zoom_offset() {
++    assert_eq!(native_vector_style_zoom(13, 0.5), 13);
++    assert_eq!(native_vector_style_zoom(13, 1.0), 12);
++    assert_eq!(native_vector_style_zoom(13, 2.0), 11);
++  }
++
++  #[test]
+   fn openfreemap_city_rank_maps_to_place_size_buckets() {
+     assert_eq!(normalized_openfreemap_place_rank("city", 2), 13);
+     assert_eq!(normalized_openfreemap_place_rank("city", 11), 15);
