@@ -1,0 +1,1228 @@
+diff --git a/src/bin/mapvas/bevy_tiles.rs b/src/bin/mapvas/bevy_tiles.rs
+index 77cd657..df9d449 100644
+--- a/src/bin/mapvas/bevy_tiles.rs
++++ b/src/bin/mapvas/bevy_tiles.rs
+@@ -8,6 +8,7 @@ use std::{
+ 
+ use bevy::{
+   asset::RenderAssetUsages,
++  mesh::{Indices, PrimitiveTopology},
+   prelude::*,
+   render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+   sprite::Anchor,
+@@ -22,7 +23,8 @@ use mapvas::{
+     },
+     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+     tile_renderer::{
+-      RasterTileRenderer, TileImage, TileRenderer, VectorTileRenderer, style_version,
++      RasterTileRenderer, TileImage, TileRenderError, TileRenderer, VectorTileRenderer,
++      background_color, get_fill_color, get_road_styling, style_config, style_version,
+     },
+     viewport::MapViewport,
+   },
+@@ -46,6 +48,12 @@ const OSM_ATTRIBUTION_MARGIN: f32 = 8.0;
+ const OSM_ATTRIBUTION_FONT_SIZE: f32 = 11.0;
+ const OSM_ATTRIBUTION_BACKGROUND_Z: f32 = 50.0;
+ const OSM_ATTRIBUTION_TEXT_Z: f32 = 51.0;
++const NATIVE_VECTOR_BACKGROUND_Z: f32 = -30.0;
++const NATIVE_VECTOR_LAND_Z: f32 = -29.0;
++const NATIVE_VECTOR_WATER_Z: f32 = -28.0;
++const NATIVE_VECTOR_BUILDING_Z: f32 = -27.0;
++const NATIVE_VECTOR_ROAD_CASING_Z: f32 = -26.0;
++const NATIVE_VECTOR_ROAD_INNER_Z: f32 = -25.0;
+ 
+ #[derive(Resource)]
+ pub struct BevyTileRuntime(pub tokio::runtime::Handle);
+@@ -57,7 +65,15 @@ impl Plugin for BevyTilePlugin {
+     app
+       .init_gizmo_group::<BevyTileOverlayGizmos>()
+       .add_systems(Startup, configure_bevy_tile_overlay_gizmos)
+-      .add_systems(Update, (collect_finished_tiles, update_bevy_tiles).chain());
++      .add_systems(
++        Update,
++        (
++          collect_finished_tiles,
++          update_bevy_tiles,
++          update_native_vector_tiles,
++        )
++          .chain(),
++      );
+   }
+ }
+ 
+@@ -83,6 +99,9 @@ struct BevyOsmAttributionBackground;
+ #[derive(Component)]
+ struct BevyOsmAttributionText;
+ 
++#[derive(Component)]
++struct BevyNativeVectorTileMesh;
++
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum CoordinateDisplayMode {
+   Off,
+@@ -95,6 +114,63 @@ struct BevyTileEntry {
+   entities: Vec<Entity>,
+ }
+ 
++#[derive(Clone, Copy)]
++struct NativeVectorTileBounds {
++  min_x: f32,
++  min_y: f32,
++  max_x: f32,
++  max_y: f32,
++}
++
++impl NativeVectorTileBounds {
++  fn from_min_max(min: PixelCoordinate, max: PixelCoordinate) -> Self {
++    Self {
++      min_x: min.x,
++      min_y: min.y,
++      max_x: max.x,
++      max_y: max.y,
++    }
++  }
++
++  fn include(&mut self, coord: PixelCoordinate) {
++    self.min_x = self.min_x.min(coord.x);
++    self.min_y = self.min_y.min(coord.y);
++    self.max_x = self.max_x.max(coord.x);
++    self.max_y = self.max_y.max(coord.y);
++  }
++}
++
++struct NativeVectorTileMeshSpec {
++  mesh: Mesh,
++  color: Color,
++  bounds: NativeVectorTileBounds,
++  origin: PixelCoordinate,
++  z: f32,
++}
++
++struct NativeVectorTileMeshInstance {
++  mesh: Handle<Mesh>,
++  material: Handle<ColorMaterial>,
++  bounds: NativeVectorTileBounds,
++  origin: PixelCoordinate,
++  z: f32,
++  entities: Vec<Entity>,
++}
++
++struct BevyNativeVectorTileEntry {
++  instances: Vec<NativeVectorTileMeshInstance>,
++}
++
++struct NativeVectorMeshBatch {
++  color_key: [u8; 4],
++  color: Color,
++  z_key: i16,
++  z: f32,
++  positions: Vec<[f32; 3]>,
++  indices: Vec<u32>,
++  bounds: Option<NativeVectorTileBounds>,
++}
++
+ struct TileLabel {
+   background_rect: PixelRect,
+   background_size: Vec2,
+@@ -108,6 +184,11 @@ enum BevyTileResult {
+     tile: Tile,
+     image: TileImage,
+   },
++  NativeVectorReady {
++    generation: u64,
++    tile: Tile,
++    meshes: Vec<NativeVectorTileMeshSpec>,
++  },
+   Failed {
+     generation: u64,
+     tile: Tile,
+@@ -123,9 +204,12 @@ pub struct BevyTileLayer {
+   tile_providers: Vec<TileProvider>,
+   tile_source: TileSource,
+   visible: bool,
++  native_vector_tiles_enabled: bool,
+   loaded_tiles: HashMap<Tile, BevyTileEntry>,
++  loaded_native_vector_tiles: HashMap<Tile, BevyNativeVectorTileEntry>,
+   in_flight_tiles: HashSet<Tile>,
+   stale_entities: Vec<Entity>,
++  stale_native_vector_entities: Vec<Entity>,
+   raster_renderer: Arc<dyn TileRenderer>,
+   vector_renderer: Arc<dyn TileRenderer>,
+   last_visible_tiles: Vec<Tile>,
+@@ -158,9 +242,12 @@ impl BevyTileLayer {
+       tile_providers: config.tile_provider.clone(),
+       tile_source: TileSource::All,
+       visible: true,
++      native_vector_tiles_enabled: true,
+       loaded_tiles: HashMap::new(),
++      loaded_native_vector_tiles: HashMap::new(),
+       in_flight_tiles: HashSet::new(),
+       stale_entities: Vec::new(),
++      stale_native_vector_entities: Vec::new(),
+       raster_renderer: Arc::new(RasterTileRenderer::new()),
+       vector_renderer: Arc::new(VectorTileRenderer::new()),
+       last_visible_tiles: Vec::new(),
+@@ -239,6 +326,19 @@ impl BevyTileLayer {
+         self.clear_tiles();
+       }
+ 
++      if self
++        .tile_loader()
++        .is_some_and(|loader| loader.tile_type() == TileType::Vector)
++        && ui
++          .checkbox(
++            &mut self.native_vector_tiles_enabled,
++            "native vector geometry",
++          )
++          .changed()
++      {
++        self.clear_tiles();
++      }
++
+       ui.checkbox(&mut self.preload_enabled, "preload adjacent tiles");
+ 
+       ui.separator();
+@@ -281,12 +381,17 @@ impl BevyTileLayer {
+       let tiles_queued = self.tile_loader().map_or(0, |loader| loader.tiles_queued());
+       let tiles_in_flight = self.in_flight_tiles.len();
+       let tiles_loaded = self.loaded_tiles.len();
++      let native_tiles_loaded = self.loaded_native_vector_tiles.len();
+       let tiles_rendering = tiles_in_flight.saturating_sub(tiles_downloading);
+ 
+       ui.horizontal(|ui| {
+         ui.label("Tiles loaded:");
+         ui.label(tiles_loaded.to_string());
+       });
++      ui.horizontal(|ui| {
++        ui.label("Native vector tiles:");
++        ui.label(native_tiles_loaded.to_string());
++      });
+       ui.horizontal(|ui| {
+         ui.label("Tiles downloading:");
+         ui.label(tiles_downloading.to_string());
+@@ -313,6 +418,18 @@ impl BevyTileLayer {
+     for entry in self.loaded_tiles.drain().map(|(_, entry)| entry) {
+       self.stale_entities.extend(entry.entities);
+     }
++    for entry in self
++      .loaded_native_vector_tiles
++      .drain()
++      .map(|(_, entry)| entry)
++    {
++      self.stale_native_vector_entities.extend(
++        entry
++          .instances
++          .into_iter()
++          .flat_map(|instance| instance.entities),
++      );
++    }
+   }
+ 
+   fn tile_loader(&self) -> Option<Arc<CachedTileLoader>> {
+@@ -326,6 +443,14 @@ impl BevyTileLayer {
+     }
+   }
+ 
++  fn native_vector_tiles_active(&self) -> bool {
++    self.visible
++      && self.native_vector_tiles_enabled
++      && self
++        .tile_loader()
++        .is_some_and(|loader| loader.tile_type() == TileType::Vector)
++  }
++
+   fn visible_tiles(&mut self, viewport: MapViewport) -> Vec<Tile> {
+     let Some(tile_loader) = self.tile_loader() else {
+       return Vec::new();
+@@ -334,7 +459,9 @@ impl BevyTileLayer {
+     let calculated_zoom = tile_zoom_for_transform(&viewport.transform);
+     let max_zoom = tile_loader.max_zoom();
+     let tile_type = tile_loader.tile_type();
+-    let request_zoom = if tile_type == TileType::Vector && calculated_zoom > max_zoom {
++    let request_zoom = if tile_type == TileType::Vector && self.native_vector_tiles_enabled {
++      calculated_zoom.min(max_zoom)
++    } else if tile_type == TileType::Vector && calculated_zoom > max_zoom {
+       calculated_zoom.min(19)
+     } else {
+       calculated_zoom.min(max_zoom)
+@@ -503,6 +630,74 @@ impl BevyTileLayer {
+     });
+   }
+ 
++  fn request_native_vector_tile(
++    &mut self,
++    tile: Tile,
++    priority: TilePriority,
++    runtime: tokio::runtime::Handle,
++  ) {
++    let Some(tile) = self.native_vector_request_tile(tile) else {
++      return;
++    };
++    if self.loaded_native_vector_tiles.contains_key(&tile) || self.in_flight_tiles.contains(&tile) {
++      return;
++    }
++    let Some(tile_loader) = self.tile_loader() else {
++      return;
++    };
++    if tile_loader.tile_type() != TileType::Vector {
++      return;
++    }
++
++    self.in_flight_tiles.insert(tile);
++
++    let sender = self.sender.clone();
++    let tile_source = self.tile_source;
++    let generation = self.generation;
++    runtime.spawn(async move {
++      let task_name = format!(
++        "bevy-native-vector-tile-{}-{}-{}",
++        tile.zoom, tile.x, tile.y
++      );
++      let _guard = TaskGuard::new(task_name, TaskCategory::TileLoad);
++
++      let Ok(tile_data) = tile_loader
++        .tile_data_with_priority(&tile, tile_source, priority)
++        .await
++      else {
++        let _ = sender.send(BevyTileResult::Failed { generation, tile });
++        return;
++      };
++
++      let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
++        native_vector_tile_meshes(&tile, &tile_data)
++      });
++
++      let render_result = tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
++      let meshes = match render_result {
++        Ok(Ok(Ok(meshes))) => meshes,
++        _ => {
++          let _ = sender.send(BevyTileResult::Failed { generation, tile });
++          return;
++        }
++      };
++
++      let _ = sender.send(BevyTileResult::NativeVectorReady {
++        generation,
++        tile,
++        meshes,
++      });
++    });
++  }
++
++  fn native_vector_request_tile(&self, mut tile: Tile) -> Option<Tile> {
++    let max_zoom = self.tile_loader()?.max_zoom();
++    while tile.zoom > max_zoom {
++      tile = tile.parent()?;
++    }
++    Some(tile)
++  }
++
+   fn request_preload_tiles(&mut self, visible_tiles: &[Tile], runtime: tokio::runtime::Handle) {
+     let Some(tile_loader) = self.tile_loader() else {
+       return;
+@@ -518,6 +713,26 @@ impl BevyTileLayer {
+       self.request_tile(tile, priority, runtime.clone());
+     }
+   }
++
++  fn request_preload_native_vector_tiles(
++    &mut self,
++    visible_tiles: &[Tile],
++    runtime: tokio::runtime::Handle,
++  ) {
++    let Some(tile_loader) = self.tile_loader() else {
++      return;
++    };
++    if !self.preload_enabled || !tile_loader.allows_preloading() {
++      return;
++    }
++
++    for (tile, priority) in generate_preload_tiles(visible_tiles)
++      .into_iter()
++      .take(MAX_PRELOAD_TILES)
++    {
++      self.request_native_vector_tile(tile, priority, runtime.clone());
++    }
++  }
+ }
+ 
+ fn send_failed_tiles(sender: &Sender<BevyTileResult>, generation: u64, tiles: &[Tile]) {
+@@ -557,7 +772,12 @@ fn split_image_into_tiles(image: &TileImage, grid_size: usize) -> Vec<TileImage>
+   tiles
+ }
+ 
+-fn collect_finished_tiles(mut layer: ResMut<BevyTileLayer>, mut images: ResMut<Assets<Image>>) {
++fn collect_finished_tiles(
++  mut layer: ResMut<BevyTileLayer>,
++  mut images: ResMut<Assets<Image>>,
++  mut meshes: ResMut<Assets<Mesh>>,
++  mut materials: ResMut<Assets<ColorMaterial>>,
++) {
+   let mut results = Vec::new();
+   if let Ok(receiver) = layer.receiver.lock() {
+     while let Ok(result) = receiver.try_recv() {
+@@ -589,6 +809,38 @@ fn collect_finished_tiles(mut layer: ResMut<BevyTileLayer>, mut images: ResMut<A
+           );
+         }
+       }
++      BevyTileResult::NativeVectorReady {
++        generation,
++        tile,
++        meshes: mesh_specs,
++      } => {
++        if generation != layer.generation {
++          continue;
++        }
++        layer.in_flight_tiles.remove(&tile);
++        let instances = mesh_specs
++          .into_iter()
++          .map(|spec| NativeVectorTileMeshInstance {
++            mesh: meshes.add(spec.mesh),
++            material: materials.add(ColorMaterial::from(spec.color)),
++            bounds: spec.bounds,
++            origin: spec.origin,
++            z: spec.z,
++            entities: Vec::new(),
++          })
++          .collect::<Vec<_>>();
++        if let Some(entry) = layer
++          .loaded_native_vector_tiles
++          .insert(tile, BevyNativeVectorTileEntry { instances })
++        {
++          layer.stale_native_vector_entities.extend(
++            entry
++              .instances
++              .into_iter()
++              .flat_map(|instance| instance.entities),
++          );
++        }
++      }
+       BevyTileResult::Failed { generation, tile } => {
+         if generation != layer.generation {
+           continue;
+@@ -700,20 +952,27 @@ fn update_bevy_tiles(
+ 
+   let visible_tiles = layer.visible_tiles(viewport);
+   let runtime_handle = runtime.0.clone();
++  let native_vector_active = layer.native_vector_tiles_active();
+   let show_osm_attribution = layer
+     .tile_loader()
+     .is_some_and(|loader| loader.requires_osm_attribution())
+-    && !layer.loaded_tiles.is_empty()
++    && (!layer.loaded_tiles.is_empty() || !layer.loaded_native_vector_tiles.is_empty())
+     && layer.coordinate_display_mode != CoordinateDisplayMode::GridOnly;
+ 
+-  for tile in &visible_tiles {
+-    if !layer.loaded_tiles.contains_key(tile) {
+-      layer.request_tile(*tile, TilePriority::Current, runtime_handle.clone());
++  if !native_vector_active {
++    for tile in &visible_tiles {
++      if !layer.loaded_tiles.contains_key(tile) {
++        layer.request_tile(*tile, TilePriority::Current, runtime_handle.clone());
++      }
+     }
+   }
+ 
+   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+-    layer.request_preload_tiles(&visible_tiles, runtime_handle);
++    if native_vector_active {
++      layer.request_preload_native_vector_tiles(&visible_tiles, runtime_handle);
++    } else {
++      layer.request_preload_tiles(&visible_tiles, runtime_handle);
++    }
+     hide_tile_sprites(&mut sprites);
+     update_grid_tile_sprites(
+       &mut commands,
+@@ -776,6 +1035,10 @@ fn update_bevy_tiles(
+     &mut attribution_backgrounds,
+     &mut attribution_texts,
+   );
++  if native_vector_active {
++    hide_tile_sprites(&mut sprites);
++    return;
++  }
+ 
+   let mut tiles_to_draw = visible_tiles
+     .iter()
+@@ -851,6 +1114,199 @@ fn update_bevy_tiles(
+   );
+ }
+ 
++fn update_native_vector_tiles(
++  mut commands: Commands,
++  mut layer: ResMut<BevyTileLayer>,
++  viewport: Res<BevyMapViewport>,
++  runtime: Res<BevyTileRuntime>,
++  windows: Query<&Window, With<PrimaryWindow>>,
++  mut meshes: Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
++) {
++  let stale_entities = layer
++    .stale_native_vector_entities
++    .drain(..)
++    .collect::<HashSet<_>>();
++  for entity in &stale_entities {
++    commands.entity(*entity).despawn();
++  }
++
++  if !layer.native_vector_tiles_active() {
++    hide_native_vector_tile_meshes(&mut meshes);
++    despawn_untracked_native_vector_tile_meshes(
++      &mut commands,
++      &tracked_native_vector_tile_entities(&layer),
++      &stale_entities,
++      &mut meshes,
++    );
++    return;
++  }
++  let Some(viewport) = viewport.get() else {
++    hide_native_vector_tile_meshes(&mut meshes);
++    despawn_untracked_native_vector_tile_meshes(
++      &mut commands,
++      &tracked_native_vector_tile_entities(&layer),
++      &stale_entities,
++      &mut meshes,
++    );
++    return;
++  };
++  let Ok(window) = windows.single() else {
++    hide_native_vector_tile_meshes(&mut meshes);
++    despawn_untracked_native_vector_tile_meshes(
++      &mut commands,
++      &tracked_native_vector_tile_entities(&layer),
++      &stale_entities,
++      &mut meshes,
++    );
++    return;
++  };
++
++  if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
++    hide_native_vector_tile_meshes(&mut meshes);
++    return;
++  }
++
++  let visible_tiles = layer.visible_tiles(viewport);
++  let runtime_handle = runtime.0.clone();
++  for tile in &visible_tiles {
++    if loaded_native_vector_tile_or_parent(&layer, *tile).is_none() {
++      layer.request_native_vector_tile(*tile, TilePriority::Current, runtime_handle.clone());
++    }
++  }
++  layer.request_preload_native_vector_tiles(&visible_tiles, runtime_handle);
++
++  let mut tiles_to_draw = visible_tiles
++    .iter()
++    .filter_map(|tile| loaded_native_vector_tile_or_parent(&layer, *tile))
++    .collect::<Vec<_>>();
++  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
++  tiles_to_draw.dedup();
++  tiles_to_draw.reverse();
++
++  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
++  for tile in &tiles_to_draw {
++    let entry = layer
++      .loaded_native_vector_tiles
++      .get_mut(tile)
++      .expect("native vector tile was checked");
++    for instance in &mut entry.instances {
++      update_native_vector_tile_mesh_instance(
++        &mut commands,
++        viewport,
++        window,
++        instance,
++        &mut meshes,
++      );
++    }
++  }
++
++  for (tile, entry) in &mut layer.loaded_native_vector_tiles {
++    if draw_set.contains(tile) {
++      continue;
++    }
++    for instance in &entry.instances {
++      hide_native_vector_tile_entities(&instance.entities, &mut meshes);
++    }
++  }
++
++  despawn_untracked_native_vector_tile_meshes(
++    &mut commands,
++    &tracked_native_vector_tile_entities(&layer),
++    &stale_entities,
++    &mut meshes,
++  );
++}
++
++fn update_native_vector_tile_mesh_instance(
++  commands: &mut Commands,
++  viewport: MapViewport,
++  window: &Window,
++  instance: &mut NativeVectorTileMeshInstance,
++  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
++) {
++  let wrap_offsets = native_vector_bounds_visible_wrap_offsets(instance.bounds, viewport);
++  for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
++    let transform =
++      native_vector_tile_transform(viewport, window, instance.origin, wrap_offset, instance.z);
++    if let Some(entity) = instance.entities.get(entity_index).copied() {
++      if let Ok((_, mut mesh_transform, mut visibility)) = meshes.get_mut(entity) {
++        *mesh_transform = transform;
++        *visibility = Visibility::Visible;
++      } else {
++        instance.entities[entity_index] =
++          spawn_native_vector_tile_mesh(commands, instance, transform);
++      }
++    } else {
++      let entity = spawn_native_vector_tile_mesh(commands, instance, transform);
++      instance.entities.push(entity);
++    }
++  }
++
++  hide_native_vector_tile_entities(&instance.entities[wrap_offsets.len()..], meshes);
++}
++
++fn spawn_native_vector_tile_mesh(
++  commands: &mut Commands,
++  instance: &NativeVectorTileMeshInstance,
++  transform: Transform,
++) -> Entity {
++  commands
++    .spawn((
++      Mesh2d(instance.mesh.clone()),
++      MeshMaterial2d(instance.material.clone()),
++      transform,
++      BevyNativeVectorTileMesh,
++    ))
++    .id()
++}
++
++fn hide_native_vector_tile_meshes(
++  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
++) {
++  for (_, _, mut visibility) in meshes.iter_mut() {
++    *visibility = Visibility::Hidden;
++  }
++}
++
++fn hide_native_vector_tile_entities(
++  entities: &[Entity],
++  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
++) {
++  for entity in entities {
++    if let Ok((_, _, mut visibility)) = meshes.get_mut(*entity) {
++      *visibility = Visibility::Hidden;
++    }
++  }
++}
++
++fn tracked_native_vector_tile_entities(layer: &BevyTileLayer) -> HashSet<Entity> {
++  layer
++    .loaded_native_vector_tiles
++    .values()
++    .flat_map(|entry| {
++      entry
++        .instances
++        .iter()
++        .flat_map(|instance| instance.entities.iter().copied())
++    })
++    .collect()
++}
++
++fn despawn_untracked_native_vector_tile_meshes(
++  commands: &mut Commands,
++  tracked_entities: &HashSet<Entity>,
++  stale_entities: &HashSet<Entity>,
++  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
++) {
++  for (entity, _, mut visibility) in meshes.iter_mut() {
++    if tracked_entities.contains(&entity) || stale_entities.contains(&entity) {
++      continue;
++    }
++    *visibility = Visibility::Hidden;
++    commands.entity(entity).despawn();
++  }
++}
++
+ fn hide_tile_sprites(
+   sprites: &mut Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
+ ) {
+@@ -1261,6 +1717,15 @@ fn loaded_tile_or_parent(layer: &BevyTileLayer, mut tile: Tile) -> Option<Tile>
+   }
+ }
+ 
++fn loaded_native_vector_tile_or_parent(layer: &BevyTileLayer, mut tile: Tile) -> Option<Tile> {
++  loop {
++    if layer.loaded_native_vector_tiles.contains_key(&tile) {
++      return Some(tile);
++    }
++    tile = tile.parent()?;
++  }
++}
++
+ fn tile_image_to_bevy(image: TileImage) -> Image {
+   Image::new(
+     Extent3d {
+@@ -1275,6 +1740,53 @@ fn tile_image_to_bevy(image: TileImage) -> Image {
+   )
+ }
+ 
++#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
++fn native_vector_bounds_visible_wrap_offsets(
++  bounds: NativeVectorTileBounds,
++  viewport: MapViewport,
++) -> Vec<f32> {
++  let inv = viewport.transform.invert();
++  let viewport_start = inv.apply(viewport.min());
++  let viewport_end = inv.apply(viewport.max());
++  let viewport_min_y = viewport_start.y.min(viewport_end.y);
++  let viewport_max_y = viewport_start.y.max(viewport_end.y);
++  if bounds.max_y < viewport_min_y || bounds.min_y > viewport_max_y {
++    return Vec::new();
++  }
++
++  let viewport_min_x = viewport_start.x.min(viewport_end.x);
++  let viewport_max_x = viewport_start.x.max(viewport_end.x);
++  let min_copy = ((viewport_min_x - bounds.max_x) / CANVAS_SIZE - 1e-6).ceil() as i32;
++  let max_copy = ((viewport_max_x - bounds.min_x) / CANVAS_SIZE + 1e-6).floor() as i32;
++  if min_copy > max_copy {
++    return Vec::new();
++  }
++
++  (min_copy..=max_copy)
++    .map(|copy| copy as f32 * CANVAS_SIZE)
++    .collect()
++}
++
++fn native_vector_tile_transform(
++  viewport: MapViewport,
++  window: &Window,
++  origin: PixelCoordinate,
++  wrap_offset: f32,
++  z: f32,
++) -> Transform {
++  Transform::from_xyz(
++    viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
++      - window.width() / 2.0,
++    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
++    z,
++  )
++  .with_scale(Vec3::new(
++    viewport.transform.zoom,
++    -viewport.transform.zoom,
++    1.0,
++  ))
++}
++
+ #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+ fn coordinate_tile_rects(viewport: MapViewport, tile: Tile) -> Vec<PixelRect> {
+   let (nw, se) = tile.position();
+@@ -1347,3 +1859,496 @@ fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
+     Color::srgba(240.0 / 255.0, 240.0 / 255.0, 1.0, 1.0)
+   }
+ }
++
++#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
++fn native_vector_tile_meshes(
++  tile: &Tile,
++  data: &[u8],
++) -> Result<Vec<NativeVectorTileMeshSpec>, TileRenderError> {
++  let reader = mvt_reader::Reader::new(data.to_vec())
++    .map_err(|e| TileRenderError::ParseError(format!("Failed to parse MVT for {tile:?}: {e}")))?;
++  let layer_names = reader
++    .get_layer_names()
++    .map_err(|e| TileRenderError::ParseError(format!("Failed to get layers: {e}")))?;
++
++  let cfg = style_config();
++  let (tile_nw, tile_se) = tile.position();
++  let tile_world_size = tile_se.x - tile_nw.x;
++  let mvt_to_world = tile_world_size / cfg.rendering.mvt_extent;
++  let style_pixel_to_world = tile_world_size / cfg.rendering.tile_size as f32;
++
++  let mut batches = Vec::new();
++  append_native_vector_rect(
++    &mut batches,
++    background_color(),
++    NATIVE_VECTOR_BACKGROUND_Z,
++    tile_nw,
++    tile_world_size,
++    tile_world_size,
++  );
++
++  let layer_order = [
++    "landcover",
++    "landuse",
++    "park",
++    "water",
++    "waterway",
++    "building",
++    "buildings",
++    "transportation",
++    "road",
++    "highway",
++  ];
++
++  for layer_name in &layer_order {
++    if let Some(index) = layer_names.iter().position(|name| name == *layer_name) {
++      append_native_vector_layer(
++        &mut batches,
++        &reader,
++        index,
++        layer_name,
++        tile,
++        tile_nw,
++        mvt_to_world,
++        style_pixel_to_world,
++      );
++    }
++  }
++
++  for (index, layer_name) in layer_names.iter().enumerate() {
++    if layer_order.contains(&layer_name.as_str()) {
++      continue;
++    }
++    append_native_vector_layer(
++      &mut batches,
++      &reader,
++      index,
++      layer_name,
++      tile,
++      tile_nw,
++      mvt_to_world,
++      style_pixel_to_world,
++    );
++  }
++
++  Ok(native_vector_batches_to_mesh_specs(batches, tile_nw))
++}
++
++#[allow(clippy::too_many_arguments)]
++fn append_native_vector_layer(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  reader: &mvt_reader::Reader,
++  layer_index: usize,
++  layer_name: &str,
++  tile: &Tile,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++  style_pixel_to_world: f32,
++) {
++  let Ok(features) = reader.get_features(layer_index) else {
++    return;
++  };
++
++  for feature in features {
++    let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
++    let feature_kind = feature_string_property(&feature, &["kind"]);
++    let feature_kind_detail = feature_string_property(&feature, &["kind_detail"]);
++
++    match &feature.geometry {
++      geo_types::Geometry::Polygon(polygon) => {
++        let polygon_class = polygon_feature_class(layer_name, feature_class, feature_kind);
++        append_native_vector_polygon(
++          batches,
++          polygon,
++          layer_name,
++          polygon_class,
++          tile_origin,
++          mvt_to_world,
++        );
++      }
++      geo_types::Geometry::MultiPolygon(multi) => {
++        let polygon_class = polygon_feature_class(layer_name, feature_class, feature_kind);
++        for polygon in multi.iter() {
++          append_native_vector_polygon(
++            batches,
++            polygon,
++            layer_name,
++            polygon_class,
++            tile_origin,
++            mvt_to_world,
++          );
++        }
++      }
++      geo_types::Geometry::LineString(line) => {
++        let line_class =
++          line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
++        append_native_vector_line(
++          batches,
++          line,
++          layer_name,
++          line_class,
++          tile.zoom,
++          tile_origin,
++          mvt_to_world,
++          style_pixel_to_world,
++        );
++      }
++      geo_types::Geometry::MultiLineString(multi) => {
++        let line_class =
++          line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
++        for line in multi.iter() {
++          append_native_vector_line(
++            batches,
++            line,
++            layer_name,
++            line_class,
++            tile.zoom,
++            tile_origin,
++            mvt_to_world,
++            style_pixel_to_world,
++          );
++        }
++      }
++      geo_types::Geometry::Point(_) | geo_types::Geometry::MultiPoint(_) => {}
++      _ => {}
++    }
++  }
++}
++
++fn feature_string_property<'a>(
++  feature: &'a mvt_reader::feature::Feature,
++  keys: &[&str],
++) -> Option<&'a str> {
++  let properties = feature.properties.as_ref()?;
++  keys.iter().find_map(|key| match properties.get(*key) {
++    Some(mvt_reader::feature::Value::String(value)) => Some(value.as_str()),
++    _ => None,
++  })
++}
++
++fn polygon_feature_class<'a>(
++  layer_name: &str,
++  feature_class: &'a str,
++  feature_kind: Option<&'a str>,
++) -> &'a str {
++  if layer_name == "landcover" || layer_name == "landuse" {
++    feature_kind.unwrap_or(feature_class)
++  } else {
++    feature_class
++  }
++}
++
++fn line_feature_class<'a>(
++  layer_name: &str,
++  feature_class: &'a str,
++  feature_kind: Option<&'a str>,
++  feature_kind_detail: Option<&'a str>,
++) -> &'a str {
++  if matches!(layer_name, "road" | "roads" | "transportation" | "highway") {
++    feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
++  } else {
++    feature_class
++  }
++}
++
++fn append_native_vector_polygon(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  polygon: &geo_types::Polygon<f32>,
++  layer_name: &str,
++  feature_class: &str,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) {
++  let Some(color) = get_fill_color(layer_name, feature_class) else {
++    return;
++  };
++  if color.alpha() <= 0.0 {
++    return;
++  }
++  let mut vertices = native_vector_ring_points(polygon.exterior(), mvt_to_world);
++  if vertices.len() < 3 {
++    return;
++  }
++
++  let mut hole_indices = Vec::new();
++  for interior in polygon.interiors() {
++    let points = native_vector_ring_points(interior, mvt_to_world);
++    if points.len() < 3 {
++      continue;
++    }
++    hole_indices.push(vertices.len() as u32);
++    vertices.extend(points);
++  }
++
++  let mut indices = Vec::new();
++  let mut earcut = earcut::Earcut::new();
++  earcut.earcut(vertices.iter().copied(), &hole_indices, &mut indices);
++  if indices.is_empty() {
++    return;
++  }
++
++  let z = native_vector_polygon_z(layer_name);
++  let batch = native_vector_mesh_batch(batches, color, z);
++  let base_index = batch.positions.len() as u32;
++  batch
++    .positions
++    .extend(vertices.iter().map(|coord| [coord[0], coord[1], 0.0]));
++  batch
++    .indices
++    .extend(indices.into_iter().map(|index| base_index + index));
++  for coord in vertices {
++    include_native_vector_local_point(batch, tile_origin, coord[0], coord[1]);
++  }
++}
++
++fn native_vector_ring_points(
++  ring: &geo_types::LineString<f32>,
++  mvt_to_world: f32,
++) -> Vec<[f32; 2]> {
++  let mut points = ring
++    .coords()
++    .map(|coord| [coord.x * mvt_to_world, coord.y * mvt_to_world])
++    .collect::<Vec<_>>();
++  if points
++    .first()
++    .zip(points.last())
++    .is_some_and(|(first, last)| first[0] == last[0] && first[1] == last[1])
++  {
++    points.pop();
++  }
++  points
++}
++
++#[allow(clippy::too_many_arguments)]
++fn append_native_vector_line(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  line: &geo_types::LineString<f32>,
++  layer_name: &str,
++  feature_class: &str,
++  tile_zoom: u8,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++  style_pixel_to_world: f32,
++) {
++  if line.coords().count() < 2 {
++    return;
++  }
++  let (casing_color, casing_width, inner_color, inner_width) =
++    get_road_styling(layer_name, feature_class, tile_zoom);
++  if casing_width > 0.0 {
++    append_native_vector_line_mesh(
++      batches,
++      line,
++      casing_color,
++      casing_width * style_pixel_to_world,
++      NATIVE_VECTOR_ROAD_CASING_Z,
++      tile_origin,
++      mvt_to_world,
++    );
++  }
++  if inner_width > 0.0 {
++    append_native_vector_line_mesh(
++      batches,
++      line,
++      inner_color,
++      inner_width * style_pixel_to_world,
++      NATIVE_VECTOR_ROAD_INNER_Z,
++      tile_origin,
++      mvt_to_world,
++    );
++  }
++}
++
++fn append_native_vector_line_mesh(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  line: &geo_types::LineString<f32>,
++  color: tiny_skia::Color,
++  width: f32,
++  z: f32,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) {
++  if color.alpha() <= 0.0 || width <= 0.0 {
++    return;
++  }
++  let batch = native_vector_mesh_batch(batches, color, z);
++  let half_width = width * 0.5;
++  let points = line
++    .coords()
++    .map(|coord| [coord.x * mvt_to_world, coord.y * mvt_to_world])
++    .collect::<Vec<_>>();
++
++  for segment in points.windows(2) {
++    let [x0, y0] = segment[0];
++    let [x1, y1] = segment[1];
++    let dx = x1 - x0;
++    let dy = y1 - y0;
++    let len = (dx * dx + dy * dy).sqrt();
++    if len <= f32::EPSILON {
++      continue;
++    }
++
++    let nx = -dy / len * half_width;
++    let ny = dx / len * half_width;
++    let base_index = batch.positions.len() as u32;
++    batch.positions.extend([
++      [x0 + nx, y0 + ny, 0.0],
++      [x1 + nx, y1 + ny, 0.0],
++      [x1 - nx, y1 - ny, 0.0],
++      [x0 - nx, y0 - ny, 0.0],
++    ]);
++    batch.indices.extend([
++      base_index,
++      base_index + 1,
++      base_index + 2,
++      base_index,
++      base_index + 2,
++      base_index + 3,
++    ]);
++    include_native_vector_local_point_with_padding(batch, tile_origin, x0, y0, half_width);
++    include_native_vector_local_point_with_padding(batch, tile_origin, x1, y1, half_width);
++  }
++}
++
++fn append_native_vector_rect(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  color: tiny_skia::Color,
++  z: f32,
++  tile_origin: PixelCoordinate,
++  width: f32,
++  height: f32,
++) {
++  let batch = native_vector_mesh_batch(batches, color, z);
++  let base_index = batch.positions.len() as u32;
++  batch.positions.extend([
++    [0.0, 0.0, 0.0],
++    [width, 0.0, 0.0],
++    [width, height, 0.0],
++    [0.0, height, 0.0],
++  ]);
++  batch.indices.extend([
++    base_index,
++    base_index + 1,
++    base_index + 2,
++    base_index,
++    base_index + 2,
++    base_index + 3,
++  ]);
++  include_native_vector_local_point(batch, tile_origin, 0.0, 0.0);
++  include_native_vector_local_point(batch, tile_origin, width, height);
++}
++
++fn native_vector_mesh_batch(
++  batches: &mut Vec<NativeVectorMeshBatch>,
++  color: tiny_skia::Color,
++  z: f32,
++) -> &mut NativeVectorMeshBatch {
++  let color_key = native_vector_color_key(color);
++  let z_key = native_vector_z_key(z);
++  if let Some(index) = batches
++    .iter()
++    .position(|batch| batch.color_key == color_key && batch.z_key == z_key)
++  {
++    return &mut batches[index];
++  }
++
++  batches.push(NativeVectorMeshBatch {
++    color_key,
++    color: native_vector_color(color),
++    z_key,
++    z,
++    positions: Vec::new(),
++    indices: Vec::new(),
++    bounds: None,
++  });
++  batches.last_mut().expect("batch was pushed")
++}
++
++fn include_native_vector_local_point(
++  batch: &mut NativeVectorMeshBatch,
++  tile_origin: PixelCoordinate,
++  x: f32,
++  y: f32,
++) {
++  let coord = PixelCoordinate {
++    x: tile_origin.x + x,
++    y: tile_origin.y + y,
++  };
++  if let Some(bounds) = &mut batch.bounds {
++    bounds.include(coord);
++  } else {
++    batch.bounds = Some(NativeVectorTileBounds::from_min_max(coord, coord));
++  }
++}
++
++fn include_native_vector_local_point_with_padding(
++  batch: &mut NativeVectorMeshBatch,
++  tile_origin: PixelCoordinate,
++  x: f32,
++  y: f32,
++  padding: f32,
++) {
++  include_native_vector_local_point(batch, tile_origin, x - padding, y - padding);
++  include_native_vector_local_point(batch, tile_origin, x + padding, y + padding);
++}
++
++fn native_vector_batches_to_mesh_specs(
++  batches: Vec<NativeVectorMeshBatch>,
++  origin: PixelCoordinate,
++) -> Vec<NativeVectorTileMeshSpec> {
++  batches
++    .into_iter()
++    .filter_map(|batch| {
++      if batch.positions.is_empty() || batch.indices.is_empty() {
++        return None;
++      }
++      let bounds = batch.bounds?;
++      let normals = vec![[0.0, 0.0, 1.0]; batch.positions.len()];
++      let uvs = vec![[0.0, 0.0]; batch.positions.len()];
++      let mesh = Mesh::new(
++        PrimitiveTopology::TriangleList,
++        RenderAssetUsages::default(),
++      )
++      .with_inserted_indices(Indices::U32(batch.indices))
++      .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions)
++      .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
++      .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
++
++      Some(NativeVectorTileMeshSpec {
++        mesh,
++        color: batch.color,
++        bounds,
++        origin,
++        z: batch.z,
++      })
++    })
++    .collect()
++}
++
++fn native_vector_polygon_z(layer_name: &str) -> f32 {
++  match layer_name {
++    "landcover" | "landuse" | "park" => NATIVE_VECTOR_LAND_Z,
++    "water" | "waterway" => NATIVE_VECTOR_WATER_Z,
++    "building" | "buildings" => NATIVE_VECTOR_BUILDING_Z,
++    _ => NATIVE_VECTOR_LAND_Z,
++  }
++}
++
++fn native_vector_z_key(z: f32) -> i16 {
++  (z * 10.0).round() as i16
++}
++
++fn native_vector_color_key(color: tiny_skia::Color) -> [u8; 4] {
++  let color = color.to_color_u8();
++  [color.red(), color.green(), color.blue(), color.alpha()]
++}
++
++fn native_vector_color(color: tiny_skia::Color) -> Color {
++  let color = color.to_color_u8();
++  Color::srgba(
++    f32::from(color.red()) / 255.0,
++    f32::from(color.green()) / 255.0,
++    f32::from(color.blue()) / 255.0,
++    f32::from(color.alpha()) / 255.0,
++  )
++}
+diff --git a/src/map/tile_renderer.rs b/src/map/tile_renderer.rs
+index 890759d..5cec67c 100644
+--- a/src/map/tile_renderer.rs
++++ b/src/map/tile_renderer.rs
+@@ -4,8 +4,8 @@ mod vector;
+ pub use raster::RasterTileRenderer;
+ pub use vector::VectorTileRenderer;
+ pub use vector::styling::{
+-  MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config, set_style_config,
+-  style_config, style_version,
++  MapStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color, get_road_styling,
++  init_style_config, save_style_config, set_style_config, style_config, style_version,
+ };
+ 
+ use thiserror::Error;
