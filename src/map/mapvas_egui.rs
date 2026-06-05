@@ -54,6 +54,7 @@ pub struct Map {
   keys: Vec<String>,
   config: Config,
   last_viewport: Option<MapViewport>,
+  bevy_pointer_blocking_rects: Vec<PixelRect>,
   screenshot_target: ScreenshotTarget,
   shutdown_requested: bool,
 }
@@ -204,6 +205,7 @@ impl Map {
         keys,
         config: cfg,
         last_viewport: None,
+        bevy_pointer_blocking_rects: Vec::new(),
         screenshot_target,
         shutdown_requested: false,
       },
@@ -788,6 +790,18 @@ impl Map {
     });
   }
 
+  fn update_bevy_pointer_blocking_rects(&mut self, rect: Rect) {
+    self.bevy_pointer_blocking_rects.clear();
+    if let Some(timeline_rect) = self.timeline.borrow().input_rect(rect) {
+      self
+        .bevy_pointer_blocking_rects
+        .push(PixelRect::from_min_max(
+          pos_to_pixel(timeline_rect.min),
+          pos_to_pixel(timeline_rect.max),
+        ));
+    }
+  }
+
   pub fn ui_egui(&mut self, ui: &mut Ui) -> Response {
     profile_scope!("Map::ui_egui");
     let (rect, response) = Self::allocate_map_response(ui, Sense::click_and_drag());
@@ -812,6 +826,7 @@ impl Map {
     self.show_bevy_command_context_menu(ui.ctx());
     self.right_click_open_requested = false;
     self.update_frame_viewport(pixel_rect);
+    self.update_bevy_pointer_blocking_rects(rect);
     self.prepare_bevy_layer_frame(ui, rect);
     self.handle_map_events(pixel_rect);
 
@@ -865,6 +880,11 @@ impl Map {
   #[must_use]
   pub fn viewport(&self) -> Option<MapViewport> {
     self.last_viewport
+  }
+
+  #[must_use]
+  pub fn bevy_pointer_blocking_rects(&self) -> &[PixelRect] {
+    &self.bevy_pointer_blocking_rects
   }
 
   pub fn set_transform(&mut self, transform: Transform) {

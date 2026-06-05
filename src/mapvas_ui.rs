@@ -5,6 +5,7 @@ use crate::{
   config::{Config, HeadingStyle, TileProvider, TileType},
   map::{
     IntervalLock, Map, MapLayerHolder,
+    coordinates::PixelRect,
     tile_renderer::{
       MapStyle, Rgb, RoadStyle, StyleConfig, init_style_config, save_style_config,
       set_style_config, style_config,
@@ -51,6 +52,7 @@ impl MapUiMode {
 
 pub struct MapAppOutput {
   pub viewport: Option<MapViewport>,
+  pub bevy_pointer_blocking_rects: Vec<PixelRect>,
   pub config_update: Option<Config>,
   pub bevy_geometry_snapshot: Option<GeometrySnapshot>,
   pub screenshot_requests: Vec<PathBuf>,
@@ -477,6 +479,7 @@ impl MapApp {
 
     MapAppOutput {
       viewport: self.map.viewport(),
+      bevy_pointer_blocking_rects: self.map.bevy_pointer_blocking_rects().to_vec(),
       config_update,
       bevy_geometry_snapshot,
       screenshot_requests: self.map.take_screenshot_requests(),

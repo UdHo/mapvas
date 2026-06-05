@@ -112,12 +112,14 @@ fn handle_bevy_map_shortcut(app: &mut MapApp, shortcut: BevyMapShortcut) {
 
 fn apply_map_app_output(
   output: MapAppOutput,
+  bevy_map: &mut BevyMapControl,
   bevy_viewport: &mut BevyMapViewport,
   bevy_geometry: &mut BevyGeometryLayer,
   bevy_screenshots: &mut BevyScreenshotRequests,
   bevy_tiles: &mut BevyTileLayer,
   app_exit: &mut MessageWriter<AppExit>,
 ) {
+  bevy_map.set_pointer_blocking_rects(output.bevy_pointer_blocking_rects);
   for path in output.screenshot_requests {
     bevy_screenshots.request_path(path);
   }
@@ -176,6 +178,7 @@ fn mapvas_ui_system(
   if let Some(output) = output {
     apply_map_app_output(
       output,
+      &mut bevy_map,
       &mut bevy_viewport,
       &mut bevy_geometry,
       &mut bevy_screenshots,
@@ -183,6 +186,7 @@ fn mapvas_ui_system(
       &mut app_exit,
     );
   } else {
+    bevy_map.set_pointer_blocking_rects(Vec::new());
     bevy_viewport.set(None);
   }
   bevy_tiles.refresh_style_version();
