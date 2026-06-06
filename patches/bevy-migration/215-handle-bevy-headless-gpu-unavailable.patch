@@ -1,0 +1,168 @@
+--- a/src/bevy_renderer/headless.rs
++++ b/src/bevy_renderer/headless.rs
+@@ -1,5 +1,10 @@
+ use std::{
+-  sync::mpsc::{Receiver, Sender},
++  any::Any,
++  panic::{self, AssertUnwindSafe},
++  sync::{
++    Arc, Mutex,
++    mpsc::{Receiver, Sender},
++  },
+   time::Duration,
+ };
+ 
+@@ -43,8 +48,12 @@
+ pub enum BevyHeadlessRenderError {
+   #[error("headless Bevy renderer did not capture an image")]
+   CaptureMissing,
++  #[error("headless Bevy renderer could not initialize a GPU: {0}")]
++  GpuUnavailable(String),
+   #[error("failed to convert Bevy screenshot image: {0}")]
+   ImageConversion(String),
++  #[error("headless Bevy renderer panicked: {0}")]
++  RendererPanicked(String),
+ }
+ 
+ pub struct BevyHeadlessRenderer {
+@@ -116,41 +125,41 @@
+     }
+ 
+     let (capture_sender, capture_receiver) = std::sync::mpsc::channel();
+-    let mut app = App::new();
+-    app
+-      .insert_non_send_resource(BevyHeadlessState::new(
+-        map,
+-        self.config.clone(),
+-        width,
+-        height,
+-        self.wait_for_tiles,
+-        capture_sender,
+-      ))
+-      .insert_resource(ClearColor(self.clear_color))
+-      .insert_resource(BevyRenderSurface::new(width as f32, height as f32))
+-      .insert_resource(BevyTileRuntime(runtime_handle))
+-      .insert_resource(tile_layer)
+-      .add_plugins(
+-        DefaultPlugins
+-          .set(WindowPlugin {
+-            primary_window: None,
+-            exit_condition: ExitCondition::DontExit,
+-            ..Default::default()
+-          })
+-          .disable::<LogPlugin>()
+-          .disable::<WinitPlugin>(),
+-      )
+-      .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+-        1.0 / 60.0,
+-      )))
+-      .add_plugins(MapvasBevyRenderPlugin::headless())
+-      .add_systems(Startup, setup_headless_camera)
+-      .add_systems(PreUpdate, drive_headless_map_frame);
++    let mut app = catch_bevy_headless_panic(|| {
++      let mut app = App::new();
++      app
++        .insert_non_send_resource(BevyHeadlessState::new(
++          map,
++          self.config.clone(),
++          width,
++          height,
++          self.wait_for_tiles,
++          capture_sender,
++        ))
++        .insert_resource(ClearColor(self.clear_color))
++        .insert_resource(BevyRenderSurface::new(width as f32, height as f32))
++        .insert_resource(BevyTileRuntime(runtime_handle))
++        .insert_resource(tile_layer)
++        .add_plugins(
++          DefaultPlugins
++            .set(WindowPlugin {
++              primary_window: None,
++              exit_condition: ExitCondition::DontExit,
++              ..Default::default()
++            })
++            .disable::<LogPlugin>()
++            .disable::<WinitPlugin>(),
++        )
++        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
++          1.0 / 60.0,
++        )))
++        .add_plugins(MapvasBevyRenderPlugin::headless())
++        .add_systems(Startup, setup_headless_camera)
++        .add_systems(PreUpdate, drive_headless_map_frame);
++      app
++    })?;
+ 
+-    let _runtime_guard = runtime.handle().enter();
+-    app.run();
+-    drop(_runtime_guard);
+-    drop(runtime);
++    run_bevy_app(&mut app, &runtime)?;
+ 
+     receive_capture(capture_receiver)
+   }
+@@ -302,3 +311,64 @@
+     .recv()
+     .map_err(|_| BevyHeadlessRenderError::CaptureMissing)?
+ }
++
++fn run_bevy_app(
++  app: &mut App,
++  runtime: &tokio::runtime::Runtime,
++) -> Result<(), BevyHeadlessRenderError> {
++  catch_bevy_headless_panic(|| {
++    let _runtime_guard = runtime.handle().enter();
++    app.run();
++  })
++}
++
++fn catch_bevy_headless_panic<T>(
++  operation: impl FnOnce() -> T,
++) -> Result<T, BevyHeadlessRenderError> {
++  let captured_panic_message = Arc::new(Mutex::new(None));
++  let hook_message = Arc::clone(&captured_panic_message);
++  let previous_hook = panic::take_hook();
++  panic::set_hook(Box::new(move |info| {
++    let payload_message = panic_payload_message(info.payload());
++    let message = if payload_message == "unknown panic payload" {
++      info.to_string()
++    } else {
++      payload_message
++    };
++    if let Ok(mut captured_message) = hook_message.lock() {
++      *captured_message = Some(message);
++    }
++  }));
++
++  let run_result = panic::catch_unwind(AssertUnwindSafe(operation));
++  panic::set_hook(previous_hook);
++
++  match run_result {
++    Ok(value) => Ok(value),
++    Err(payload) => {
++      let message = captured_panic_message
++        .lock()
++        .ok()
++        .and_then(|captured_message| captured_message.clone())
++        .unwrap_or_else(|| panic_payload_message(payload.as_ref()));
++      if is_gpu_unavailable_panic(&message) {
++        return Err(BevyHeadlessRenderError::GpuUnavailable(message));
++      }
++      Err(BevyHeadlessRenderError::RendererPanicked(message))
++    }
++  }
++}
++
++fn is_gpu_unavailable_panic(message: &str) -> bool {
++  message.contains("Unable to find a GPU") || message.contains("No adapter found")
++}
++
++fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
++  if let Some(message) = payload.downcast_ref::<&str>() {
++    (*message).to_owned()
++  } else if let Some(message) = payload.downcast_ref::<String>() {
++    message.clone()
++  } else {
++    "unknown panic payload".to_owned()
++  }
++}

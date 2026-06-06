@@ -832,6 +832,15 @@ impl Map {
 
     response
   }
+
+  pub fn prepare_headless_bevy_frame(&mut self, rect: PixelRect) {
+    profile_scope!("Map::prepare_headless_bevy_frame");
+    self.initialize_transform_if_needed(rect);
+    self.update_frame_viewport(rect);
+    self.process_pending_layer_data();
+    self.handle_map_events(rect);
+    self.update_state_snapshot();
+  }
 }
 
 impl Map {
