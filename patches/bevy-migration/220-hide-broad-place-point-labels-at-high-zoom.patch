@@ -1,0 +1,209 @@
+diff --git a/src/bevy_renderer/tiles.rs b/src/bevy_renderer/tiles.rs
+index 1602504..e857589 100644
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -162,6 +162,7 @@ struct NativeVectorTileLabelSpec {
+   text_color: Color,
+   show_marker: bool,
+   centered: bool,
++  max_point_zoom: Option<u8>,
+   tile_world_size: f32,
+ }
+ 
+@@ -178,6 +179,7 @@ struct NativeVectorTileLabelInstance {
+   text_color: Color,
+   show_marker: bool,
+   centered: bool,
++  max_point_zoom: Option<u8>,
+   tile_world_size: f32,
+   entities: Vec<NativeVectorTileLabelCopy>,
+ }
+diff --git a/src/bevy_renderer/tiles/native_vector.rs b/src/bevy_renderer/tiles/native_vector.rs
+index f673b93..6c7e3ed 100644
+--- a/src/bevy_renderer/tiles/native_vector.rs
++++ b/src/bevy_renderer/tiles/native_vector.rs
+@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
+ 
+ use crate::map::{
+   coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, Tile, TileCoordinate, TilePriority},
+-  tile_renderer::{StyleConfig, style_config},
++  tile_renderer::{StyleConfig, should_show_place_point_label, style_config},
+   viewport::MapViewport,
+ };
+ use bevy::{prelude::*, sprite::Anchor};
+@@ -526,6 +526,7 @@ pub(super) fn update_native_vector_tile_labels(
+   let request_zoom = visible_tiles
+     .first()
+     .map_or(layer.current_request_zoom, |tile| tile.zoom);
++  let map_zoom = layer.current_ideal_zoom;
+   let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
+   for tile in &tiles_to_draw {
+     let entry = layer
+@@ -533,6 +534,10 @@ pub(super) fn update_native_vector_tile_labels(
+       .get_mut(tile)
+       .expect("native vector tile was checked");
+     for label in &mut entry.labels {
++      if !should_show_place_point_label(label.max_point_zoom, map_zoom) {
++        hide_native_vector_tile_label_entities(&label.entities, &mut markers, &mut texts);
++        continue;
++      }
+       if !native_vector_label_is_responsible(label, request_zoom, label_responsibilities.get(tile))
+       {
+         hide_native_vector_tile_label_entities(&label.entities, &mut markers, &mut texts);
+diff --git a/src/bevy_renderer/tiles/native_vector/content.rs b/src/bevy_renderer/tiles/native_vector/content.rs
+index a11bb61..532b9e7 100644
+--- a/src/bevy_renderer/tiles/native_vector/content.rs
++++ b/src/bevy_renderer/tiles/native_vector/content.rs
+@@ -478,8 +478,8 @@ fn native_vector_debug_style_summary(
+       let font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
+       let label_style = get_place_label_style(feature_kind_detail);
+       format!(
+-        "label visible={show}, font={font_size:.1}px, marker={}, rank={population_rank:?}, national_capital={is_capital}, tile_world_size={tile_world_size:.2}",
+-        label_style.show_marker
++        "label visible={show}, font={font_size:.1}px, marker={}, max_point_zoom={:?}, rank={population_rank:?}, national_capital={is_capital}, tile_world_size={tile_world_size:.2}",
++        label_style.show_marker, label_style.max_point_zoom
+       )
+     }
+     _ => "unsupported geometry".to_string(),
+@@ -577,6 +577,7 @@ fn append_native_vector_label(
+     text_color: native_vector_color(label_style.text_color),
+     show_marker: label_style.show_marker,
+     centered: label_style.centered,
++    max_point_zoom: label_style.max_point_zoom,
+     tile_world_size,
+   });
+ }
+diff --git a/src/bevy_renderer/tiles/results.rs b/src/bevy_renderer/tiles/results.rs
+index bdaeb27..5840975 100644
+--- a/src/bevy_renderer/tiles/results.rs
++++ b/src/bevy_renderer/tiles/results.rs
+@@ -78,6 +78,7 @@ pub(super) fn collect_finished_tiles(
+             text_color: spec.text_color,
+             show_marker: spec.show_marker,
+             centered: spec.centered,
++            max_point_zoom: spec.max_point_zoom,
+             tile_world_size: spec.tile_world_size,
+             entities: Vec::new(),
+           })
+diff --git a/src/map/tile_renderer.rs b/src/map/tile_renderer.rs
+index 0e37a1d..0794690 100644
+--- a/src/map/tile_renderer.rs
++++ b/src/map/tile_renderer.rs
+@@ -10,7 +10,8 @@ pub(crate) use vector::metadata::{
+ pub use vector::styling::{
+   MapStyle, PlaceLabelStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color,
+   get_place_font_size, get_place_label_style, get_road_styling, init_style_config,
+-  save_style_config, set_style_config, should_show_place, style_config, style_version,
++  save_style_config, set_style_config, should_show_place, should_show_place_point_label,
++  style_config, style_version,
+ };
+ 
+ use thiserror::Error;
+diff --git a/src/map/tile_renderer/vector.rs b/src/map/tile_renderer/vector.rs
+index 3111154..8dfd1b4 100644
+--- a/src/map/tile_renderer/vector.rs
++++ b/src/map/tile_renderer/vector.rs
+@@ -26,7 +26,7 @@ use metadata::{
+ };
+ use styling::{
+   background_color, get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
+-  should_show_place, style_config,
++  should_show_place, should_show_place_point_label, style_config,
+ };
+ 
+ use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
+@@ -384,6 +384,9 @@ impl VectorTileRenderer {
+       let cfg = style_config();
+       let base_font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
+       let label_style = get_place_label_style(feature_kind_detail);
++      if !should_show_place_point_label(label_style.max_point_zoom, tile_zoom) {
++        return;
++      }
+ 
+       // Scale font size based on tile resolution, but cap to prevent huge text
+       let font_size =
+diff --git a/src/map/tile_renderer/vector/styling.rs b/src/map/tile_renderer/vector/styling.rs
+index eb4bbf9..15f2b6d 100644
+--- a/src/map/tile_renderer/vector/styling.rs
++++ b/src/map/tile_renderer/vector/styling.rs
+@@ -212,6 +212,7 @@ pub struct PlaceLabelStyle {
+   pub text_color: Color,
+   pub show_marker: bool,
+   pub centered: bool,
++  pub max_point_zoom: Option<u8>,
+ }
+ 
+ /// Road styling configuration
+@@ -1169,16 +1170,34 @@ pub fn get_place_label_style(feature_kind_detail: Option<&str>) -> PlaceLabelSty
+       text_color: country_label_color(&cfg),
+       show_marker: false,
+       centered: true,
++      max_point_zoom: Some(7),
+     }
++  } else if matches!(feature_kind_detail, Some("city" | "locality")) {
++    place_label_style(cfg.place_label, Some(11))
++  } else if feature_kind_detail == Some("town") {
++    place_label_style(cfg.place_label, Some(13))
++  } else if feature_kind_detail == Some("village") {
++    place_label_style(cfg.place_label, Some(15))
+   } else {
+-    PlaceLabelStyle {
+-      text_color: cfg.place_label.to_color(),
+-      show_marker: true,
+-      centered: false,
+-    }
++    place_label_style(cfg.place_label, None)
++  }
++}
++
++fn place_label_style(text_color: Rgb, max_point_zoom: Option<u8>) -> PlaceLabelStyle {
++  PlaceLabelStyle {
++    text_color: text_color.to_color(),
++    show_marker: true,
++    centered: false,
++    max_point_zoom,
+   }
+ }
+ 
++/// Check if a place point label should still be shown at the live map zoom.
++#[must_use]
++pub fn should_show_place_point_label(max_point_zoom: Option<u8>, map_zoom: u8) -> bool {
++  max_point_zoom.is_none_or(|max_zoom| map_zoom <= max_zoom)
++}
++
+ fn country_label_color(cfg: &StyleConfig) -> Color {
+   if color_luminance(cfg.background) < 96.0 {
+     Rgb::new(170, 170, 170).to_color()
+@@ -1231,6 +1250,7 @@ mod tests {
+ 
+     assert!(!style.show_marker);
+     assert!(style.centered);
++    assert_eq!(style.max_point_zoom, Some(7));
+   }
+ 
+   #[test]
+@@ -1239,6 +1259,24 @@ mod tests {
+ 
+     assert!(style.show_marker);
+     assert!(!style.centered);
++    assert_eq!(style.max_point_zoom, Some(11));
++  }
++
++  #[test]
++  fn broad_place_point_labels_hide_after_their_max_zoom() {
++    let city = get_place_label_style(Some("city"));
++    assert!(should_show_place_point_label(city.max_point_zoom, 11));
++    assert!(!should_show_place_point_label(city.max_point_zoom, 12));
++
++    let country = get_place_label_style(Some("country"));
++    assert!(should_show_place_point_label(country.max_point_zoom, 7));
++    assert!(!should_show_place_point_label(country.max_point_zoom, 8));
++
++    let default_label = get_place_label_style(Some("unknown"));
++    assert!(should_show_place_point_label(
++      default_label.max_point_zoom,
++      u8::MAX
++    ));
+   }
+ 
+   #[test]

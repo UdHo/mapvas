@@ -1,0 +1,1020 @@
+diff --git a/src/bevy_renderer/app.rs b/src/bevy_renderer/app.rs
+index 7e50358..2561114 100644
+--- a/src/bevy_renderer/app.rs
++++ b/src/bevy_renderer/app.rs
+@@ -122,6 +122,7 @@ fn handle_bevy_map_action(app: &mut MapApp, action: BevyMapAction) {
+     BevyMapAction::CommandDrag(drag) => {
+       app.handle_map_command_drag(drag.pos, drag.delta, drag.transform);
+     }
++    BevyMapAction::Click(_) => {}
+     BevyMapAction::ContextMenu(pos) => {
+       app.open_map_context_menu(pos);
+     }
+@@ -196,7 +197,12 @@ fn mapvas_ui_system(
+     .show(&egui_ctx, |ui| {
+       if let Some(app) = state.app.as_mut() {
+         for action in bevy_map.take_actions() {
+-          handle_bevy_map_action(app, action);
++          match action {
++            BevyMapAction::Click(pos) => {
++              bevy_tiles.select_debug_feature(pos, bevy_viewport.get());
++            }
++            action => handle_bevy_map_action(app, action),
++          }
+         }
+         app.handle_bevy_map_hover(bevy_map.hover_pos());
+         {
+diff --git a/src/bevy_renderer/map.rs b/src/bevy_renderer/map.rs
+index 1dd12dd..e7e8474 100644
+--- a/src/bevy_renderer/map.rs
++++ b/src/bevy_renderer/map.rs
+@@ -49,6 +49,8 @@ pub struct BevyMapControl {
+   hover_pos: Option<PixelPosition>,
+   pointer_blocking_rects: Vec<PixelRect>,
+   last_left_click: Option<(PixelPosition, f64)>,
++  left_drag_moved: bool,
++  suppress_left_click_action: bool,
+   secondary_drag_start: Option<PixelPosition>,
+   secondary_drag_moved: bool,
+   actions: Vec<BevyMapAction>,
+@@ -63,6 +65,7 @@ pub struct BevyCommandDrag {
+ pub enum BevyMapAction {
+   CommandDrag(BevyCommandDrag),
+   ContextMenu(PixelPosition),
++  Click(PixelPosition),
+   DoubleClick(PixelPosition),
+   DroppedFile(PathBuf),
+   Shortcut(BevyMapShortcut),
+@@ -85,6 +88,8 @@ impl Default for BevyMapControl {
+       hover_pos: None,
+       pointer_blocking_rects: Vec::new(),
+       last_left_click: None,
++      left_drag_moved: false,
++      suppress_left_click_action: false,
+       secondary_drag_start: None,
+       secondary_drag_moved: false,
+       actions: Vec::new(),
+@@ -174,6 +179,8 @@ fn bevy_map_input(
+   if egui_pointer_blocked {
+     control.dragging = false;
+     control.last_cursor_pos = cursor;
++    control.left_drag_moved = false;
++    control.suppress_left_click_action = false;
+     control.secondary_drag_start = None;
+     control.secondary_drag_moved = false;
+   }
+@@ -187,16 +194,32 @@ fn bevy_map_input(
+         if interval <= DOUBLE_CLICK_MAX_INTERVAL_SECS && distance <= DOUBLE_CLICK_MAX_DISTANCE {
+           control.actions.push(BevyMapAction::DoubleClick(current));
+           control.last_left_click = None;
++          control.suppress_left_click_action = true;
+         } else {
+           control.last_left_click = Some((current, now));
++          control.suppress_left_click_action = false;
+         }
+       } else {
+         control.last_left_click = Some((current, now));
++        control.suppress_left_click_action = false;
+       }
+     }
+     control.dragging = true;
++    control.left_drag_moved = false;
+     control.last_cursor_pos = cursor;
+   }
++  if buttons.just_released(MouseButton::Left) {
++    if !egui_pointer_blocked
++      && cursor_in_viewport
++      && !control.left_drag_moved
++      && !control.suppress_left_click_action
++      && let Some(cursor) = cursor
++    {
++      control.actions.push(BevyMapAction::Click(cursor));
++    }
++    control.left_drag_moved = false;
++    control.suppress_left_click_action = false;
++  }
+   if !buttons.pressed(MouseButton::Left) {
+     control.dragging = false;
+     control.last_cursor_pos = cursor;
+@@ -208,6 +231,7 @@ fn bevy_map_input(
+   {
+     let delta = pixel_delta(last, current);
+     if delta != PixelPosition::default() {
++      control.left_drag_moved = true;
+       transform.translate(delta);
+       control.last_cursor_pos = Some(current);
+       changed = true;
+diff --git a/src/bevy_renderer/tiles.rs b/src/bevy_renderer/tiles.rs
+index a42fc5b..7879a3d 100644
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -10,7 +10,7 @@ use crate::{
+   config::{Config, TileProvider, TileType},
+   map::{
+     coordinates::{
+-      PixelCoordinate, Tile, TileCoordinate, TilePriority, generate_preload_tiles,
++      PixelCoordinate, PixelPosition, Tile, TileCoordinate, TilePriority, generate_preload_tiles,
+       tile_zoom_for_transform, tiles_in_box,
+     },
+     tile_loader::{CachedTileLoader, TileLoader, TileSource},
+@@ -62,6 +62,7 @@ impl Plugin for BevyTilePlugin {
+           raster::update_bevy_tiles,
+           native_vector::update_native_vector_tiles,
+           native_vector::update_native_vector_tile_labels,
++          native_vector::draw_native_vector_debug_selection,
+         )
+           .chain(),
+       );
+@@ -175,14 +176,45 @@ struct NativeVectorTileLabelInstance {
+   entities: Vec<NativeVectorTileLabelCopy>,
+ }
+ 
++#[derive(Clone)]
++struct NativeVectorDebugFeature {
++  tile: Tile,
++  feature_index: usize,
++  source_layer: String,
++  geometry_type: String,
++  feature_class: String,
++  feature_kind: Option<String>,
++  feature_kind_detail: Option<String>,
++  feature_name: Option<String>,
++  style_summary: String,
++  bounds: NativeVectorTileBounds,
++  geometry: NativeVectorDebugGeometry,
++  properties: Vec<(String, String)>,
++}
++
++#[derive(Clone)]
++enum NativeVectorDebugGeometry {
++  Points(Vec<PixelCoordinate>),
++  Lines(Vec<Vec<PixelCoordinate>>),
++  Polygons(Vec<Vec<PixelCoordinate>>),
++}
++
++#[derive(Clone)]
++struct NativeVectorDebugSelection {
++  click: PixelCoordinate,
++  feature: NativeVectorDebugFeature,
++}
++
+ struct BevyNativeVectorTileEntry {
+   instances: Vec<NativeVectorTileMeshInstance>,
+   labels: Vec<NativeVectorTileLabelInstance>,
++  debug_features: Vec<NativeVectorDebugFeature>,
+ }
+ 
+ struct NativeVectorTileContent {
+   meshes: Vec<NativeVectorTileMeshSpec>,
+   labels: Vec<NativeVectorTileLabelSpec>,
++  debug_features: Vec<NativeVectorDebugFeature>,
+ }
+ 
+ enum BevyTileResult {
+@@ -196,6 +228,7 @@ enum BevyTileResult {
+     tile: Tile,
+     meshes: Vec<NativeVectorTileMeshSpec>,
+     labels: Vec<NativeVectorTileLabelSpec>,
++    debug_features: Vec<NativeVectorDebugFeature>,
+   },
+   Failed {
+     generation: u64,
+@@ -229,6 +262,8 @@ pub struct BevyTileLayer {
+   current_request_zoom: u8,
+   current_max_zoom: u8,
+   coordinate_display_mode: CoordinateDisplayMode,
++  debug_elements_enabled: bool,
++  selected_debug_feature: Option<NativeVectorDebugSelection>,
+ }
+ 
+ fn configure_bevy_tile_overlay_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+@@ -268,6 +303,8 @@ impl BevyTileLayer {
+       current_request_zoom: 0,
+       current_max_zoom: 0,
+       coordinate_display_mode: CoordinateDisplayMode::Off,
++      debug_elements_enabled: false,
++      selected_debug_feature: None,
+     }
+   }
+ 
+@@ -390,6 +427,12 @@ impl BevyTileLayer {
+       }
+ 
+       ui.checkbox(&mut self.preload_enabled, "preload adjacent tiles");
++      let debug_changed = ui
++        .checkbox(&mut self.debug_elements_enabled, "debug map elements")
++        .changed();
++      if debug_changed && !self.debug_elements_enabled {
++        self.selected_debug_feature = None;
++      }
+ 
+       ui.separator();
+       ui.label("Tile Coordinate Display:");
+@@ -462,6 +505,72 @@ impl BevyTileLayer {
+         ui.label("Tiles rendering:");
+         ui.label(tiles_rendering.to_string());
+       });
++
++      self.debug_ui(ui);
++    });
++  }
++
++  pub fn select_debug_feature(&mut self, screen_pos: PixelPosition, viewport: Option<MapViewport>) {
++    if !self.debug_elements_enabled {
++      return;
++    }
++    self.selected_debug_feature =
++      viewport.and_then(|viewport| native_vector::select_debug_feature(self, viewport, screen_pos));
++  }
++
++  fn debug_ui(&self, ui: &mut egui::Ui) {
++    if !self.debug_elements_enabled {
++      return;
++    }
++
++    ui.separator();
++    ui.label("Selected map element:");
++    let Some(selection) = &self.selected_debug_feature else {
++      ui.label("None");
++      return;
++    };
++    let feature = &selection.feature;
++    stat_row(
++      ui,
++      "Click:",
++      format!("{:.2}, {:.2}", selection.click.x, selection.click.y),
++    );
++    stat_row(
++      ui,
++      "Tile:",
++      format!(
++        "{}/{}/{}",
++        feature.tile.zoom, feature.tile.x, feature.tile.y
++      ),
++    );
++    stat_row(ui, "Feature:", feature.feature_index.to_string());
++    stat_row(ui, "Layer:", feature.source_layer.clone());
++    stat_row(ui, "Geometry:", feature.geometry_type.clone());
++    if let Some(name) = &feature.feature_name {
++      stat_row(ui, "Name:", name.clone());
++    }
++    if !feature.feature_class.is_empty() {
++      stat_row(ui, "Class:", feature.feature_class.clone());
++    }
++    if let Some(kind) = &feature.feature_kind {
++      stat_row(ui, "Kind:", kind.clone());
++    }
++    if let Some(kind_detail) = &feature.feature_kind_detail {
++      stat_row(ui, "Kind detail:", kind_detail.clone());
++    }
++    stat_row(ui, "Style:", feature.style_summary.clone());
++    stat_row(
++      ui,
++      "Bounds:",
++      format!(
++        "{:.2},{:.2} - {:.2},{:.2}",
++        feature.bounds.min_x, feature.bounds.min_y, feature.bounds.max_x, feature.bounds.max_y
++      ),
++    );
++    ui.collapsing("Raw properties", |ui| {
++      for (key, value) in &feature.properties {
++        stat_row(ui, key, value.clone());
++      }
+     });
+   }
+ 
+@@ -469,6 +578,7 @@ impl BevyTileLayer {
+     self.generation = self.generation.wrapping_add(1);
+     self.in_flight_tiles.clear();
+     self.last_visible_tiles.clear();
++    self.selected_debug_feature = None;
+     for entry in self.loaded_tiles.drain().map(|(_, entry)| entry) {
+       self.stale_entities.extend(entry.entities);
+     }
+@@ -749,6 +859,7 @@ impl BevyTileLayer {
+         tile,
+         meshes: content.meshes,
+         labels: content.labels,
++        debug_features: content.debug_features,
+       });
+     });
+   }
+@@ -834,3 +945,10 @@ fn split_image_into_tiles(image: &TileImage, grid_size: usize) -> Vec<TileImage>
+ 
+   tiles
+ }
++
++fn stat_row(ui: &mut egui::Ui, label: &str, value: String) {
++  ui.horizontal(|ui| {
++    ui.label(label);
++    ui.label(value);
++  });
++}
+diff --git a/src/bevy_renderer/tiles/native_vector.rs b/src/bevy_renderer/tiles/native_vector.rs
+index dc61e2e..0b94ec4 100644
+--- a/src/bevy_renderer/tiles/native_vector.rs
++++ b/src/bevy_renderer/tiles/native_vector.rs
+@@ -6,7 +6,7 @@ pub(super) use content::native_vector_tile_content;
+ use std::collections::{HashMap, HashSet};
+ 
+ use crate::map::{
+-  coordinates::{CANVAS_SIZE, PixelCoordinate, Tile, TileCoordinate, TilePriority},
++  coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, Tile, TileCoordinate, TilePriority},
+   tile_renderer::{StyleConfig, style_config},
+   viewport::MapViewport,
+ };
+@@ -15,8 +15,10 @@ use bevy::{prelude::*, sprite::Anchor};
+ use super::super::{map::BevyMapViewport, surface::BevyRenderSurface};
+ use super::{
+   BevyNativeVectorTileLabelMarker, BevyNativeVectorTileLabelText, BevyNativeVectorTileMesh,
+-  BevyTileLayer, BevyTileRuntime, CoordinateDisplayMode, NativeVectorTileLabelCopy,
+-  NativeVectorTileLabelInstance, NativeVectorTileMeshInstance,
++  BevyTileLayer, BevyTileOverlayGizmos, BevyTileRuntime, CoordinateDisplayMode,
++  NativeVectorDebugFeature, NativeVectorDebugGeometry, NativeVectorDebugSelection,
++  NativeVectorTileBounds, NativeVectorTileLabelCopy, NativeVectorTileLabelInstance,
++  NativeVectorTileMeshInstance,
+   fonts::BevyTileLabelFonts,
+   screen::{
+     native_vector_bounds_visible_wrap_offsets, native_vector_label_font_size,
+@@ -27,6 +29,9 @@ use super::{
+ 
+ const NATIVE_VECTOR_LABEL_MARKER_Z: f32 = -24.0;
+ const NATIVE_VECTOR_LABEL_TEXT_Z: f32 = -23.0;
++const DEBUG_POINT_HIT_SCREEN_RADIUS: f32 = 8.0;
++const DEBUG_LINE_HIT_SCREEN_RADIUS: f32 = 6.0;
++const DEBUG_SELECTION_COLOR: Color = Color::srgb(1.0, 0.72, 0.0);
+ 
+ type NativeVectorLabelMarkerQuery<'w, 's> = Query<
+   'w,
+@@ -69,6 +74,305 @@ fn loaded_native_vector_tile_or_parent(layer: &BevyTileLayer, mut tile: Tile) ->
+   }
+ }
+ 
++pub(super) fn select_debug_feature(
++  layer: &BevyTileLayer,
++  viewport: MapViewport,
++  screen_pos: PixelPosition,
++) -> Option<NativeVectorDebugSelection> {
++  let click = viewport.transform.invert().apply(screen_pos);
++  let click = PixelCoordinate {
++    x: click.x.rem_euclid(CANVAS_SIZE),
++    y: click.y,
++  };
++  let point_tolerance = DEBUG_POINT_HIT_SCREEN_RADIUS / viewport.transform.zoom.max(0.001);
++  let line_tolerance = DEBUG_LINE_HIT_SCREEN_RADIUS / viewport.transform.zoom.max(0.001);
++  let mut best = None::<(f32, NativeVectorDebugFeature)>;
++
++  for entry in layer.loaded_native_vector_tiles.values() {
++    for feature in &entry.debug_features {
++      let Some(score) = debug_feature_hit_score(feature, click, point_tolerance, line_tolerance)
++      else {
++        continue;
++      };
++      if best
++        .as_ref()
++        .is_none_or(|(best_score, _)| score < *best_score)
++      {
++        best = Some((score, feature.clone()));
++      }
++    }
++  }
++
++  best.map(|(_, feature)| NativeVectorDebugSelection { click, feature })
++}
++
++pub(super) fn draw_native_vector_debug_selection(
++  layer: Res<BevyTileLayer>,
++  viewport: Res<BevyMapViewport>,
++  surface: Res<BevyRenderSurface>,
++  mut gizmos: Gizmos<BevyTileOverlayGizmos>,
++) {
++  if !layer.debug_elements_enabled {
++    return;
++  }
++  let Some(selection) = &layer.selected_debug_feature else {
++    return;
++  };
++  let Some(viewport) = viewport.get() else {
++    return;
++  };
++  let surface = *surface;
++  draw_debug_feature_geometry(&selection.feature, viewport, surface, &mut gizmos);
++  draw_debug_feature_bounds(selection.feature.bounds, viewport, surface, &mut gizmos);
++}
++
++fn debug_feature_hit_score(
++  feature: &NativeVectorDebugFeature,
++  click: PixelCoordinate,
++  point_tolerance: f32,
++  line_tolerance: f32,
++) -> Option<f32> {
++  let bounds_tolerance = point_tolerance.max(line_tolerance);
++  if !debug_bounds_contains(feature.bounds, click, bounds_tolerance) {
++    return None;
++  }
++
++  match &feature.geometry {
++    NativeVectorDebugGeometry::Points(points) => points
++      .iter()
++      .map(|point| point.sq_dist(&click))
++      .filter(|distance| *distance <= point_tolerance * point_tolerance)
++      .min_by(f32::total_cmp),
++    NativeVectorDebugGeometry::Lines(lines) => lines
++      .iter()
++      .flat_map(|line| line.windows(2))
++      .map(|segment| click.sq_distance_line_segment(&segment[0], &segment[1]))
++      .filter(|distance| *distance <= line_tolerance * line_tolerance)
++      .min_by(f32::total_cmp)
++      .map(|distance| 1_000.0 + distance.sqrt()),
++    NativeVectorDebugGeometry::Polygons(rings) => rings
++      .iter()
++      .any(|ring| point_in_ring(click, ring))
++      .then(|| 2_000.0 + debug_bounds_area(feature.bounds) * 0.000_001),
++  }
++}
++
++fn debug_bounds_contains(
++  bounds: NativeVectorTileBounds,
++  point: PixelCoordinate,
++  padding: f32,
++) -> bool {
++  bounds.min_x - padding <= point.x
++    && point.x <= bounds.max_x + padding
++    && bounds.min_y - padding <= point.y
++    && point.y <= bounds.max_y + padding
++}
++
++fn debug_bounds_area(bounds: NativeVectorTileBounds) -> f32 {
++  (bounds.max_x - bounds.min_x).abs() * (bounds.max_y - bounds.min_y).abs()
++}
++
++fn point_in_ring(point: PixelCoordinate, ring: &[PixelCoordinate]) -> bool {
++  if ring.len() < 3 {
++    return false;
++  }
++
++  let mut inside = false;
++  let mut previous = ring[ring.len() - 1];
++  for current in ring {
++    if (current.y > point.y) != (previous.y > point.y) {
++      let x_intersection =
++        (previous.x - current.x) * (point.y - current.y) / (previous.y - current.y) + current.x;
++      if point.x < x_intersection {
++        inside = !inside;
++      }
++    }
++    previous = *current;
++  }
++  inside
++}
++
++fn draw_debug_feature_geometry(
++  feature: &NativeVectorDebugFeature,
++  viewport: MapViewport,
++  surface: BevyRenderSurface,
++  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
++) {
++  let wrap_offsets = native_vector_bounds_visible_wrap_offsets(feature.bounds, viewport);
++  match &feature.geometry {
++    NativeVectorDebugGeometry::Points(points) => {
++      for point in points {
++        for wrap_offset in &wrap_offsets {
++          draw_debug_point(
++            shifted_debug_point(*point, *wrap_offset),
++            viewport,
++            surface,
++            gizmos,
++          );
++        }
++      }
++    }
++    NativeVectorDebugGeometry::Lines(lines) | NativeVectorDebugGeometry::Polygons(lines) => {
++      for line in lines {
++        for wrap_offset in &wrap_offsets {
++          draw_debug_path(line, *wrap_offset, viewport, surface, gizmos);
++        }
++      }
++    }
++  }
++}
++
++fn draw_debug_feature_bounds(
++  bounds: NativeVectorTileBounds,
++  viewport: MapViewport,
++  surface: BevyRenderSurface,
++  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
++) {
++  for wrap_offset in native_vector_bounds_visible_wrap_offsets(bounds, viewport) {
++    let top_left = PixelCoordinate {
++      x: bounds.min_x + wrap_offset,
++      y: bounds.min_y,
++    };
++    let top_right = PixelCoordinate {
++      x: bounds.max_x + wrap_offset,
++      y: bounds.min_y,
++    };
++    let bottom_right = PixelCoordinate {
++      x: bounds.max_x + wrap_offset,
++      y: bounds.max_y,
++    };
++    let bottom_left = PixelCoordinate {
++      x: bounds.min_x + wrap_offset,
++      y: bounds.max_y,
++    };
++    draw_debug_world_line(top_left, top_right, viewport, surface, gizmos);
++    draw_debug_world_line(top_right, bottom_right, viewport, surface, gizmos);
++    draw_debug_world_line(bottom_right, bottom_left, viewport, surface, gizmos);
++    draw_debug_world_line(bottom_left, top_left, viewport, surface, gizmos);
++  }
++}
++
++fn draw_debug_path(
++  path: &[PixelCoordinate],
++  wrap_offset: f32,
++  viewport: MapViewport,
++  surface: BevyRenderSurface,
++  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
++) {
++  for segment in path.windows(2) {
++    draw_debug_world_line(
++      shifted_debug_point(segment[0], wrap_offset),
++      shifted_debug_point(segment[1], wrap_offset),
++      viewport,
++      surface,
++      gizmos,
++    );
++  }
++}
++
++fn draw_debug_point(
++  point: PixelCoordinate,
++  viewport: MapViewport,
++  surface: BevyRenderSurface,
++  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
++) {
++  let screen = viewport.transform.apply(point);
++  if !viewport.rect.contains(screen) {
++    return;
++  }
++  let center = screen_to_bevy_2d(screen, surface);
++  let radius = DEBUG_POINT_HIT_SCREEN_RADIUS;
++  gizmos.line_2d(
++    Vec2::new(center.x - radius, center.y),
++    Vec2::new(center.x + radius, center.y),
++    DEBUG_SELECTION_COLOR,
++  );
++  gizmos.line_2d(
++    Vec2::new(center.x, center.y - radius),
++    Vec2::new(center.x, center.y + radius),
++    DEBUG_SELECTION_COLOR,
++  );
++}
++
++fn draw_debug_world_line(
++  from: PixelCoordinate,
++  to: PixelCoordinate,
++  viewport: MapViewport,
++  surface: BevyRenderSurface,
++  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
++) {
++  let from_screen = viewport.transform.apply(from);
++  let to_screen = viewport.transform.apply(to);
++  if !viewport.rect.contains(from_screen) && !viewport.rect.contains(to_screen) {
++    return;
++  }
++  gizmos.line_2d(
++    screen_to_bevy_2d(from_screen, surface),
++    screen_to_bevy_2d(to_screen, surface),
++    DEBUG_SELECTION_COLOR,
++  );
++}
++
++fn shifted_debug_point(point: PixelCoordinate, wrap_offset: f32) -> PixelCoordinate {
++  PixelCoordinate {
++    x: point.x + wrap_offset,
++    y: point.y,
++  }
++}
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  #[test]
++  fn debug_polygon_ring_hit_detects_inside_point() {
++    let ring = vec![
++      PixelCoordinate::new(0.0, 0.0),
++      PixelCoordinate::new(10.0, 0.0),
++      PixelCoordinate::new(10.0, 10.0),
++      PixelCoordinate::new(0.0, 10.0),
++    ];
++
++    assert!(point_in_ring(PixelCoordinate::new(5.0, 5.0), &ring));
++    assert!(!point_in_ring(PixelCoordinate::new(15.0, 5.0), &ring));
++  }
++
++  #[test]
++  fn debug_line_hit_respects_tolerance() {
++    let feature = debug_test_feature(NativeVectorDebugGeometry::Lines(vec![vec![
++      PixelCoordinate::new(0.0, 0.0),
++      PixelCoordinate::new(10.0, 0.0),
++    ]]));
++
++    assert!(debug_feature_hit_score(&feature, PixelCoordinate::new(5.0, 0.5), 1.0, 1.0).is_some());
++    assert!(debug_feature_hit_score(&feature, PixelCoordinate::new(5.0, 2.0), 1.0, 1.0).is_none());
++  }
++
++  fn debug_test_feature(geometry: NativeVectorDebugGeometry) -> NativeVectorDebugFeature {
++    NativeVectorDebugFeature {
++      tile: Tile {
++        x: 0,
++        y: 0,
++        zoom: 0,
++      },
++      feature_index: 0,
++      source_layer: "test".to_string(),
++      geometry_type: "LineString".to_string(),
++      feature_class: "test".to_string(),
++      feature_kind: None,
++      feature_kind_detail: None,
++      feature_name: None,
++      style_summary: "test".to_string(),
++      bounds: NativeVectorTileBounds::from_min_max(
++        PixelCoordinate::new(0.0, 0.0),
++        PixelCoordinate::new(10.0, 1.0),
++      ),
++      geometry,
++      properties: Vec::new(),
++    }
++  }
++}
++
+ pub(super) fn update_native_vector_tiles(
+   mut commands: Commands,
+   mut layer: ResMut<BevyTileLayer>,
+diff --git a/src/bevy_renderer/tiles/native_vector/content.rs b/src/bevy_renderer/tiles/native_vector/content.rs
+index 6c9925e..f947bf3 100644
+--- a/src/bevy_renderer/tiles/native_vector/content.rs
++++ b/src/bevy_renderer/tiles/native_vector/content.rs
+@@ -12,8 +12,8 @@ use bevy::{
+ };
+ 
+ use super::super::{
+-  NativeVectorTileBounds, NativeVectorTileContent, NativeVectorTileLabelSpec,
+-  NativeVectorTileMeshSpec,
++  NativeVectorDebugFeature, NativeVectorDebugGeometry, NativeVectorTileBounds,
++  NativeVectorTileContent, NativeVectorTileLabelSpec, NativeVectorTileMeshSpec,
+ };
+ 
+ const NATIVE_VECTOR_BACKGROUND_Z: f32 = -30.0;
+@@ -53,6 +53,7 @@ pub(in crate::bevy_renderer::tiles) fn native_vector_tile_content(
+ 
+   let mut batches = Vec::new();
+   let mut labels = Vec::new();
++  let mut debug_features = Vec::new();
+   append_native_vector_rect(
+     &mut batches,
+     background_color(),
+@@ -80,6 +81,7 @@ pub(in crate::bevy_renderer::tiles) fn native_vector_tile_content(
+       append_native_vector_layer(
+         &mut batches,
+         &mut labels,
++        &mut debug_features,
+         &reader,
+         index,
+         layer_name,
+@@ -100,6 +102,7 @@ pub(in crate::bevy_renderer::tiles) fn native_vector_tile_content(
+     append_native_vector_layer(
+       &mut batches,
+       &mut labels,
++      &mut debug_features,
+       &reader,
+       index,
+       layer_name,
+@@ -115,6 +118,7 @@ pub(in crate::bevy_renderer::tiles) fn native_vector_tile_content(
+   Ok(NativeVectorTileContent {
+     meshes: native_vector_batches_to_mesh_specs(batches, tile_nw),
+     labels,
++    debug_features,
+   })
+ }
+ 
+@@ -122,6 +126,7 @@ pub(in crate::bevy_renderer::tiles) fn native_vector_tile_content(
+ fn append_native_vector_layer(
+   batches: &mut Vec<NativeVectorMeshBatch>,
+   labels: &mut Vec<NativeVectorTileLabelSpec>,
++  debug_features: &mut Vec<NativeVectorDebugFeature>,
+   reader: &mvt_reader::Reader,
+   layer_index: usize,
+   layer_name: &str,
+@@ -136,7 +141,7 @@ fn append_native_vector_layer(
+     return;
+   };
+ 
+-  for feature in features {
++  for (feature_index, feature) in features.into_iter().enumerate() {
+     let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
+     let feature_kind = feature_string_property(&feature, &["kind"]);
+     let feature_kind_detail = label_feature_kind_detail(
+@@ -148,6 +153,24 @@ fn append_native_vector_layer(
+     let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
+     let population_rank = label_population_rank(&feature, feature_class);
+     let is_capital = feature_is_capital(&feature);
++    if let Some(debug_feature) = native_vector_debug_feature(
++      tile,
++      feature_index,
++      &feature,
++      layer_name,
++      feature_class,
++      feature_kind,
++      feature_kind_detail,
++      feature_name,
++      population_rank,
++      is_capital,
++      style_zoom,
++      tile_origin,
++      tile_world_size,
++      mvt_to_world,
++    ) {
++      debug_features.push(debug_feature);
++    }
+ 
+     match &feature.geometry {
+       geo_types::Geometry::Polygon(polygon) => {
+@@ -243,6 +266,245 @@ fn append_native_vector_layer(
+   }
+ }
+ 
++#[allow(clippy::too_many_arguments)]
++fn native_vector_debug_feature(
++  tile: &Tile,
++  feature_index: usize,
++  feature: &mvt_reader::feature::Feature,
++  layer_name: &str,
++  feature_class: &str,
++  feature_kind: Option<&str>,
++  feature_kind_detail: Option<&str>,
++  feature_name: Option<&str>,
++  population_rank: Option<i64>,
++  is_capital: bool,
++  style_zoom: u8,
++  tile_origin: PixelCoordinate,
++  tile_world_size: f32,
++  mvt_to_world: f32,
++) -> Option<NativeVectorDebugFeature> {
++  let (geometry_type, geometry, bounds) =
++    native_vector_debug_geometry(&feature.geometry, tile_origin, mvt_to_world)?;
++  Some(NativeVectorDebugFeature {
++    tile: *tile,
++    feature_index,
++    source_layer: layer_name.to_string(),
++    geometry_type,
++    feature_class: feature_class.to_string(),
++    feature_kind: feature_kind.map(str::to_string),
++    feature_kind_detail: feature_kind_detail.map(str::to_string),
++    feature_name: feature_name.map(str::to_string),
++    style_summary: native_vector_debug_style_summary(
++      &feature.geometry,
++      layer_name,
++      feature_class,
++      feature_kind,
++      feature_kind_detail,
++      population_rank,
++      is_capital,
++      style_zoom,
++      tile.zoom,
++      tile_world_size,
++    ),
++    bounds,
++    geometry,
++    properties: native_vector_debug_properties(feature),
++  })
++}
++
++fn native_vector_debug_geometry(
++  geometry: &geo_types::Geometry<f32>,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) -> Option<(String, NativeVectorDebugGeometry, NativeVectorTileBounds)> {
++  match geometry {
++    geo_types::Geometry::Point(point) => {
++      let points = vec![native_vector_point_to_world(
++        point,
++        tile_origin,
++        mvt_to_world,
++      )];
++      let bounds = native_vector_points_bounds(points.iter().copied())?;
++      Some((
++        "Point".to_string(),
++        NativeVectorDebugGeometry::Points(points),
++        bounds,
++      ))
++    }
++    geo_types::Geometry::MultiPoint(points) => {
++      let points = points
++        .iter()
++        .map(|point| native_vector_point_to_world(point, tile_origin, mvt_to_world))
++        .collect::<Vec<_>>();
++      let bounds = native_vector_points_bounds(points.iter().copied())?;
++      Some((
++        "MultiPoint".to_string(),
++        NativeVectorDebugGeometry::Points(points),
++        bounds,
++      ))
++    }
++    geo_types::Geometry::LineString(line) => {
++      let lines = vec![native_vector_line_to_world(line, tile_origin, mvt_to_world)];
++      let bounds = native_vector_path_bounds(&lines)?;
++      Some((
++        "LineString".to_string(),
++        NativeVectorDebugGeometry::Lines(lines),
++        bounds,
++      ))
++    }
++    geo_types::Geometry::MultiLineString(lines) => {
++      let lines = lines
++        .iter()
++        .map(|line| native_vector_line_to_world(line, tile_origin, mvt_to_world))
++        .collect::<Vec<_>>();
++      let bounds = native_vector_path_bounds(&lines)?;
++      Some((
++        "MultiLineString".to_string(),
++        NativeVectorDebugGeometry::Lines(lines),
++        bounds,
++      ))
++    }
++    geo_types::Geometry::Polygon(polygon) => {
++      let rings = native_vector_polygon_to_world(polygon, tile_origin, mvt_to_world);
++      let bounds = native_vector_path_bounds(&rings)?;
++      Some((
++        "Polygon".to_string(),
++        NativeVectorDebugGeometry::Polygons(rings),
++        bounds,
++      ))
++    }
++    geo_types::Geometry::MultiPolygon(polygons) => {
++      let rings = polygons
++        .iter()
++        .flat_map(|polygon| native_vector_polygon_to_world(polygon, tile_origin, mvt_to_world))
++        .collect::<Vec<_>>();
++      let bounds = native_vector_path_bounds(&rings)?;
++      Some((
++        "MultiPolygon".to_string(),
++        NativeVectorDebugGeometry::Polygons(rings),
++        bounds,
++      ))
++    }
++    _ => None,
++  }
++}
++
++fn native_vector_point_to_world(
++  point: &geo_types::Point<f32>,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) -> PixelCoordinate {
++  PixelCoordinate {
++    x: tile_origin.x + point.x() * mvt_to_world,
++    y: tile_origin.y + point.y() * mvt_to_world,
++  }
++}
++
++fn native_vector_line_to_world(
++  line: &geo_types::LineString<f32>,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) -> Vec<PixelCoordinate> {
++  line
++    .coords()
++    .map(|coord| PixelCoordinate {
++      x: tile_origin.x + coord.x * mvt_to_world,
++      y: tile_origin.y + coord.y * mvt_to_world,
++    })
++    .collect()
++}
++
++fn native_vector_polygon_to_world(
++  polygon: &geo_types::Polygon<f32>,
++  tile_origin: PixelCoordinate,
++  mvt_to_world: f32,
++) -> Vec<Vec<PixelCoordinate>> {
++  std::iter::once(polygon.exterior())
++    .chain(polygon.interiors())
++    .map(|line| native_vector_line_to_world(line, tile_origin, mvt_to_world))
++    .collect()
++}
++
++fn native_vector_path_bounds(paths: &[Vec<PixelCoordinate>]) -> Option<NativeVectorTileBounds> {
++  native_vector_points_bounds(paths.iter().flat_map(|path| path.iter().copied()))
++}
++
++fn native_vector_points_bounds(
++  points: impl IntoIterator<Item = PixelCoordinate>,
++) -> Option<NativeVectorTileBounds> {
++  let mut points = points.into_iter();
++  let first = points.next()?;
++  let mut bounds = NativeVectorTileBounds::from_min_max(first, first);
++  for point in points {
++    bounds.include(point);
++  }
++  Some(bounds)
++}
++
++#[allow(clippy::too_many_arguments)]
++fn native_vector_debug_style_summary(
++  geometry: &geo_types::Geometry<f32>,
++  layer_name: &str,
++  feature_class: &str,
++  feature_kind: Option<&str>,
++  feature_kind_detail: Option<&str>,
++  population_rank: Option<i64>,
++  is_capital: bool,
++  style_zoom: u8,
++  tile_zoom: u8,
++  tile_world_size: f32,
++) -> String {
++  match geometry {
++    geo_types::Geometry::Polygon(_) | geo_types::Geometry::MultiPolygon(_) => {
++      let polygon_class = polygon_feature_class(layer_name, feature_class, feature_kind);
++      if let Some(color) = get_fill_color(layer_name, polygon_class) {
++        format!("fill class={polygon_class}, rgba={:?}", color.to_color_u8())
++      } else {
++        format!("fill class={polygon_class}, hidden")
++      }
++    }
++    geo_types::Geometry::LineString(_) | geo_types::Geometry::MultiLineString(_) => {
++      let line_class =
++        line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
++      let (_, casing_width, _, inner_width) = get_road_styling(layer_name, line_class, style_zoom);
++      format!(
++        "line class={line_class}, style_zoom={style_zoom}, casing={casing_width:.2}px, inner={inner_width:.2}px"
++      )
++    }
++    geo_types::Geometry::Point(_) | geo_types::Geometry::MultiPoint(_) => {
++      let show = should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom);
++      let font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
++      format!("label visible={show}, font={font_size:.1}px, tile_world_size={tile_world_size:.2}")
++    }
++    _ => "unsupported geometry".to_string(),
++  }
++}
++
++fn native_vector_debug_properties(feature: &mvt_reader::feature::Feature) -> Vec<(String, String)> {
++  let Some(properties) = &feature.properties else {
++    return Vec::new();
++  };
++  let mut properties = properties
++    .iter()
++    .map(|(key, value)| (key.clone(), feature_value_to_string(value)))
++    .collect::<Vec<_>>();
++  properties.sort_by(|a, b| a.0.cmp(&b.0));
++  properties
++}
++
++fn feature_value_to_string(value: &mvt_reader::feature::Value) -> String {
++  match value {
++    mvt_reader::feature::Value::String(value) => value.clone(),
++    mvt_reader::feature::Value::Float(value) => value.to_string(),
++    mvt_reader::feature::Value::Double(value) => value.to_string(),
++    mvt_reader::feature::Value::Int(value) => value.to_string(),
++    mvt_reader::feature::Value::UInt(value) => value.to_string(),
++    mvt_reader::feature::Value::SInt(value) => value.to_string(),
++    mvt_reader::feature::Value::Bool(value) => value.to_string(),
++    mvt_reader::feature::Value::Null => "null".to_string(),
++  }
++}
++
+ fn feature_string_property<'a>(
+   feature: &'a mvt_reader::feature::Feature,
+   keys: &[&str],
+diff --git a/src/bevy_renderer/tiles/results.rs b/src/bevy_renderer/tiles/results.rs
+index 68407c9..f1e2b45 100644
+--- a/src/bevy_renderer/tiles/results.rs
++++ b/src/bevy_renderer/tiles/results.rs
+@@ -52,6 +52,7 @@ pub(super) fn collect_finished_tiles(
+         tile,
+         meshes: mesh_specs,
+         labels: label_specs,
++        debug_features,
+       } => {
+         if generation != layer.generation {
+           continue;
+@@ -78,10 +79,14 @@ pub(super) fn collect_finished_tiles(
+             entities: Vec::new(),
+           })
+           .collect::<Vec<_>>();
+-        if let Some(entry) = layer
+-          .loaded_native_vector_tiles
+-          .insert(tile, BevyNativeVectorTileEntry { instances, labels })
+-        {
++        if let Some(entry) = layer.loaded_native_vector_tiles.insert(
++          tile,
++          BevyNativeVectorTileEntry {
++            instances,
++            labels,
++            debug_features,
++          },
++        ) {
+           layer.stale_native_vector_entities.extend(
+             entry
+               .instances

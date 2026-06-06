@@ -206,6 +206,15 @@ impl<'de> Deserialize<'de> for Rgb {
   }
 }
 
+/// Render-time styling for point labels.
+#[derive(Debug, Clone, Copy)]
+pub struct PlaceLabelStyle {
+  pub text_color: Color,
+  pub show_marker: bool,
+  pub centered: bool,
+  pub max_point_zoom: Option<u8>,
+}
+
 /// Road styling configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoadStyle {
@@ -1152,6 +1161,55 @@ pub fn get_place_font_size(
   }
 }
 
+/// Get marker and text styling for a place feature.
+#[must_use]
+pub fn get_place_label_style(feature_kind_detail: Option<&str>) -> PlaceLabelStyle {
+  let cfg = style_config();
+  if feature_kind_detail == Some("country") {
+    PlaceLabelStyle {
+      text_color: country_label_color(&cfg),
+      show_marker: false,
+      centered: true,
+      max_point_zoom: Some(7),
+    }
+  } else if matches!(feature_kind_detail, Some("city" | "locality")) {
+    place_label_style(cfg.place_label, Some(11))
+  } else if feature_kind_detail == Some("town") {
+    place_label_style(cfg.place_label, Some(13))
+  } else if feature_kind_detail == Some("village") {
+    place_label_style(cfg.place_label, Some(15))
+  } else {
+    place_label_style(cfg.place_label, None)
+  }
+}
+
+fn place_label_style(text_color: Rgb, max_point_zoom: Option<u8>) -> PlaceLabelStyle {
+  PlaceLabelStyle {
+    text_color: text_color.to_color(),
+    show_marker: true,
+    centered: false,
+    max_point_zoom,
+  }
+}
+
+/// Check if a place point label should still be shown at the live map zoom.
+#[must_use]
+pub fn should_show_place_point_label(max_point_zoom: Option<u8>, map_zoom: u8) -> bool {
+  max_point_zoom.is_none_or(|max_zoom| map_zoom <= max_zoom)
+}
+
+fn country_label_color(cfg: &StyleConfig) -> Color {
+  if color_luminance(cfg.background) < 96.0 {
+    Rgb::new(170, 170, 170).to_color()
+  } else {
+    Rgb::new(105, 105, 105).to_color()
+  }
+}
+
+fn color_luminance(color: Rgb) -> f32 {
+  0.2126 * f32::from(color.r) + 0.7152 * f32::from(color.g) + 0.0722 * f32::from(color.b)
+}
+
 /// Check if a place feature should be shown at the given zoom level
 #[must_use]
 #[allow(clippy::match_same_arms)]
@@ -1179,5 +1237,56 @@ pub fn should_show_place(
     (Some("village"), _, _, z) => z >= vis.village_min_zoom,
     (Some("country"), _, _, z) => z >= vis.country_min_zoom,
     _ => false,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn country_labels_are_markerless_and_muted() {
+    let style = get_place_label_style(Some("country"));
+
+    assert!(!style.show_marker);
+    assert!(style.centered);
+    assert_eq!(style.max_point_zoom, Some(7));
+  }
+
+  #[test]
+  fn city_labels_keep_marker_and_place_color() {
+    let style = get_place_label_style(Some("city"));
+
+    assert!(style.show_marker);
+    assert!(!style.centered);
+    assert_eq!(style.max_point_zoom, Some(11));
+  }
+
+  #[test]
+  fn broad_place_point_labels_hide_after_their_max_zoom() {
+    let city = get_place_label_style(Some("city"));
+    assert!(should_show_place_point_label(city.max_point_zoom, 11));
+    assert!(!should_show_place_point_label(city.max_point_zoom, 12));
+
+    let country = get_place_label_style(Some("country"));
+    assert!(should_show_place_point_label(country.max_point_zoom, 7));
+    assert!(!should_show_place_point_label(country.max_point_zoom, 8));
+
+    let default_label = get_place_label_style(Some("unknown"));
+    assert!(should_show_place_point_label(
+      default_label.max_point_zoom,
+      u8::MAX
+    ));
+  }
+
+  #[test]
+  fn country_label_color_is_neutral_for_light_and_dark_backgrounds() {
+    let color = country_label_color(&StyleConfig::default()).to_color_u8();
+    assert_eq!([color.red(), color.green(), color.blue()], [105, 105, 105]);
+
+    let mut dark = StyleConfig::default();
+    dark.background = Rgb::new(20, 20, 20);
+    let color = country_label_color(&dark).to_color_u8();
+    assert_eq!([color.red(), color.green(), color.blue()], [170, 170, 170]);
   }
 }

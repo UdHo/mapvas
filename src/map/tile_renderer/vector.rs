@@ -11,6 +11,7 @@
 
 mod buildings;
 mod labels;
+pub(crate) mod metadata;
 mod places;
 mod roads;
 pub mod styling;
@@ -19,9 +20,13 @@ mod water;
 
 // Re-export key functions from submodules
 use labels::{calculate_path_length, render_text, render_text_along_path};
+use metadata::{
+  feature_is_national_capital, feature_string_property, label_feature_kind_detail,
+  label_population_rank,
+};
 use styling::{
-  background_color, get_fill_color, get_place_font_size, get_road_styling, should_show_place,
-  style_config,
+  background_color, get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
+  should_show_place, should_show_place_point_label, style_config,
 };
 
 use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
@@ -101,85 +106,18 @@ impl VectorTileRenderer {
     for feature in features {
       feature_count += 1;
 
-      // Get the feature class/type for better color selection
-      let feature_class = feature
-        .properties
-        .as_ref()
-        .and_then(|props| props.get("class"))
-        .or_else(|| {
-          feature
-            .properties
-            .as_ref()
-            .and_then(|props| props.get("type"))
-        })
-        .and_then(|v| {
-          if let mvt_reader::feature::Value::String(s) = v {
-            Some(s.as_str())
-          } else {
-            None
-          }
-        })
-        .unwrap_or("");
-
-      // Extract name for labeling
-      let feature_name = feature
-        .properties
-        .as_ref()
-        .and_then(|props| {
-          props
-            .get("name")
-            .or_else(|| props.get("name:en"))
-            .or_else(|| props.get("name_en"))
-        })
-        .and_then(|v| {
-          if let mvt_reader::feature::Value::String(s) = v {
-            Some(s.as_str())
-          } else {
-            None
-          }
-        });
-
-      // Extract Protomaps-specific properties for filtering
-      let feature_kind = feature
-        .properties
-        .as_ref()
-        .and_then(|props| props.get("kind"))
-        .and_then(|v| {
-          if let mvt_reader::feature::Value::String(s) = v {
-            Some(s.as_str())
-          } else {
-            None
-          }
-        });
-
-      let feature_kind_detail = feature
-        .properties
-        .as_ref()
-        .and_then(|props| props.get("kind_detail"))
-        .and_then(|v| {
-          if let mvt_reader::feature::Value::String(s) = v {
-            Some(s.as_str())
-          } else {
-            None
-          }
-        });
-
-      let population_rank = feature
-        .properties
-        .as_ref()
-        .and_then(|props| props.get("population_rank"))
-        .and_then(|v| match v {
-          mvt_reader::feature::Value::UInt(n) => Some(*n as i64),
-          mvt_reader::feature::Value::Int(n) => Some(*n),
-          mvt_reader::feature::Value::SInt(n) => Some(*n),
-          _ => None,
-        });
-
-      let is_capital = feature
-        .properties
-        .as_ref()
-        .and_then(|props| props.get("capital"))
-        .is_some();
+      let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
+      let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
+      let feature_kind = feature_string_property(&feature, &["kind"]);
+      let feature_kind_detail = label_feature_kind_detail(
+        layer_name,
+        feature_string_property(&feature, &["kind_detail"]),
+        feature_kind,
+        feature_class,
+      );
+      let population_rank =
+        label_population_rank(&feature, feature_kind_detail.unwrap_or(feature_class));
+      let is_capital = feature_is_national_capital(&feature);
 
       match &feature.geometry {
         geo_types::Geometry::Polygon(polygon) => {
@@ -445,31 +383,46 @@ impl VectorTileRenderer {
       // Get font size from centralized config
       let cfg = style_config();
       let base_font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
+      let label_style = get_place_label_style(feature_kind_detail);
+      if !should_show_place_point_label(label_style.max_point_zoom, tile_zoom) {
+        return;
+      }
 
       // Scale font size based on tile resolution, but cap to prevent huge text
       let font_size =
         (base_font_size * (tile_size as f32 / 256.0)).min(cfg.font_sizes.max_font_size);
 
       // Draw small marker dot
-      let radius = cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
-      let mut pb = PathBuilder::new();
-      pb.push_circle(x, y, radius);
+      let radius = if label_style.show_marker {
+        let radius =
+          cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
+        let mut pb = PathBuilder::new();
+        pb.push_circle(x, y, radius);
 
-      if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        paint.set_color(cfg.marker_dot.to_color());
-        paint.anti_alias = true;
-        pixmap.fill_path(
-          &path,
-          &paint,
-          tiny_skia::FillRule::Winding,
-          Transform::identity(),
-          None,
-        );
-      }
+        if let Some(path) = pb.finish() {
+          let mut paint = Paint::default();
+          paint.set_color(cfg.marker_dot.to_color());
+          paint.anti_alias = true;
+          pixmap.fill_path(
+            &path,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            Transform::identity(),
+            None,
+          );
+        }
+        radius
+      } else {
+        0.0
+      };
 
-      // Render text label offset to the right of the point
-      let text_x = x + radius + cfg.markers.text_offset_x;
+      let text_width =
+        label_text.chars().count() as f32 * font_size * cfg.font_sizes.char_width_ratio;
+      let text_x = if label_style.centered {
+        x - text_width * 0.5
+      } else {
+        x + radius + cfg.markers.text_offset_x
+      };
       let text_y = y + font_size / cfg.markers.text_vertical_center_factor;
 
       render_text(
@@ -478,7 +431,7 @@ impl VectorTileRenderer {
         text_x,
         text_y,
         font_size,
-        cfg.place_label.to_color(),
+        label_style.text_color,
       );
     }
   }

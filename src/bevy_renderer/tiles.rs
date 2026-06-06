@@ -1,6 +1,5 @@
 use std::{
   collections::{HashMap, HashSet},
-  path::Path,
   sync::{
     Arc, Mutex,
     mpsc::{Receiver, Sender},
@@ -11,75 +10,37 @@ use crate::{
   config::{Config, TileProvider, TileType},
   map::{
     coordinates::{
-      CANVAS_SIZE, PixelCoordinate, PixelPosition, PixelRect, Tile, TileCoordinate, TilePriority,
-      generate_preload_tiles, tile_zoom_for_transform, tiles_in_box,
+      PixelCoordinate, PixelPosition, Tile, TileCoordinate, TilePriority, generate_preload_tiles,
+      tile_zoom_for_transform, tiles_in_box,
     },
     tile_loader::{CachedTileLoader, TileLoader, TileSource},
     tile_renderer::{
-      RasterTileRenderer, StyleConfig, TileImage, TileRenderError, TileRenderer,
-      VectorTileRenderer, background_color, get_fill_color, get_place_font_size, get_road_styling,
-      should_show_place, style_config, style_version,
+      RasterTileRenderer, TileImage, TileRenderer, VectorTileRenderer, style_version,
     },
     viewport::MapViewport,
   },
   task_tracker::{TaskCategory, TaskGuard},
 };
-use bevy::{
-  asset::RenderAssetUsages,
-  mesh::{Indices, PrimitiveTopology},
-  prelude::*,
-  render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-  sprite::Anchor,
-};
+use bevy::prelude::*;
 
-use super::{map::BevyMapViewport, surface::BevyRenderSurface};
+mod detail;
+mod fonts;
+mod native_vector;
+mod raster;
+mod results;
+mod screen;
+
+use detail::{
+  MAX_TILE_DETAIL_FACTOR, MIN_TILE_DETAIL_FACTOR, clamped_tile_detail_factor,
+  effective_tile_detail_factor_label, native_vector_style_zoom, tile_detail_factor_label,
+  tile_zoom_with_detail_factor,
+};
+use fonts::load_bevy_tile_label_fonts;
 
 const MAX_PRELOAD_TILES: usize = 20;
-const TILE_LABEL_WIDTH: f32 = 100.0;
-const TILE_LABEL_HEIGHT: f32 = 60.0;
-const TILE_LABEL_TEXT_OFFSET_X: f32 = 8.0;
-const TILE_LABEL_TEXT_OFFSET_Y: f32 = 8.0;
-const TILE_LABEL_FONT_SIZE: f32 = 11.0;
-const TILE_LABEL_BACKGROUND_Z: f32 = 40.0;
-const TILE_LABEL_TEXT_Z: f32 = 41.0;
-const OSM_ATTRIBUTION_TEXT: &str = "© OpenStreetMap contributors";
-const OSM_ATTRIBUTION_WIDTH: f32 = 158.0;
-const OSM_ATTRIBUTION_HEIGHT: f32 = 20.0;
-const OSM_ATTRIBUTION_MARGIN: f32 = 8.0;
-const OSM_ATTRIBUTION_FONT_SIZE: f32 = 11.0;
-const OSM_ATTRIBUTION_BACKGROUND_Z: f32 = 50.0;
-const OSM_ATTRIBUTION_TEXT_Z: f32 = 51.0;
-const BASE_TILE_DETAIL_FACTOR: f32 = 2.0;
-const MIN_TILE_DETAIL_FACTOR: f32 = 0.5;
-const MAX_TILE_DETAIL_FACTOR: f32 = 2.0;
-const NATIVE_VECTOR_BACKGROUND_Z: f32 = -30.0;
-const NATIVE_VECTOR_LAND_Z: f32 = -29.0;
-const NATIVE_VECTOR_WATER_Z: f32 = -28.0;
-const NATIVE_VECTOR_BUILDING_Z: f32 = -27.0;
-const NATIVE_VECTOR_ROAD_CASING_Z: f32 = -26.0;
-const NATIVE_VECTOR_ROAD_INNER_Z: f32 = -25.0;
-const NATIVE_VECTOR_LABEL_MARKER_Z: f32 = -24.0;
-const NATIVE_VECTOR_LABEL_TEXT_Z: f32 = -23.0;
-const EMBEDDED_MAP_LABEL_FONT_DATA: &[u8] = include_bytes!("../assets/fonts/Roboto-Regular.ttf");
-const PREFERRED_MAP_LABEL_FONT_PATHS: &[&str] = &[
-  "/System/Library/Fonts/Supplemental/NotoSans-Regular.ttf",
-  "/Library/Fonts/NotoSans-Regular.ttf",
-  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-  "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-  "/System/Library/Fonts/SFNS.ttf",
-  "C:\\Windows\\Fonts\\arial.ttf",
-  "C:\\Windows\\Fonts\\segoeui.ttf",
-];
 
 #[derive(Resource)]
 pub struct BevyTileRuntime(pub tokio::runtime::Handle);
-
-#[derive(Resource)]
-struct BevyTileLabelFonts {
-  map_label: Handle<Font>,
-}
 
 pub struct BevyTilePlugin;
 
@@ -97,10 +58,11 @@ impl Plugin for BevyTilePlugin {
       .add_systems(
         Update,
         (
-          collect_finished_tiles,
-          update_bevy_tiles,
-          update_native_vector_tiles,
-          update_native_vector_tile_labels,
+          results::collect_finished_tiles,
+          raster::update_bevy_tiles,
+          native_vector::update_native_vector_tiles,
+          native_vector::update_native_vector_tile_labels,
+          native_vector::draw_native_vector_debug_selection,
         )
           .chain(),
       );
@@ -197,6 +159,10 @@ struct NativeVectorTileLabelSpec {
   coord: PixelCoordinate,
   text: String,
   base_font_size: f32,
+  text_color: Color,
+  show_marker: bool,
+  centered: bool,
+  max_point_zoom: Option<u8>,
   tile_world_size: f32,
 }
 
@@ -210,68 +176,54 @@ struct NativeVectorTileLabelInstance {
   coord: PixelCoordinate,
   text: String,
   base_font_size: f32,
+  text_color: Color,
+  show_marker: bool,
+  centered: bool,
+  max_point_zoom: Option<u8>,
   tile_world_size: f32,
   entities: Vec<NativeVectorTileLabelCopy>,
+}
+
+#[derive(Clone)]
+struct NativeVectorDebugFeature {
+  tile: Tile,
+  feature_index: usize,
+  source_layer: String,
+  geometry_type: String,
+  feature_class: String,
+  feature_kind: Option<String>,
+  feature_kind_detail: Option<String>,
+  feature_name: Option<String>,
+  style_summary: String,
+  bounds: NativeVectorTileBounds,
+  geometry: NativeVectorDebugGeometry,
+  properties: Vec<(String, String)>,
+}
+
+#[derive(Clone)]
+enum NativeVectorDebugGeometry {
+  Points(Vec<PixelCoordinate>),
+  Lines(Vec<Vec<PixelCoordinate>>),
+  Polygons(Vec<Vec<PixelCoordinate>>),
+}
+
+#[derive(Clone)]
+struct NativeVectorDebugSelection {
+  click: PixelCoordinate,
+  feature: NativeVectorDebugFeature,
 }
 
 struct BevyNativeVectorTileEntry {
   instances: Vec<NativeVectorTileMeshInstance>,
   labels: Vec<NativeVectorTileLabelInstance>,
+  debug_features: Vec<NativeVectorDebugFeature>,
 }
 
 struct NativeVectorTileContent {
   meshes: Vec<NativeVectorTileMeshSpec>,
   labels: Vec<NativeVectorTileLabelSpec>,
+  debug_features: Vec<NativeVectorDebugFeature>,
 }
-
-struct NativeVectorMeshBatch {
-  color_key: [u8; 4],
-  color: Color,
-  z_key: i16,
-  z: f32,
-  positions: Vec<[f32; 3]>,
-  indices: Vec<u32>,
-  bounds: Option<NativeVectorTileBounds>,
-}
-
-struct TileLabel {
-  background_rect: PixelRect,
-  background_size: Vec2,
-  text_pos: PixelPosition,
-  text: String,
-}
-
-type NativeVectorLabelMarkerQuery<'w, 's> = Query<
-  'w,
-  's,
-  (
-    Entity,
-    &'static mut Transform,
-    &'static mut Sprite,
-    &'static mut Visibility,
-  ),
-  (
-    With<BevyNativeVectorTileLabelMarker>,
-    Without<BevyNativeVectorTileLabelText>,
-  ),
->;
-
-type NativeVectorLabelTextQuery<'w, 's> = Query<
-  'w,
-  's,
-  (
-    Entity,
-    &'static mut Transform,
-    &'static mut Text2d,
-    &'static mut TextFont,
-    &'static mut TextColor,
-    &'static mut Visibility,
-  ),
-  (
-    With<BevyNativeVectorTileLabelText>,
-    Without<BevyNativeVectorTileLabelMarker>,
-  ),
->;
 
 enum BevyTileResult {
   Ready {
@@ -284,6 +236,7 @@ enum BevyTileResult {
     tile: Tile,
     meshes: Vec<NativeVectorTileMeshSpec>,
     labels: Vec<NativeVectorTileLabelSpec>,
+    debug_features: Vec<NativeVectorDebugFeature>,
   },
   Failed {
     generation: u64,
@@ -317,40 +270,14 @@ pub struct BevyTileLayer {
   current_request_zoom: u8,
   current_max_zoom: u8,
   coordinate_display_mode: CoordinateDisplayMode,
+  debug_elements_enabled: bool,
+  selected_debug_feature: Option<NativeVectorDebugSelection>,
 }
 
 fn configure_bevy_tile_overlay_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
   let (config, _) = config_store.config_mut::<BevyTileOverlayGizmos>();
   config.line.width = 1.0;
   config.depth_bias = -1.0;
-}
-
-fn load_bevy_tile_label_fonts(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
-  commands.insert_resource(BevyTileLabelFonts {
-    map_label: load_preferred_map_label_font(&mut fonts),
-  });
-}
-
-fn load_preferred_map_label_font(fonts: &mut Assets<Font>) -> Handle<Font> {
-  for path in PREFERRED_MAP_LABEL_FONT_PATHS {
-    if let Some(font) = load_font_from_path(path) {
-      return fonts.add(font);
-    }
-  }
-
-  fonts.add(
-    Font::try_from_bytes(EMBEDDED_MAP_LABEL_FONT_DATA.to_vec())
-      .expect("embedded Roboto map label font must be valid"),
-  )
-}
-
-fn load_font_from_path(path: &str) -> Option<Font> {
-  if !Path::new(path).exists() {
-    return None;
-  }
-  std::fs::read(path)
-    .ok()
-    .and_then(|bytes| Font::try_from_bytes(bytes).ok())
 }
 
 impl BevyTileLayer {
@@ -384,6 +311,8 @@ impl BevyTileLayer {
       current_request_zoom: 0,
       current_max_zoom: 0,
       coordinate_display_mode: CoordinateDisplayMode::Off,
+      debug_elements_enabled: false,
+      selected_debug_feature: None,
     }
   }
 
@@ -506,6 +435,12 @@ impl BevyTileLayer {
       }
 
       ui.checkbox(&mut self.preload_enabled, "preload adjacent tiles");
+      let debug_changed = ui
+        .checkbox(&mut self.debug_elements_enabled, "debug map elements")
+        .changed();
+      if debug_changed && !self.debug_elements_enabled {
+        self.selected_debug_feature = None;
+      }
 
       ui.separator();
       ui.label("Tile Coordinate Display:");
@@ -578,6 +513,72 @@ impl BevyTileLayer {
         ui.label("Tiles rendering:");
         ui.label(tiles_rendering.to_string());
       });
+
+      self.debug_ui(ui);
+    });
+  }
+
+  pub fn select_debug_feature(&mut self, screen_pos: PixelPosition, viewport: Option<MapViewport>) {
+    if !self.debug_elements_enabled {
+      return;
+    }
+    self.selected_debug_feature =
+      viewport.and_then(|viewport| native_vector::select_debug_feature(self, viewport, screen_pos));
+  }
+
+  fn debug_ui(&self, ui: &mut egui::Ui) {
+    if !self.debug_elements_enabled {
+      return;
+    }
+
+    ui.separator();
+    ui.label("Selected map element:");
+    let Some(selection) = &self.selected_debug_feature else {
+      ui.label("None");
+      return;
+    };
+    let feature = &selection.feature;
+    stat_row(
+      ui,
+      "Click:",
+      format!("{:.2}, {:.2}", selection.click.x, selection.click.y),
+    );
+    stat_row(
+      ui,
+      "Tile:",
+      format!(
+        "{}/{}/{}",
+        feature.tile.zoom, feature.tile.x, feature.tile.y
+      ),
+    );
+    stat_row(ui, "Feature:", feature.feature_index.to_string());
+    stat_row(ui, "Layer:", feature.source_layer.clone());
+    stat_row(ui, "Geometry:", feature.geometry_type.clone());
+    if let Some(name) = &feature.feature_name {
+      stat_row(ui, "Name:", name.clone());
+    }
+    if !feature.feature_class.is_empty() {
+      stat_row(ui, "Class:", feature.feature_class.clone());
+    }
+    if let Some(kind) = &feature.feature_kind {
+      stat_row(ui, "Kind:", kind.clone());
+    }
+    if let Some(kind_detail) = &feature.feature_kind_detail {
+      stat_row(ui, "Kind detail:", kind_detail.clone());
+    }
+    stat_row(ui, "Style:", feature.style_summary.clone());
+    stat_row(
+      ui,
+      "Bounds:",
+      format!(
+        "{:.2},{:.2} - {:.2},{:.2}",
+        feature.bounds.min_x, feature.bounds.min_y, feature.bounds.max_x, feature.bounds.max_y
+      ),
+    );
+    ui.collapsing("Raw properties", |ui| {
+      for (key, value) in &feature.properties {
+        stat_row(ui, key, value.clone());
+      }
     });
   }
 
@@ -585,6 +586,7 @@ impl BevyTileLayer {
     self.generation = self.generation.wrapping_add(1);
     self.in_flight_tiles.clear();
     self.last_visible_tiles.clear();
+    self.selected_debug_feature = None;
     for entry in self.loaded_tiles.drain().map(|(_, entry)| entry) {
       self.stale_entities.extend(entry.entities);
     }
@@ -848,7 +850,7 @@ impl BevyTileLayer {
       };
 
       let (render_rx, _) = crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
-        native_vector_tile_content(&tile, style_zoom, &tile_data)
+        native_vector::native_vector_tile_content(&tile, style_zoom, &tile_data)
       });
 
       let render_result = tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
@@ -865,6 +867,7 @@ impl BevyTileLayer {
         tile,
         meshes: content.meshes,
         labels: content.labels,
+        debug_features: content.debug_features,
       });
     });
   }
@@ -951,2256 +954,9 @@ fn split_image_into_tiles(image: &TileImage, grid_size: usize) -> Vec<TileImage>
   tiles
 }
 
-fn collect_finished_tiles(
-  mut layer: ResMut<BevyTileLayer>,
-  mut images: ResMut<Assets<Image>>,
-  mut meshes: ResMut<Assets<Mesh>>,
-  mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-  let mut results = Vec::new();
-  if let Ok(receiver) = layer.receiver.lock() {
-    while let Ok(result) = receiver.try_recv() {
-      results.push(result);
-    }
-  }
-
-  for result in results {
-    match result {
-      BevyTileResult::Ready {
-        generation,
-        tile,
-        image,
-      } => {
-        if generation != layer.generation {
-          continue;
-        }
-        layer.in_flight_tiles.remove(&tile);
-        let image = images.add(tile_image_to_bevy(image));
-        if let Some(entry) = layer.loaded_tiles.get_mut(&tile) {
-          entry.image = image;
-        } else {
-          layer.loaded_tiles.insert(
-            tile,
-            BevyTileEntry {
-              image,
-              entities: Vec::new(),
-            },
-          );
-        }
-      }
-      BevyTileResult::NativeVectorReady {
-        generation,
-        tile,
-        meshes: mesh_specs,
-        labels: label_specs,
-      } => {
-        if generation != layer.generation {
-          continue;
-        }
-        layer.in_flight_tiles.remove(&tile);
-        let instances = mesh_specs
-          .into_iter()
-          .map(|spec| NativeVectorTileMeshInstance {
-            mesh: meshes.add(spec.mesh),
-            material: materials.add(ColorMaterial::from(spec.color)),
-            bounds: spec.bounds,
-            origin: spec.origin,
-            z: spec.z,
-            entities: Vec::new(),
-          })
-          .collect::<Vec<_>>();
-        let labels = label_specs
-          .into_iter()
-          .map(|spec| NativeVectorTileLabelInstance {
-            coord: spec.coord,
-            text: spec.text,
-            base_font_size: spec.base_font_size,
-            tile_world_size: spec.tile_world_size,
-            entities: Vec::new(),
-          })
-          .collect::<Vec<_>>();
-        if let Some(entry) = layer
-          .loaded_native_vector_tiles
-          .insert(tile, BevyNativeVectorTileEntry { instances, labels })
-        {
-          layer.stale_native_vector_entities.extend(
-            entry
-              .instances
-              .into_iter()
-              .flat_map(|instance| instance.entities)
-              .chain(entry.labels.into_iter().flat_map(|label| {
-                label
-                  .entities
-                  .into_iter()
-                  .flat_map(|copy| [copy.marker, copy.text])
-              })),
-          );
-        }
-      }
-      BevyTileResult::Failed { generation, tile } => {
-        if generation != layer.generation {
-          continue;
-        }
-        layer.in_flight_tiles.remove(&tile);
-      }
-    }
-  }
-}
-
-fn update_bevy_tiles(
-  mut commands: Commands,
-  mut layer: ResMut<BevyTileLayer>,
-  viewport: Res<BevyMapViewport>,
-  runtime: Res<BevyTileRuntime>,
-  surface: Res<BevyRenderSurface>,
-  mut sprites: Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
-  mut grid_sprites: Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (With<BevyGridTileSprite>, Without<BevyTileSprite>),
-  >,
-  mut label_backgrounds: Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyTileLabelBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelText>,
-    ),
-  >,
-  mut label_texts: Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyTileLabelText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-    ),
-  >,
-  mut attribution_backgrounds: Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyOsmAttributionBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionText>,
-    ),
-  >,
-  mut attribution_texts: Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyOsmAttributionText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionBackground>,
-    ),
-  >,
-  mut overlay_gizmos: Gizmos<BevyTileOverlayGizmos>,
-) {
-  let stale_entities = layer.stale_entities.drain(..).collect::<HashSet<_>>();
-  for entity in &stale_entities {
-    commands.entity(*entity).despawn();
-  }
-
-  if !layer.visible {
-    hide_tile_sprites(&mut sprites);
-    despawn_untracked_tile_sprites(
-      &mut commands,
-      &tracked_tile_entities(&layer),
-      &stale_entities,
-      &mut sprites,
-    );
-    hide_grid_tile_sprites(&mut grid_sprites);
-    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
-    hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
-    return;
-  }
-
-  let Some(viewport) = viewport.get() else {
-    hide_tile_sprites(&mut sprites);
-    despawn_untracked_tile_sprites(
-      &mut commands,
-      &tracked_tile_entities(&layer),
-      &stale_entities,
-      &mut sprites,
-    );
-    hide_grid_tile_sprites(&mut grid_sprites);
-    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
-    hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
-    return;
-  };
-  let surface = *surface;
-
-  let visible_tiles = layer.visible_tiles(viewport);
-  let runtime_handle = runtime.0.clone();
-  let native_vector_active = layer.native_vector_tiles_active();
-  let show_osm_attribution = layer
-    .tile_loader()
-    .is_some_and(|loader| loader.requires_osm_attribution())
-    && (!layer.loaded_tiles.is_empty() || !layer.loaded_native_vector_tiles.is_empty())
-    && layer.coordinate_display_mode != CoordinateDisplayMode::GridOnly;
-
-  if !native_vector_active {
-    for tile in &visible_tiles {
-      if !layer.loaded_tiles.contains_key(tile) {
-        layer.request_tile(*tile, TilePriority::Current, runtime_handle.clone());
-      }
-    }
-  }
-
-  if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
-    if native_vector_active {
-      layer.request_preload_native_vector_tiles(&visible_tiles, runtime_handle);
-    } else {
-      layer.request_preload_tiles(&visible_tiles, runtime_handle);
-    }
-    hide_tile_sprites(&mut sprites);
-    update_grid_tile_sprites(
-      &mut commands,
-      viewport,
-      surface,
-      &visible_tiles,
-      &mut grid_sprites,
-    );
-    draw_coordinate_tile_borders(
-      viewport,
-      surface,
-      &visible_tiles,
-      layer.coordinate_display_mode,
-      &mut overlay_gizmos,
-    );
-    update_tile_labels(
-      &mut commands,
-      viewport,
-      surface,
-      &visible_tiles,
-      &mut label_backgrounds,
-      &mut label_texts,
-    );
-    update_osm_attribution(
-      &mut commands,
-      viewport,
-      surface,
-      show_osm_attribution,
-      &mut attribution_backgrounds,
-      &mut attribution_texts,
-    );
-    return;
-  }
-  hide_grid_tile_sprites(&mut grid_sprites);
-
-  draw_coordinate_tile_borders(
-    viewport,
-    surface,
-    &visible_tiles,
-    layer.coordinate_display_mode,
-    &mut overlay_gizmos,
-  );
-  if layer.coordinate_display_mode == CoordinateDisplayMode::Off {
-    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
-  } else {
-    update_tile_labels(
-      &mut commands,
-      viewport,
-      surface,
-      &visible_tiles,
-      &mut label_backgrounds,
-      &mut label_texts,
-    );
-  }
-  update_osm_attribution(
-    &mut commands,
-    viewport,
-    surface,
-    show_osm_attribution,
-    &mut attribution_backgrounds,
-    &mut attribution_texts,
-  );
-  if native_vector_active {
-    hide_tile_sprites(&mut sprites);
-    return;
-  }
-
-  let mut tiles_to_draw = visible_tiles
-    .iter()
-    .filter_map(|tile| loaded_tile_or_parent(&layer, *tile))
-    .collect::<Vec<_>>();
-  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
-  tiles_to_draw.dedup();
-  tiles_to_draw.reverse();
-
-  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
-  for tile in &tiles_to_draw {
-    let tile = *tile;
-    let tile_rects = coordinate_tile_rects(viewport, tile);
-    let tint = tile_tint(layer.coordinate_display_mode, tile);
-
-    let entry = layer.loaded_tiles.get_mut(&tile).expect("tile was checked");
-    let mut visible_entity_count = 0;
-
-    for tile_rect in tile_rects {
-      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
-      let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
-      let image = entry.image.clone();
-
-      if let Some(entity) = entry.entities.get(visible_entity_count).copied() {
-        if let Ok((_, mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
-          *sprite_transform = transform;
-          sprite.image = image;
-          sprite.custom_size = Some(custom_size);
-          sprite.color = tint;
-          *visibility = Visibility::Visible;
-        } else {
-          entry.entities[visible_entity_count] =
-            spawn_tile_sprite(&mut commands, image, transform, custom_size, tint);
-        }
-      } else {
-        entry.entities.push(spawn_tile_sprite(
-          &mut commands,
-          image,
-          transform,
-          custom_size,
-          tint,
-        ));
-      }
-
-      visible_entity_count += 1;
-    }
-
-    for entity in entry.entities.iter().skip(visible_entity_count).copied() {
-      if let Ok((_, _, _, mut visibility)) = sprites.get_mut(entity) {
-        *visibility = Visibility::Hidden;
-      }
-    }
-  }
-
-  layer.request_preload_tiles(&visible_tiles, runtime_handle);
-
-  for (tile, entry) in &mut layer.loaded_tiles {
-    if draw_set.contains(tile) {
-      continue;
-    }
-    for entity in &entry.entities {
-      if let Ok((_, _, _, mut visibility)) = sprites.get_mut(*entity) {
-        *visibility = Visibility::Hidden;
-      }
-    }
-  }
-
-  despawn_untracked_tile_sprites(
-    &mut commands,
-    &tracked_tile_entities(&layer),
-    &stale_entities,
-    &mut sprites,
-  );
-}
-
-fn update_native_vector_tiles(
-  mut commands: Commands,
-  mut layer: ResMut<BevyTileLayer>,
-  viewport: Res<BevyMapViewport>,
-  runtime: Res<BevyTileRuntime>,
-  surface: Res<BevyRenderSurface>,
-  mut meshes: Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
-) {
-  let stale_entities = layer
-    .stale_native_vector_entities
-    .drain(..)
-    .collect::<HashSet<_>>();
-  for entity in &stale_entities {
-    commands.entity(*entity).despawn();
-  }
-
-  if !layer.native_vector_tiles_active() {
-    hide_native_vector_tile_meshes(&mut meshes);
-    despawn_untracked_native_vector_tile_meshes(
-      &mut commands,
-      &tracked_native_vector_tile_entities(&layer),
-      &stale_entities,
-      &mut meshes,
-    );
-    return;
-  }
-  let Some(viewport) = viewport.get() else {
-    hide_native_vector_tile_meshes(&mut meshes);
-    despawn_untracked_native_vector_tile_meshes(
-      &mut commands,
-      &tracked_native_vector_tile_entities(&layer),
-      &stale_entities,
-      &mut meshes,
-    );
-    return;
-  };
-  let surface = *surface;
-
-  if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
-    hide_native_vector_tile_meshes(&mut meshes);
-    return;
-  }
-
-  let visible_tiles = layer.visible_tiles(viewport);
-  let runtime_handle = runtime.0.clone();
-  for tile in &visible_tiles {
-    // Parent tiles are a draw fallback only; exact visible tiles still need a current-priority request.
-    layer.request_native_vector_tile(*tile, TilePriority::Current, runtime_handle.clone());
-  }
-  layer.request_preload_native_vector_tiles(&visible_tiles, runtime_handle);
-
-  let mut tiles_to_draw = visible_tiles
-    .iter()
-    .filter_map(|tile| loaded_native_vector_tile_or_parent(&layer, *tile))
-    .collect::<Vec<_>>();
-  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
-  tiles_to_draw.dedup();
-  tiles_to_draw.reverse();
-
-  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
-  for tile in &tiles_to_draw {
-    let entry = layer
-      .loaded_native_vector_tiles
-      .get_mut(tile)
-      .expect("native vector tile was checked");
-    for instance in &mut entry.instances {
-      update_native_vector_tile_mesh_instance(
-        &mut commands,
-        viewport,
-        surface,
-        instance,
-        &mut meshes,
-      );
-    }
-  }
-
-  for (tile, entry) in &mut layer.loaded_native_vector_tiles {
-    if draw_set.contains(tile) {
-      continue;
-    }
-    for instance in &entry.instances {
-      hide_native_vector_tile_entities(&instance.entities, &mut meshes);
-    }
-  }
-
-  despawn_untracked_native_vector_tile_meshes(
-    &mut commands,
-    &tracked_native_vector_tile_entities(&layer),
-    &stale_entities,
-    &mut meshes,
-  );
-}
-
-fn update_native_vector_tile_labels(
-  mut commands: Commands,
-  mut layer: ResMut<BevyTileLayer>,
-  label_fonts: Res<BevyTileLabelFonts>,
-  viewport: Res<BevyMapViewport>,
-  surface: Res<BevyRenderSurface>,
-  mut markers: NativeVectorLabelMarkerQuery<'_, '_>,
-  mut texts: NativeVectorLabelTextQuery<'_, '_>,
-) {
-  if !layer.native_vector_tiles_active() {
-    hide_native_vector_tile_labels(&mut markers, &mut texts);
-    despawn_untracked_native_vector_tile_labels(
-      &mut commands,
-      &tracked_native_vector_tile_label_entities(&layer),
-      &mut markers,
-      &mut texts,
-    );
-    return;
-  }
-  let Some(viewport) = viewport.get() else {
-    hide_native_vector_tile_labels(&mut markers, &mut texts);
-    despawn_untracked_native_vector_tile_labels(
-      &mut commands,
-      &tracked_native_vector_tile_label_entities(&layer),
-      &mut markers,
-      &mut texts,
-    );
-    return;
-  };
-  let surface = *surface;
-  if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
-    hide_native_vector_tile_labels(&mut markers, &mut texts);
-    despawn_untracked_native_vector_tile_labels(
-      &mut commands,
-      &tracked_native_vector_tile_label_entities(&layer),
-      &mut markers,
-      &mut texts,
-    );
-    return;
-  }
-
-  let visible_tiles = if layer.last_visible_tiles.is_empty() {
-    layer.visible_tiles(viewport)
-  } else {
-    layer.last_visible_tiles.clone()
-  };
-  let mut tiles_to_draw = visible_tiles
-    .iter()
-    .filter_map(|tile| loaded_native_vector_tile_or_parent(&layer, *tile))
-    .collect::<Vec<_>>();
-  tiles_to_draw.sort_unstable_by_key(|tile| tile.zoom);
-  tiles_to_draw.dedup();
-  tiles_to_draw.reverse();
-
-  let cfg = style_config();
-  let label_responsibilities = native_vector_label_responsibilities(&layer, &visible_tiles);
-  let request_zoom = visible_tiles
-    .first()
-    .map_or(layer.current_request_zoom, |tile| tile.zoom);
-  let draw_set: HashSet<Tile> = tiles_to_draw.iter().copied().collect();
-  for tile in &tiles_to_draw {
-    let entry = layer
-      .loaded_native_vector_tiles
-      .get_mut(tile)
-      .expect("native vector tile was checked");
-    for label in &mut entry.labels {
-      if !native_vector_label_is_responsible(label, request_zoom, label_responsibilities.get(tile))
-      {
-        hide_native_vector_tile_label_entities(&label.entities, &mut markers, &mut texts);
-        continue;
-      }
-      update_native_vector_tile_label_instance(
-        &mut commands,
-        viewport,
-        surface,
-        label,
-        &cfg,
-        &label_fonts.map_label,
-        &mut markers,
-        &mut texts,
-      );
-    }
-  }
-
-  for (tile, entry) in &mut layer.loaded_native_vector_tiles {
-    if draw_set.contains(tile) {
-      continue;
-    }
-    for label in &entry.labels {
-      hide_native_vector_tile_label_entities(&label.entities, &mut markers, &mut texts);
-    }
-  }
-
-  despawn_untracked_native_vector_tile_labels(
-    &mut commands,
-    &tracked_native_vector_tile_label_entities(&layer),
-    &mut markers,
-    &mut texts,
-  );
-}
-
-fn native_vector_label_responsibilities(
-  layer: &BevyTileLayer,
-  visible_tiles: &[Tile],
-) -> HashMap<Tile, HashSet<Tile>> {
-  let mut responsibilities = HashMap::<Tile, HashSet<Tile>>::new();
-  for requested_tile in visible_tiles {
-    let Some(draw_tile) = loaded_native_vector_tile_or_parent(layer, *requested_tile) else {
-      continue;
-    };
-    responsibilities
-      .entry(draw_tile)
-      .or_default()
-      .insert(*requested_tile);
-  }
-  responsibilities
-}
-
-fn native_vector_label_is_responsible(
-  label: &NativeVectorTileLabelInstance,
-  request_zoom: u8,
-  responsible_tiles: Option<&HashSet<Tile>>,
-) -> bool {
-  let Some(responsible_tiles) = responsible_tiles else {
-    return false;
-  };
-  let request_tile = native_vector_label_request_tile(label.coord, request_zoom);
-  responsible_tiles.contains(&request_tile)
-}
-
-fn native_vector_label_request_tile(coord: PixelCoordinate, zoom: u8) -> Tile {
-  Tile::from(TileCoordinate::from_pixel_position(
-    PixelCoordinate {
-      x: coord.x.rem_euclid(CANVAS_SIZE),
-      y: coord.y,
-    },
-    zoom,
-  ))
-}
-
-fn update_native_vector_tile_mesh_instance(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  instance: &mut NativeVectorTileMeshInstance,
-  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
-) {
-  let wrap_offsets = native_vector_bounds_visible_wrap_offsets(instance.bounds, viewport);
-  for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
-    let transform =
-      native_vector_tile_transform(viewport, surface, instance.origin, wrap_offset, instance.z);
-    if let Some(entity) = instance.entities.get(entity_index).copied() {
-      if let Ok((_, mut mesh_transform, mut visibility)) = meshes.get_mut(entity) {
-        *mesh_transform = transform;
-        *visibility = Visibility::Visible;
-      } else {
-        instance.entities[entity_index] =
-          spawn_native_vector_tile_mesh(commands, instance, transform);
-      }
-    } else {
-      let entity = spawn_native_vector_tile_mesh(commands, instance, transform);
-      instance.entities.push(entity);
-    }
-  }
-
-  hide_native_vector_tile_entities(&instance.entities[wrap_offsets.len()..], meshes);
-}
-
-fn update_native_vector_tile_label_instance(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  label: &mut NativeVectorTileLabelInstance,
-  cfg: &StyleConfig,
-  label_font: &Handle<Font>,
-  markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
-  texts: &mut NativeVectorLabelTextQuery<'_, '_>,
-) {
-  let positions = native_vector_label_screen_positions(label.coord, viewport);
-  let scale = native_vector_label_scale(viewport, label);
-  let font_size = native_vector_label_font_size(label.base_font_size, scale, cfg);
-  let radius = native_vector_label_marker_radius(scale, cfg);
-  let marker_size = Vec2::splat(radius * 2.0);
-  let marker_color = native_vector_color(cfg.marker_dot.to_color());
-  let text_color = native_vector_color(cfg.place_label.to_color());
-  let text_offset_x = radius + cfg.markers.text_offset_x * scale;
-
-  for (entity_index, screen_pos) in positions.iter().copied().enumerate() {
-    let bevy_pos = screen_to_bevy_2d(screen_pos, surface);
-    let marker_transform =
-      Transform::from_xyz(bevy_pos.x, bevy_pos.y, NATIVE_VECTOR_LABEL_MARKER_Z);
-    let text_transform = Transform::from_xyz(
-      bevy_pos.x + text_offset_x,
-      bevy_pos.y,
-      NATIVE_VECTOR_LABEL_TEXT_Z,
-    );
-    let existing = label.entities.get(entity_index).copied();
-    let marker = update_native_vector_tile_label_marker(
-      commands,
-      existing.map(|copy| copy.marker),
-      marker_transform,
-      marker_color,
-      marker_size,
-      markers,
-    );
-    let text = update_native_vector_tile_label_text(
-      commands,
-      existing.map(|copy| copy.text),
-      text_transform,
-      &label.text,
-      font_size,
-      text_color,
-      label_font,
-      texts,
-    );
-
-    if let Some(copy) = label.entities.get_mut(entity_index) {
-      copy.marker = marker;
-      copy.text = text;
-    } else {
-      label
-        .entities
-        .push(NativeVectorTileLabelCopy { marker, text });
-    }
-  }
-
-  hide_native_vector_tile_label_entities(&label.entities[positions.len()..], markers, texts);
-}
-
-fn update_native_vector_tile_label_marker(
-  commands: &mut Commands,
-  entity: Option<Entity>,
-  transform: Transform,
-  color: Color,
-  size: Vec2,
-  markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
-) -> Entity {
-  if let Some(entity) = entity {
-    if let Ok((_, mut marker_transform, mut sprite, mut visibility)) = markers.get_mut(entity) {
-      *marker_transform = transform;
-      sprite.custom_size = Some(size);
-      sprite.color = color;
-      *visibility = Visibility::Visible;
-      return entity;
-    }
-    commands.entity(entity).try_despawn();
-  }
-
-  commands
-    .spawn((
-      Sprite::from_color(color, size),
-      transform,
-      BevyNativeVectorTileLabelMarker,
-    ))
-    .id()
-}
-
-fn update_native_vector_tile_label_text(
-  commands: &mut Commands,
-  entity: Option<Entity>,
-  transform: Transform,
-  value: &str,
-  font_size: f32,
-  color: Color,
-  label_font: &Handle<Font>,
-  texts: &mut NativeVectorLabelTextQuery<'_, '_>,
-) -> Entity {
-  if let Some(entity) = entity {
-    if let Ok((_, mut text_transform, mut text, mut font, mut text_color, mut visibility)) =
-      texts.get_mut(entity)
-    {
-      *text_transform = transform;
-      text.0.clear();
-      text.0.push_str(value);
-      font.font = label_font.clone();
-      font.font_size = font_size;
-      text_color.0 = color;
-      *visibility = Visibility::Visible;
-      return entity;
-    }
-    commands.entity(entity).try_despawn();
-  }
-
-  commands
-    .spawn((
-      Text2d::new(value.to_string()),
-      TextFont::from_font_size(font_size).with_font(label_font.clone()),
-      TextColor(color),
-      TextLayout::new_with_justify(Justify::Left),
-      Anchor::CENTER_LEFT,
-      transform,
-      BevyNativeVectorTileLabelText,
-    ))
-    .id()
-}
-
-fn spawn_native_vector_tile_mesh(
-  commands: &mut Commands,
-  instance: &NativeVectorTileMeshInstance,
-  transform: Transform,
-) -> Entity {
-  commands
-    .spawn((
-      Mesh2d(instance.mesh.clone()),
-      MeshMaterial2d(instance.material.clone()),
-      transform,
-      BevyNativeVectorTileMesh,
-    ))
-    .id()
-}
-
-fn hide_native_vector_tile_meshes(
-  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
-) {
-  for (_, _, mut visibility) in meshes.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn hide_native_vector_tile_entities(
-  entities: &[Entity],
-  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
-) {
-  for entity in entities {
-    if let Ok((_, _, mut visibility)) = meshes.get_mut(*entity) {
-      *visibility = Visibility::Hidden;
-    }
-  }
-}
-
-fn hide_native_vector_tile_labels(
-  markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
-  texts: &mut NativeVectorLabelTextQuery<'_, '_>,
-) {
-  for (_, _, _, mut visibility) in markers.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-  for (_, _, _, _, _, mut visibility) in texts.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn hide_native_vector_tile_label_entities(
-  entities: &[NativeVectorTileLabelCopy],
-  markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
-  texts: &mut NativeVectorLabelTextQuery<'_, '_>,
-) {
-  for copy in entities {
-    if let Ok((_, _, _, mut visibility)) = markers.get_mut(copy.marker) {
-      *visibility = Visibility::Hidden;
-    }
-    if let Ok((_, _, _, _, _, mut visibility)) = texts.get_mut(copy.text) {
-      *visibility = Visibility::Hidden;
-    }
-  }
-}
-
-fn tracked_native_vector_tile_label_entities(layer: &BevyTileLayer) -> HashSet<Entity> {
-  layer
-    .loaded_native_vector_tiles
-    .values()
-    .flat_map(|entry| {
-      entry.labels.iter().flat_map(|label| {
-        label
-          .entities
-          .iter()
-          .flat_map(|copy| [copy.marker, copy.text])
-      })
-    })
-    .collect()
-}
-
-fn tracked_native_vector_tile_entities(layer: &BevyTileLayer) -> HashSet<Entity> {
-  layer
-    .loaded_native_vector_tiles
-    .values()
-    .flat_map(|entry| {
-      entry
-        .instances
-        .iter()
-        .flat_map(|instance| instance.entities.iter().copied())
-    })
-    .collect()
-}
-
-fn despawn_untracked_native_vector_tile_meshes(
-  commands: &mut Commands,
-  tracked_entities: &HashSet<Entity>,
-  stale_entities: &HashSet<Entity>,
-  meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
-) {
-  for (entity, _, mut visibility) in meshes.iter_mut() {
-    if tracked_entities.contains(&entity) || stale_entities.contains(&entity) {
-      continue;
-    }
-    *visibility = Visibility::Hidden;
-    commands.entity(entity).despawn();
-  }
-}
-
-fn despawn_untracked_native_vector_tile_labels(
-  commands: &mut Commands,
-  tracked_entities: &HashSet<Entity>,
-  markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
-  texts: &mut NativeVectorLabelTextQuery<'_, '_>,
-) {
-  for (entity, _, _, mut visibility) in markers.iter_mut() {
-    if tracked_entities.contains(&entity) {
-      continue;
-    }
-    *visibility = Visibility::Hidden;
-    commands.entity(entity).try_despawn();
-  }
-  for (entity, _, _, _, _, mut visibility) in texts.iter_mut() {
-    if tracked_entities.contains(&entity) {
-      continue;
-    }
-    *visibility = Visibility::Hidden;
-    commands.entity(entity).try_despawn();
-  }
-}
-
-fn hide_tile_sprites(
-  sprites: &mut Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
-) {
-  for (_, _, _, mut visibility) in sprites.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn tracked_tile_entities(layer: &BevyTileLayer) -> HashSet<Entity> {
-  layer
-    .loaded_tiles
-    .values()
-    .flat_map(|entry| entry.entities.iter().copied())
-    .collect()
-}
-
-fn spawn_tile_sprite(
-  commands: &mut Commands,
-  image: Handle<Image>,
-  transform: Transform,
-  custom_size: Vec2,
-  tint: Color,
-) -> Entity {
-  let mut sprite = Sprite::from_image(image);
-  sprite.custom_size = Some(custom_size);
-  sprite.color = tint;
-  commands.spawn((sprite, transform, BevyTileSprite)).id()
-}
-
-fn despawn_untracked_tile_sprites(
-  commands: &mut Commands,
-  tracked_entities: &HashSet<Entity>,
-  stale_entities: &HashSet<Entity>,
-  sprites: &mut Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
-) {
-  for (entity, _, _, mut visibility) in sprites.iter_mut() {
-    if tracked_entities.contains(&entity) || stale_entities.contains(&entity) {
-      continue;
-    }
-    *visibility = Visibility::Hidden;
-    commands.entity(entity).despawn();
-  }
-}
-
-fn hide_grid_tile_sprites(
-  sprites: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (With<BevyGridTileSprite>, Without<BevyTileSprite>),
-  >,
-) {
-  for (_, _, mut visibility) in sprites.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn hide_tile_labels(
-  backgrounds: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyTileLabelBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelText>,
-    ),
-  >,
-  texts: &mut Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyTileLabelText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-    ),
-  >,
-) {
-  for (_, _, mut visibility) in backgrounds.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-  for (_, _, mut visibility) in texts.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn hide_osm_attribution(
-  backgrounds: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyOsmAttributionBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionText>,
-    ),
-  >,
-  texts: &mut Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyOsmAttributionText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionBackground>,
-    ),
-  >,
-) {
-  for (_, _, mut visibility) in backgrounds.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-  for (_, _, mut visibility) in texts.iter_mut() {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn update_grid_tile_sprites(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  visible_tiles: &[Tile],
-  sprites: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (With<BevyGridTileSprite>, Without<BevyTileSprite>),
-  >,
-) {
-  let mut sprite_iter = sprites.iter_mut();
-  for tile in visible_tiles {
-    for tile_rect in coordinate_tile_rects(viewport, *tile) {
-      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
-      let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
-      let color = grid_tile_color(*tile);
-
-      if let Some((mut sprite_transform, mut sprite, mut visibility)) = sprite_iter.next() {
-        *sprite_transform = transform;
-        sprite.custom_size = Some(custom_size);
-        sprite.color = color;
-        *visibility = Visibility::Visible;
-      } else {
-        commands.spawn((
-          Sprite::from_color(color, custom_size),
-          transform,
-          BevyGridTileSprite,
-        ));
-      }
-    }
-  }
-
-  for (_, _, mut visibility) in sprite_iter {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn update_tile_labels(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  visible_tiles: &[Tile],
-  backgrounds: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyTileLabelBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelText>,
-    ),
-  >,
-  texts: &mut Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyTileLabelText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-    ),
-  >,
-) {
-  let mut background_iter = backgrounds.iter_mut();
-  let mut text_iter = texts.iter_mut();
-  for tile in visible_tiles {
-    for tile_rect in coordinate_tile_rects(viewport, *tile) {
-      let Some(label) = tile_label(*tile, tile_rect) else {
-        continue;
-      };
-
-      if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
-        *transform =
-          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z);
-        sprite.custom_size = Some(label.background_size);
-        sprite.color = tile_label_background_color();
-        *visibility = Visibility::Visible;
-      } else {
-        commands.spawn((
-          Sprite::from_color(tile_label_background_color(), label.background_size),
-          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z),
-          BevyTileLabelBackground,
-        ));
-      }
-
-      if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
-        *transform = transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z);
-        text.0 = label.text;
-        *visibility = Visibility::Visible;
-      } else {
-        commands.spawn((
-          Text2d::new(label.text),
-          TextFont::from_font_size(TILE_LABEL_FONT_SIZE),
-          TextColor(Color::WHITE),
-          TextLayout::new_with_justify(Justify::Left),
-          Anchor::TOP_LEFT,
-          transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z),
-          BevyTileLabelText,
-        ));
-      }
-    }
-  }
-
-  for (_, _, mut visibility) in background_iter {
-    *visibility = Visibility::Hidden;
-  }
-  for (_, _, mut visibility) in text_iter {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn update_osm_attribution(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  visible: bool,
-  backgrounds: &mut Query<
-    (&mut Transform, &mut Sprite, &mut Visibility),
-    (
-      With<BevyOsmAttributionBackground>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionText>,
-    ),
-  >,
-  texts: &mut Query<
-    (&mut Transform, &mut Text2d, &mut Visibility),
-    (
-      With<BevyOsmAttributionText>,
-      Without<BevyTileSprite>,
-      Without<BevyGridTileSprite>,
-      Without<BevyTileLabelBackground>,
-      Without<BevyTileLabelText>,
-      Without<BevyOsmAttributionBackground>,
-    ),
-  >,
-) {
-  if !visible {
-    hide_osm_attribution(backgrounds, texts);
-    return;
-  }
-
-  let rect = osm_attribution_rect(viewport.rect);
-  let size = Vec2::new(OSM_ATTRIBUTION_WIDTH, OSM_ATTRIBUTION_HEIGHT);
-
-  let mut background_iter = backgrounds.iter_mut();
-  if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
-    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z);
-    sprite.custom_size = Some(size);
-    sprite.color = osm_attribution_background_color();
-    *visibility = Visibility::Visible;
-  } else {
-    commands.spawn((
-      Sprite::from_color(osm_attribution_background_color(), size),
-      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z),
-      BevyOsmAttributionBackground,
-    ));
-  }
-  for (_, _, mut visibility) in background_iter {
-    *visibility = Visibility::Hidden;
-  }
-
-  let mut text_iter = texts.iter_mut();
-  if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
-    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z);
-    text.0 = OSM_ATTRIBUTION_TEXT.to_string();
-    *visibility = Visibility::Visible;
-  } else {
-    commands.spawn((
-      Text2d::new(OSM_ATTRIBUTION_TEXT),
-      TextFont::from_font_size(OSM_ATTRIBUTION_FONT_SIZE),
-      TextColor(Color::srgb(35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0)),
-      TextLayout::new_with_justify(Justify::Center),
-      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z),
-      BevyOsmAttributionText,
-    ));
-  }
-  for (_, _, mut visibility) in text_iter {
-    *visibility = Visibility::Hidden;
-  }
-}
-
-fn grid_tile_color(tile: Tile) -> Color {
-  if (tile.x + tile.y).is_multiple_of(2) {
-    Color::srgba(1.0, 240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0)
-  } else {
-    Color::srgba(240.0 / 255.0, 240.0 / 255.0, 1.0, 120.0 / 255.0)
-  }
-}
-
-fn tile_label(tile: Tile, tile_rect: PixelRect) -> Option<TileLabel> {
-  if tile_rect.width() <= TILE_LABEL_WIDTH || tile_rect.height() <= TILE_LABEL_HEIGHT {
-    return None;
-  }
-
-  let background_size = Vec2::new(TILE_LABEL_WIDTH, TILE_LABEL_HEIGHT);
-  let background_min = PixelPosition {
-    x: tile_rect.center().x - TILE_LABEL_WIDTH * 0.5,
-    y: tile_rect.center().y - TILE_LABEL_HEIGHT * 0.5,
-  };
-  let background_rect = PixelRect::from_min_size(
-    background_min,
-    PixelPosition {
-      x: TILE_LABEL_WIDTH,
-      y: TILE_LABEL_HEIGHT,
-    },
-  );
-  let text_pos = PixelPosition {
-    x: background_rect.min.x + TILE_LABEL_TEXT_OFFSET_X,
-    y: background_rect.min.y + TILE_LABEL_TEXT_OFFSET_Y,
-  };
-  Some(TileLabel {
-    background_rect,
-    background_size,
-    text_pos,
-    text: format!("Z:{}\nX:{}\nY:{}", tile.zoom, tile.x, tile.y),
-  })
-}
-
-fn tile_label_background_color() -> Color {
-  Color::srgba(0.0, 0.0, 0.0, 180.0 / 255.0)
-}
-
-fn osm_attribution_rect(clip_rect: PixelRect) -> PixelRect {
-  PixelRect::from_min_size(
-    PixelPosition {
-      x: clip_rect.max.x - OSM_ATTRIBUTION_WIDTH - OSM_ATTRIBUTION_MARGIN,
-      y: clip_rect.max.y - OSM_ATTRIBUTION_HEIGHT - OSM_ATTRIBUTION_MARGIN,
-    },
-    PixelPosition {
-      x: OSM_ATTRIBUTION_WIDTH,
-      y: OSM_ATTRIBUTION_HEIGHT,
-    },
-  )
-}
-
-fn osm_attribution_background_color() -> Color {
-  Color::srgba(1.0, 1.0, 1.0, 210.0 / 255.0)
-}
-
-fn draw_coordinate_tile_borders(
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  visible_tiles: &[Tile],
-  mode: CoordinateDisplayMode,
-  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
-) {
-  if mode == CoordinateDisplayMode::Off {
-    return;
-  }
-
-  let color = tile_border_color(mode);
-  for tile in visible_tiles {
-    for tile_rect in coordinate_tile_rects(viewport, *tile) {
-      draw_tile_border(tile_rect, surface, color, gizmos);
-    }
-  }
-}
-
-fn draw_tile_border(
-  rect: PixelRect,
-  surface: BevyRenderSurface,
-  color: Color,
-  gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
-) {
-  let min = rect.min;
-  let max = rect.max;
-  let top_left = screen_to_bevy_2d(min, surface);
-  let top_right = screen_to_bevy_2d(PixelPosition { x: max.x, y: min.y }, surface);
-  let bottom_right = screen_to_bevy_2d(max, surface);
-  let bottom_left = screen_to_bevy_2d(PixelPosition { x: min.x, y: max.y }, surface);
-
-  gizmos.line_2d(top_left, top_right, color);
-  gizmos.line_2d(top_right, bottom_right, color);
-  gizmos.line_2d(bottom_right, bottom_left, color);
-  gizmos.line_2d(bottom_left, top_left, color);
-}
-
-fn tile_border_color(mode: CoordinateDisplayMode) -> Color {
-  if mode == CoordinateDisplayMode::GridOnly {
-    Color::srgb(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0)
-  } else {
-    Color::srgb(100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0)
-  }
-}
-
-fn loaded_tile_or_parent(layer: &BevyTileLayer, mut tile: Tile) -> Option<Tile> {
-  loop {
-    if layer.loaded_tiles.contains_key(&tile) {
-      return Some(tile);
-    }
-    tile = tile.parent()?;
-  }
-}
-
-fn loaded_native_vector_tile_or_parent(layer: &BevyTileLayer, mut tile: Tile) -> Option<Tile> {
-  loop {
-    if layer.loaded_native_vector_tiles.contains_key(&tile) {
-      return Some(tile);
-    }
-    tile = tile.parent()?;
-  }
-}
-
-fn tile_image_to_bevy(image: TileImage) -> Image {
-  Image::new(
-    Extent3d {
-      width: image.size[0] as u32,
-      height: image.size[1] as u32,
-      depth_or_array_layers: 1,
-    },
-    TextureDimension::D2,
-    image.rgba,
-    TextureFormat::Rgba8UnormSrgb,
-    RenderAssetUsages::RENDER_WORLD,
-  )
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn native_vector_bounds_visible_wrap_offsets(
-  bounds: NativeVectorTileBounds,
-  viewport: MapViewport,
-) -> Vec<f32> {
-  let inv = viewport.transform.invert();
-  let viewport_start = inv.apply(viewport.min());
-  let viewport_end = inv.apply(viewport.max());
-  let viewport_min_y = viewport_start.y.min(viewport_end.y);
-  let viewport_max_y = viewport_start.y.max(viewport_end.y);
-  if bounds.max_y < viewport_min_y || bounds.min_y > viewport_max_y {
-    return Vec::new();
-  }
-
-  let viewport_min_x = viewport_start.x.min(viewport_end.x);
-  let viewport_max_x = viewport_start.x.max(viewport_end.x);
-  let min_copy = ((viewport_min_x - bounds.max_x) / CANVAS_SIZE - 1e-6).ceil() as i32;
-  let max_copy = ((viewport_max_x - bounds.min_x) / CANVAS_SIZE + 1e-6).floor() as i32;
-  if min_copy > max_copy {
-    return Vec::new();
-  }
-
-  (min_copy..=max_copy)
-    .map(|copy| copy as f32 * CANVAS_SIZE)
-    .collect()
-}
-
-fn native_vector_tile_transform(
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  origin: PixelCoordinate,
-  wrap_offset: f32,
-  z: f32,
-) -> Transform {
-  Transform::from_xyz(
-    viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
-      - surface.width() / 2.0,
-    surface.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
-    z,
-  )
-  .with_scale(Vec3::new(
-    viewport.transform.zoom,
-    -viewport.transform.zoom,
-    1.0,
-  ))
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn native_vector_label_screen_positions(
-  coord: PixelCoordinate,
-  viewport: MapViewport,
-) -> Vec<PixelPosition> {
-  let inv = viewport.transform.invert();
-  let viewport_start = inv.apply(viewport.min());
-  let viewport_end = inv.apply(viewport.max());
-  let viewport_min_y = viewport_start.y.min(viewport_end.y);
-  let viewport_max_y = viewport_start.y.max(viewport_end.y);
-  if coord.y < viewport_min_y || coord.y > viewport_max_y {
-    return Vec::new();
-  }
-
-  let viewport_min_x = viewport_start.x.min(viewport_end.x);
-  let viewport_max_x = viewport_start.x.max(viewport_end.x);
-  let min_copy = ((viewport_min_x - coord.x) / CANVAS_SIZE - 1e-6).ceil() as i32;
-  let max_copy = ((viewport_max_x - coord.x) / CANVAS_SIZE + 1e-6).floor() as i32;
-  if min_copy > max_copy {
-    return Vec::new();
-  }
-
-  let mut positions = Vec::with_capacity((max_copy - min_copy + 1) as usize);
-  for copy in min_copy..=max_copy {
-    let shifted = PixelCoordinate {
-      x: coord.x + copy as f32 * CANVAS_SIZE,
-      y: coord.y,
-    };
-    let screen = viewport.transform.apply(shifted);
-    if viewport.rect.contains(screen) {
-      positions.push(screen);
-    }
-  }
-  positions
-}
-
-fn native_vector_label_scale(viewport: MapViewport, label: &NativeVectorTileLabelInstance) -> f32 {
-  (label.tile_world_size * viewport.transform.zoom / 256.0).max(0.0)
-}
-
-fn native_vector_label_font_size(base_font_size: f32, scale: f32, cfg: &StyleConfig) -> f32 {
-  (base_font_size * scale)
-    .max(1.0)
-    .min(cfg.font_sizes.max_font_size)
-}
-
-fn native_vector_label_marker_radius(scale: f32, cfg: &StyleConfig) -> f32 {
-  let max_radius = cfg.markers.max_radius.max(cfg.markers.base_radius);
-  (cfg.markers.base_radius * scale).clamp(0.0, max_radius)
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn coordinate_tile_rects(viewport: MapViewport, tile: Tile) -> Vec<PixelRect> {
-  let (nw, se) = tile.position();
-  let inv = viewport.transform.invert();
-  let viewport_start = inv.apply(viewport.min());
-  let viewport_end = inv.apply(viewport.max());
-  let viewport_min_x = viewport_start.x.min(viewport_end.x);
-  let viewport_max_x = viewport_start.x.max(viewport_end.x);
-  let min_copy = ((viewport_min_x - se.x) / CANVAS_SIZE - 1e-6).ceil() as i32;
-  let max_copy = ((viewport_max_x - nw.x) / CANVAS_SIZE + 1e-6).floor() as i32;
-
-  if min_copy > max_copy {
-    return Vec::new();
-  }
-
-  let mut tile_rects = Vec::with_capacity((max_copy - min_copy + 1) as usize);
-  for copy in min_copy..=max_copy {
-    let offset = copy as f32 * CANVAS_SIZE;
-    let nw_shifted = PixelCoordinate {
-      x: nw.x + offset,
-      y: nw.y,
-    };
-    let se_shifted = PixelCoordinate {
-      x: se.x + offset,
-      y: se.y,
-    };
-    let (nw_screen, se_screen) = (
-      viewport.transform.apply(nw_shifted),
-      viewport.transform.apply(se_shifted),
-    );
-    let tile_rect = PixelRect::from_min_max(nw_screen, se_screen);
-    if tile_rect.intersects(viewport.rect) {
-      tile_rects.push(tile_rect);
-    }
-  }
-
-  tile_rects
-}
-
-fn transform_for_screen_rect(
-  rect: PixelRect,
-  surface: BevyRenderSurface,
-  tile_zoom: u8,
-) -> Transform {
-  let z = -10.0 + f32::from(tile_zoom) * 0.001;
-  transform_for_screen_rect_at_z(rect, surface, z)
-}
-
-fn transform_for_screen_rect_at_z(
-  rect: PixelRect,
-  surface: BevyRenderSurface,
-  z: f32,
-) -> Transform {
-  let center = rect.center();
-  transform_for_screen_pos(center, surface, z)
-}
-
-fn transform_for_screen_pos(pos: PixelPosition, surface: BevyRenderSurface, z: f32) -> Transform {
-  let bevy_pos = screen_to_bevy_2d(pos, surface);
-  Transform::from_xyz(bevy_pos.x, bevy_pos.y, z)
-}
-
-fn screen_to_bevy_2d(screen: PixelPosition, surface: BevyRenderSurface) -> Vec2 {
-  Vec2::new(
-    screen.x - surface.width() / 2.0,
-    surface.height() / 2.0 - screen.y,
-  )
-}
-
-fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
-  if mode != CoordinateDisplayMode::Overlay {
-    return Color::WHITE;
-  }
-
-  if (tile.x + tile.y).is_multiple_of(2) {
-    Color::srgba(1.0, 240.0 / 255.0, 240.0 / 255.0, 1.0)
-  } else {
-    Color::srgba(240.0 / 255.0, 240.0 / 255.0, 1.0, 1.0)
-  }
-}
-
-fn tile_zoom_with_detail_factor(
-  transform: crate::map::coordinates::Transform,
-  detail_factor: f32,
-) -> u8 {
-  let mut detail_transform = transform;
-  detail_transform.zoom *= effective_tile_detail_factor(detail_factor);
-  tile_zoom_for_transform(&detail_transform)
-}
-
-fn native_vector_style_zoom(tile_zoom: u8, detail_factor: f32) -> u8 {
-  tile_zoom.saturating_sub(tile_detail_zoom_offset(detail_factor))
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn tile_detail_zoom_offset(detail_factor: f32) -> u8 {
-  effective_tile_detail_factor(detail_factor)
-    .max(1.0)
-    .log2()
-    .round()
-    .clamp(0.0, f32::from(u8::MAX)) as u8
-}
-
-fn effective_tile_detail_factor(detail_factor: f32) -> f32 {
-  BASE_TILE_DETAIL_FACTOR * clamped_tile_detail_factor(detail_factor)
-}
-
-fn clamped_tile_detail_factor(detail_factor: f32) -> f32 {
-  if detail_factor.is_finite() {
-    detail_factor.clamp(MIN_TILE_DETAIL_FACTOR, MAX_TILE_DETAIL_FACTOR)
-  } else {
-    1.0
-  }
-}
-
-fn tile_detail_factor_label(detail_factor: f32) -> String {
-  format!("{:.2}x", clamped_tile_detail_factor(detail_factor))
-}
-
-fn effective_tile_detail_factor_label(detail_factor: f32) -> String {
-  format!("{:.2}x", effective_tile_detail_factor(detail_factor))
-}
-
-#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
-fn native_vector_tile_content(
-  tile: &Tile,
-  style_zoom: u8,
-  data: &[u8],
-) -> Result<NativeVectorTileContent, TileRenderError> {
-  let reader = mvt_reader::Reader::new(data.to_vec())
-    .map_err(|e| TileRenderError::ParseError(format!("Failed to parse MVT for {tile:?}: {e}")))?;
-  let layer_names = reader
-    .get_layer_names()
-    .map_err(|e| TileRenderError::ParseError(format!("Failed to get layers: {e}")))?;
-
-  let cfg = style_config();
-  let (tile_nw, tile_se) = tile.position();
-  let tile_world_size = tile_se.x - tile_nw.x;
-  let mvt_to_world = tile_world_size / cfg.rendering.mvt_extent;
-  let style_pixel_to_world = tile_world_size / cfg.rendering.tile_size as f32;
-
-  let mut batches = Vec::new();
-  let mut labels = Vec::new();
-  append_native_vector_rect(
-    &mut batches,
-    background_color(),
-    NATIVE_VECTOR_BACKGROUND_Z,
-    tile_nw,
-    tile_world_size,
-    tile_world_size,
-  );
-
-  let layer_order = [
-    "landcover",
-    "landuse",
-    "park",
-    "water",
-    "waterway",
-    "building",
-    "buildings",
-    "transportation",
-    "road",
-    "highway",
-  ];
-
-  for layer_name in &layer_order {
-    if let Some(index) = layer_names.iter().position(|name| name == *layer_name) {
-      append_native_vector_layer(
-        &mut batches,
-        &mut labels,
-        &reader,
-        index,
-        layer_name,
-        tile,
-        style_zoom,
-        tile_nw,
-        tile_world_size,
-        mvt_to_world,
-        style_pixel_to_world,
-      );
-    }
-  }
-
-  for (index, layer_name) in layer_names.iter().enumerate() {
-    if layer_order.contains(&layer_name.as_str()) {
-      continue;
-    }
-    append_native_vector_layer(
-      &mut batches,
-      &mut labels,
-      &reader,
-      index,
-      layer_name,
-      tile,
-      style_zoom,
-      tile_nw,
-      tile_world_size,
-      mvt_to_world,
-      style_pixel_to_world,
-    );
-  }
-
-  Ok(NativeVectorTileContent {
-    meshes: native_vector_batches_to_mesh_specs(batches, tile_nw),
-    labels,
-  })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_native_vector_layer(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  labels: &mut Vec<NativeVectorTileLabelSpec>,
-  reader: &mvt_reader::Reader,
-  layer_index: usize,
-  layer_name: &str,
-  tile: &Tile,
-  style_zoom: u8,
-  tile_origin: PixelCoordinate,
-  tile_world_size: f32,
-  mvt_to_world: f32,
-  style_pixel_to_world: f32,
-) {
-  let Ok(features) = reader.get_features(layer_index) else {
-    return;
-  };
-
-  for feature in features {
-    let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
-    let feature_kind = feature_string_property(&feature, &["kind"]);
-    let feature_kind_detail = label_feature_kind_detail(
-      layer_name,
-      feature_string_property(&feature, &["kind_detail"]),
-      feature_kind,
-      feature_class,
-    );
-    let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
-    let population_rank = label_population_rank(&feature, feature_class);
-    let is_capital = feature_is_capital(&feature);
-
-    match &feature.geometry {
-      geo_types::Geometry::Polygon(polygon) => {
-        let polygon_class = polygon_feature_class(layer_name, feature_class, feature_kind);
-        append_native_vector_polygon(
-          batches,
-          polygon,
-          layer_name,
-          polygon_class,
-          tile_origin,
-          mvt_to_world,
-        );
-      }
-      geo_types::Geometry::MultiPolygon(multi) => {
-        let polygon_class = polygon_feature_class(layer_name, feature_class, feature_kind);
-        for polygon in multi.iter() {
-          append_native_vector_polygon(
-            batches,
-            polygon,
-            layer_name,
-            polygon_class,
-            tile_origin,
-            mvt_to_world,
-          );
-        }
-      }
-      geo_types::Geometry::LineString(line) => {
-        let line_class =
-          line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
-        append_native_vector_line(
-          batches,
-          line,
-          layer_name,
-          line_class,
-          style_zoom,
-          tile_origin,
-          mvt_to_world,
-          style_pixel_to_world,
-        );
-      }
-      geo_types::Geometry::MultiLineString(multi) => {
-        let line_class =
-          line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
-        for line in multi.iter() {
-          append_native_vector_line(
-            batches,
-            line,
-            layer_name,
-            line_class,
-            style_zoom,
-            tile_origin,
-            mvt_to_world,
-            style_pixel_to_world,
-          );
-        }
-      }
-      geo_types::Geometry::Point(point) => {
-        append_native_vector_label(
-          labels,
-          point,
-          layer_name,
-          feature_kind,
-          feature_kind_detail,
-          feature_name,
-          population_rank,
-          is_capital,
-          tile.zoom,
-          tile_origin,
-          tile_world_size,
-          mvt_to_world,
-        );
-      }
-      geo_types::Geometry::MultiPoint(multi) => {
-        for point in multi.iter() {
-          append_native_vector_label(
-            labels,
-            point,
-            layer_name,
-            feature_kind,
-            feature_kind_detail,
-            feature_name,
-            population_rank,
-            is_capital,
-            tile.zoom,
-            tile_origin,
-            tile_world_size,
-            mvt_to_world,
-          );
-        }
-      }
-      _ => {}
-    }
-  }
-}
-
-fn feature_string_property<'a>(
-  feature: &'a mvt_reader::feature::Feature,
-  keys: &[&str],
-) -> Option<&'a str> {
-  let properties = feature.properties.as_ref()?;
-  keys.iter().find_map(|key| match properties.get(*key) {
-    Some(mvt_reader::feature::Value::String(value)) => Some(value.as_str()),
-    _ => None,
-  })
-}
-
-fn label_feature_kind_detail<'a>(
-  layer_name: &str,
-  feature_kind_detail: Option<&'a str>,
-  feature_kind: Option<&'a str>,
-  feature_class: &'a str,
-) -> Option<&'a str> {
-  feature_kind_detail.or(feature_kind).or_else(|| {
-    if layer_name != "place" {
-      return None;
-    }
-    match feature_class {
-      "country" | "city" | "locality" | "town" | "village" => Some(feature_class),
-      "hamlet" => Some("village"),
-      "suburb" | "neighbourhood" | "quarter" => Some("locality"),
-      _ => None,
-    }
-  })
-}
-
-fn label_population_rank(
-  feature: &mvt_reader::feature::Feature,
-  feature_class: &str,
-) -> Option<i64> {
-  feature
-    .properties
-    .as_ref()
-    .and_then(|properties| properties.get("population_rank"))
-    .and_then(feature_value_as_i64)
-    .or_else(|| {
-      feature
-        .properties
-        .as_ref()
-        .and_then(|properties| properties.get("rank"))
-        .and_then(feature_value_as_i64)
-        .map(|rank| normalized_openfreemap_place_rank(feature_class, rank))
-    })
-}
-
-fn normalized_openfreemap_place_rank(feature_class: &str, rank: i64) -> i64 {
-  if !matches!(feature_class, "city" | "locality") {
-    return rank;
-  }
-
-  match rank {
-    i64::MIN..=3 => 13,
-    4..=7 => 14,
-    8..=11 => 15,
-    12..=14 => 16,
-    _ => 17,
-  }
-}
-
-fn feature_is_capital(feature: &mvt_reader::feature::Feature) -> bool {
-  feature
-    .properties
-    .as_ref()
-    .and_then(|properties| properties.get("capital"))
-    .is_some_and(feature_value_is_capital)
-}
-
-fn feature_value_as_i64(value: &mvt_reader::feature::Value) -> Option<i64> {
-  match value {
-    mvt_reader::feature::Value::UInt(value) => i64::try_from(*value).ok(),
-    mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
-      Some(*value)
-    }
-    _ => None,
-  }
-}
-
-fn feature_value_is_capital(value: &mvt_reader::feature::Value) -> bool {
-  match value {
-    mvt_reader::feature::Value::Bool(value) => *value,
-    mvt_reader::feature::Value::UInt(value) => (1..=4).contains(value),
-    mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
-      (1..=4).contains(value)
-    }
-    mvt_reader::feature::Value::String(value) => {
-      let value = value.to_ascii_lowercase();
-      matches!(value.as_str(), "yes" | "true" | "capital")
-        || value
-          .parse::<i64>()
-          .is_ok_and(|rank| (1..=4).contains(&rank))
-    }
-    _ => false,
-  }
-}
-
-fn polygon_feature_class<'a>(
-  layer_name: &str,
-  feature_class: &'a str,
-  feature_kind: Option<&'a str>,
-) -> &'a str {
-  if layer_name == "landcover" || layer_name == "landuse" {
-    feature_kind.unwrap_or(feature_class)
-  } else {
-    feature_class
-  }
-}
-
-fn line_feature_class<'a>(
-  layer_name: &str,
-  feature_class: &'a str,
-  feature_kind: Option<&'a str>,
-  feature_kind_detail: Option<&'a str>,
-) -> &'a str {
-  if matches!(layer_name, "road" | "roads" | "transportation" | "highway") {
-    feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
-  } else {
-    feature_class
-  }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_native_vector_label(
-  labels: &mut Vec<NativeVectorTileLabelSpec>,
-  point: &geo_types::Point<f32>,
-  layer_name: &str,
-  feature_kind: Option<&str>,
-  feature_kind_detail: Option<&str>,
-  feature_name: Option<&str>,
-  population_rank: Option<i64>,
-  is_capital: bool,
-  tile_zoom: u8,
-  tile_origin: PixelCoordinate,
-  tile_world_size: f32,
-  mvt_to_world: f32,
-) {
-  let Some(label_text) = feature_name else {
-    return;
-  };
-  let label_text = label_text.trim();
-  if label_text.is_empty() {
-    return;
-  }
-
-  if layer_name == "water" || feature_kind == Some("ocean") || feature_kind == Some("sea") {
-    return;
-  }
-  if !should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom) {
-    return;
-  }
-
-  labels.push(NativeVectorTileLabelSpec {
-    coord: PixelCoordinate {
-      x: tile_origin.x + point.x() * mvt_to_world,
-      y: tile_origin.y + point.y() * mvt_to_world,
-    },
-    text: label_text.to_string(),
-    base_font_size: get_place_font_size(feature_kind_detail, is_capital, population_rank),
-    tile_world_size,
+fn stat_row(ui: &mut egui::Ui, label: &str, value: String) {
+  ui.horizontal(|ui| {
+    ui.label(label);
+    ui.label(value);
   });
-}
-
-fn append_native_vector_polygon(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  polygon: &geo_types::Polygon<f32>,
-  layer_name: &str,
-  feature_class: &str,
-  tile_origin: PixelCoordinate,
-  mvt_to_world: f32,
-) {
-  let Some(color) = get_fill_color(layer_name, feature_class) else {
-    return;
-  };
-  if color.alpha() <= 0.0 {
-    return;
-  }
-  let mut vertices = native_vector_ring_points(polygon.exterior(), mvt_to_world);
-  if vertices.len() < 3 {
-    return;
-  }
-
-  let mut hole_indices = Vec::new();
-  for interior in polygon.interiors() {
-    let points = native_vector_ring_points(interior, mvt_to_world);
-    if points.len() < 3 {
-      continue;
-    }
-    hole_indices.push(vertices.len() as u32);
-    vertices.extend(points);
-  }
-
-  let mut indices = Vec::new();
-  let mut earcut = earcut::Earcut::new();
-  earcut.earcut(vertices.iter().copied(), &hole_indices, &mut indices);
-  if indices.is_empty() {
-    return;
-  }
-
-  let z = native_vector_polygon_z(layer_name);
-  let batch = native_vector_mesh_batch(batches, color, z);
-  let base_index = batch.positions.len() as u32;
-  batch
-    .positions
-    .extend(vertices.iter().map(|coord| [coord[0], coord[1], 0.0]));
-  batch
-    .indices
-    .extend(indices.into_iter().map(|index| base_index + index));
-  for coord in vertices {
-    include_native_vector_local_point(batch, tile_origin, coord[0], coord[1]);
-  }
-}
-
-fn native_vector_ring_points(
-  ring: &geo_types::LineString<f32>,
-  mvt_to_world: f32,
-) -> Vec<[f32; 2]> {
-  let mut points = ring
-    .coords()
-    .map(|coord| [coord.x * mvt_to_world, coord.y * mvt_to_world])
-    .collect::<Vec<_>>();
-  if points
-    .first()
-    .zip(points.last())
-    .is_some_and(|(first, last)| first[0] == last[0] && first[1] == last[1])
-  {
-    points.pop();
-  }
-  points
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_native_vector_line(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  line: &geo_types::LineString<f32>,
-  layer_name: &str,
-  feature_class: &str,
-  tile_zoom: u8,
-  tile_origin: PixelCoordinate,
-  mvt_to_world: f32,
-  style_pixel_to_world: f32,
-) {
-  if line.coords().count() < 2 {
-    return;
-  }
-  let (casing_color, casing_width, inner_color, inner_width) =
-    get_road_styling(layer_name, feature_class, tile_zoom);
-  if casing_width > 0.0 {
-    append_native_vector_line_mesh(
-      batches,
-      line,
-      casing_color,
-      casing_width * style_pixel_to_world,
-      NATIVE_VECTOR_ROAD_CASING_Z,
-      tile_origin,
-      mvt_to_world,
-    );
-  }
-  if inner_width > 0.0 {
-    append_native_vector_line_mesh(
-      batches,
-      line,
-      inner_color,
-      inner_width * style_pixel_to_world,
-      NATIVE_VECTOR_ROAD_INNER_Z,
-      tile_origin,
-      mvt_to_world,
-    );
-  }
-}
-
-fn append_native_vector_line_mesh(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  line: &geo_types::LineString<f32>,
-  color: tiny_skia::Color,
-  width: f32,
-  z: f32,
-  tile_origin: PixelCoordinate,
-  mvt_to_world: f32,
-) {
-  if color.alpha() <= 0.0 || width <= 0.0 {
-    return;
-  }
-  let batch = native_vector_mesh_batch(batches, color, z);
-  let half_width = width * 0.5;
-  let points = line
-    .coords()
-    .map(|coord| [coord.x * mvt_to_world, coord.y * mvt_to_world])
-    .collect::<Vec<_>>();
-
-  for segment in points.windows(2) {
-    let [x0, y0] = segment[0];
-    let [x1, y1] = segment[1];
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    let len = (dx * dx + dy * dy).sqrt();
-    if len <= f32::EPSILON {
-      continue;
-    }
-
-    let nx = -dy / len * half_width;
-    let ny = dx / len * half_width;
-    let base_index = batch.positions.len() as u32;
-    batch.positions.extend([
-      [x0 + nx, y0 + ny, 0.0],
-      [x1 + nx, y1 + ny, 0.0],
-      [x1 - nx, y1 - ny, 0.0],
-      [x0 - nx, y0 - ny, 0.0],
-    ]);
-    batch.indices.extend([
-      base_index,
-      base_index + 1,
-      base_index + 2,
-      base_index,
-      base_index + 2,
-      base_index + 3,
-    ]);
-    include_native_vector_local_point_with_padding(batch, tile_origin, x0, y0, half_width);
-    include_native_vector_local_point_with_padding(batch, tile_origin, x1, y1, half_width);
-  }
-}
-
-fn append_native_vector_rect(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  color: tiny_skia::Color,
-  z: f32,
-  tile_origin: PixelCoordinate,
-  width: f32,
-  height: f32,
-) {
-  let batch = native_vector_mesh_batch(batches, color, z);
-  let base_index = batch.positions.len() as u32;
-  batch.positions.extend([
-    [0.0, 0.0, 0.0],
-    [width, 0.0, 0.0],
-    [width, height, 0.0],
-    [0.0, height, 0.0],
-  ]);
-  batch.indices.extend([
-    base_index,
-    base_index + 1,
-    base_index + 2,
-    base_index,
-    base_index + 2,
-    base_index + 3,
-  ]);
-  include_native_vector_local_point(batch, tile_origin, 0.0, 0.0);
-  include_native_vector_local_point(batch, tile_origin, width, height);
-}
-
-fn native_vector_mesh_batch(
-  batches: &mut Vec<NativeVectorMeshBatch>,
-  color: tiny_skia::Color,
-  z: f32,
-) -> &mut NativeVectorMeshBatch {
-  let color_key = native_vector_color_key(color);
-  let z_key = native_vector_z_key(z);
-  if let Some(index) = batches
-    .iter()
-    .position(|batch| batch.color_key == color_key && batch.z_key == z_key)
-  {
-    return &mut batches[index];
-  }
-
-  batches.push(NativeVectorMeshBatch {
-    color_key,
-    color: native_vector_color(color),
-    z_key,
-    z,
-    positions: Vec::new(),
-    indices: Vec::new(),
-    bounds: None,
-  });
-  batches.last_mut().expect("batch was pushed")
-}
-
-fn include_native_vector_local_point(
-  batch: &mut NativeVectorMeshBatch,
-  tile_origin: PixelCoordinate,
-  x: f32,
-  y: f32,
-) {
-  let coord = PixelCoordinate {
-    x: tile_origin.x + x,
-    y: tile_origin.y + y,
-  };
-  if let Some(bounds) = &mut batch.bounds {
-    bounds.include(coord);
-  } else {
-    batch.bounds = Some(NativeVectorTileBounds::from_min_max(coord, coord));
-  }
-}
-
-fn include_native_vector_local_point_with_padding(
-  batch: &mut NativeVectorMeshBatch,
-  tile_origin: PixelCoordinate,
-  x: f32,
-  y: f32,
-  padding: f32,
-) {
-  include_native_vector_local_point(batch, tile_origin, x - padding, y - padding);
-  include_native_vector_local_point(batch, tile_origin, x + padding, y + padding);
-}
-
-fn native_vector_batches_to_mesh_specs(
-  batches: Vec<NativeVectorMeshBatch>,
-  origin: PixelCoordinate,
-) -> Vec<NativeVectorTileMeshSpec> {
-  batches
-    .into_iter()
-    .filter_map(|batch| {
-      if batch.positions.is_empty() || batch.indices.is_empty() {
-        return None;
-      }
-      let bounds = batch.bounds?;
-      let normals = vec![[0.0, 0.0, 1.0]; batch.positions.len()];
-      let uvs = vec![[0.0, 0.0]; batch.positions.len()];
-      let mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-      )
-      .with_inserted_indices(Indices::U32(batch.indices))
-      .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions)
-      .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-      .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-
-      Some(NativeVectorTileMeshSpec {
-        mesh,
-        color: batch.color,
-        bounds,
-        origin,
-        z: batch.z,
-      })
-    })
-    .collect()
-}
-
-fn native_vector_polygon_z(layer_name: &str) -> f32 {
-  match layer_name {
-    "landcover" | "landuse" | "park" => NATIVE_VECTOR_LAND_Z,
-    "water" | "waterway" => NATIVE_VECTOR_WATER_Z,
-    "building" | "buildings" => NATIVE_VECTOR_BUILDING_Z,
-    _ => NATIVE_VECTOR_LAND_Z,
-  }
-}
-
-fn native_vector_z_key(z: f32) -> i16 {
-  (z * 10.0).round() as i16
-}
-
-fn native_vector_color_key(color: tiny_skia::Color) -> [u8; 4] {
-  let color = color.to_color_u8();
-  [color.red(), color.green(), color.blue(), color.alpha()]
-}
-
-fn native_vector_color(color: tiny_skia::Color) -> Color {
-  let color = color.to_color_u8();
-  Color::srgba(
-    f32::from(color.red()) / 255.0,
-    f32::from(color.green()) / 255.0,
-    f32::from(color.blue()) / 255.0,
-    f32::from(color.alpha()) / 255.0,
-  )
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn tile_detail_factor_maps_to_adjacent_zoom_levels() {
-    let mut transform = crate::map::coordinates::Transform::default();
-    transform.zoom = 2f32.powi(10);
-
-    assert_eq!(tile_zoom_with_detail_factor(transform, 0.5), 12);
-    assert_eq!(tile_zoom_with_detail_factor(transform, 1.0), 13);
-    assert_eq!(tile_zoom_with_detail_factor(transform, 2.0), 14);
-  }
-
-  #[test]
-  fn tile_detail_factor_is_clamped_to_supported_range() {
-    assert_eq!(clamped_tile_detail_factor(0.25), 0.5);
-    assert_eq!(clamped_tile_detail_factor(2.5), 2.0);
-    assert_eq!(clamped_tile_detail_factor(f32::NAN), 1.0);
-  }
-
-  #[test]
-  fn tile_detail_factor_label_formats_float_factor() {
-    assert_eq!(tile_detail_factor_label(0.5), "0.50x");
-    assert_eq!(tile_detail_factor_label(1.0), "1.00x");
-    assert_eq!(tile_detail_factor_label(1.25), "1.25x");
-    assert_eq!(tile_detail_factor_label(2.0), "2.00x");
-  }
-
-  #[test]
-  fn effective_tile_detail_factor_includes_base_factor() {
-    assert_eq!(effective_tile_detail_factor(0.5), 1.0);
-    assert_eq!(effective_tile_detail_factor(1.0), 2.0);
-    assert_eq!(effective_tile_detail_factor(2.0), 4.0);
-  }
-
-  #[test]
-  fn native_vector_style_zoom_removes_detail_zoom_offset() {
-    assert_eq!(native_vector_style_zoom(13, 0.5), 13);
-    assert_eq!(native_vector_style_zoom(13, 1.0), 12);
-    assert_eq!(native_vector_style_zoom(13, 2.0), 11);
-  }
-
-  #[test]
-  fn openfreemap_city_rank_maps_to_place_size_buckets() {
-    assert_eq!(normalized_openfreemap_place_rank("city", 2), 13);
-    assert_eq!(normalized_openfreemap_place_rank("city", 11), 15);
-    assert_eq!(normalized_openfreemap_place_rank("city", 15), 17);
-  }
-
-  #[test]
-  fn openfreemap_capital_rank_distinguishes_capitals_from_admin_centers() {
-    assert!(feature_value_is_capital(&mvt_reader::feature::Value::UInt(
-      2
-    )));
-    assert!(!feature_value_is_capital(
-      &mvt_reader::feature::Value::UInt(6)
-    ));
-  }
 }

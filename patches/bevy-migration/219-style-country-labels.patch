@@ -1,0 +1,428 @@
+diff --git a/src/bevy_renderer/tiles.rs b/src/bevy_renderer/tiles.rs
+index 7879a3d..1602504 100644
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -159,6 +159,9 @@ struct NativeVectorTileLabelSpec {
+   coord: PixelCoordinate,
+   text: String,
+   base_font_size: f32,
++  text_color: Color,
++  show_marker: bool,
++  centered: bool,
+   tile_world_size: f32,
+ }
+ 
+@@ -172,6 +175,9 @@ struct NativeVectorTileLabelInstance {
+   coord: PixelCoordinate,
+   text: String,
+   base_font_size: f32,
++  text_color: Color,
++  show_marker: bool,
++  centered: bool,
+   tile_world_size: f32,
+   entities: Vec<NativeVectorTileLabelCopy>,
+ }
+diff --git a/src/bevy_renderer/tiles/native_vector.rs b/src/bevy_renderer/tiles/native_vector.rs
+index 0b94ec4..f673b93 100644
+--- a/src/bevy_renderer/tiles/native_vector.rs
++++ b/src/bevy_renderer/tiles/native_vector.rs
+@@ -57,6 +57,7 @@ type NativeVectorLabelTextQuery<'w, 's> = Query<
+     &'static mut Text2d,
+     &'static mut TextFont,
+     &'static mut TextColor,
++    &'static mut Anchor,
+     &'static mut Visibility,
+   ),
+   (
+@@ -650,8 +651,16 @@ fn update_native_vector_tile_label_instance(
+   let radius = native_vector_label_marker_radius(scale, cfg);
+   let marker_size = Vec2::splat(radius * 2.0);
+   let marker_color = native_vector_color(cfg.marker_dot.to_color());
+-  let text_color = native_vector_color(cfg.place_label.to_color());
+-  let text_offset_x = radius + cfg.markers.text_offset_x * scale;
++  let text_offset_x = if label.show_marker {
++    radius + cfg.markers.text_offset_x * scale
++  } else {
++    0.0
++  };
++  let text_anchor = if label.centered {
++    Anchor::CENTER
++  } else {
++    Anchor::CENTER_LEFT
++  };
+ 
+   for (entity_index, screen_pos) in positions.iter().copied().enumerate() {
+     let bevy_pos = screen_to_bevy_2d(screen_pos, surface);
+@@ -669,6 +678,7 @@ fn update_native_vector_tile_label_instance(
+       marker_transform,
+       marker_color,
+       marker_size,
++      label.show_marker,
+       markers,
+     );
+     let text = update_native_vector_tile_label_text(
+@@ -677,7 +687,8 @@ fn update_native_vector_tile_label_instance(
+       text_transform,
+       &label.text,
+       font_size,
+-      text_color,
++      label.text_color,
++      text_anchor,
+       label_font,
+       texts,
+     );
+@@ -701,6 +712,7 @@ fn update_native_vector_tile_label_marker(
+   transform: Transform,
+   color: Color,
+   size: Vec2,
++  visible: bool,
+   markers: &mut NativeVectorLabelMarkerQuery<'_, '_>,
+ ) -> Entity {
+   if let Some(entity) = entity {
+@@ -708,7 +720,11 @@ fn update_native_vector_tile_label_marker(
+       *marker_transform = transform;
+       sprite.custom_size = Some(size);
+       sprite.color = color;
+-      *visibility = Visibility::Visible;
++      *visibility = if visible {
++        Visibility::Visible
++      } else {
++        Visibility::Hidden
++      };
+       return entity;
+     }
+     commands.entity(entity).try_despawn();
+@@ -718,6 +734,11 @@ fn update_native_vector_tile_label_marker(
+     .spawn((
+       Sprite::from_color(color, size),
+       transform,
++      if visible {
++        Visibility::Visible
++      } else {
++        Visibility::Hidden
++      },
+       BevyNativeVectorTileLabelMarker,
+     ))
+     .id()
+@@ -730,12 +751,20 @@ fn update_native_vector_tile_label_text(
+   value: &str,
+   font_size: f32,
+   color: Color,
++  anchor: Anchor,
+   label_font: &Handle<Font>,
+   texts: &mut NativeVectorLabelTextQuery<'_, '_>,
+ ) -> Entity {
+   if let Some(entity) = entity {
+-    if let Ok((_, mut text_transform, mut text, mut font, mut text_color, mut visibility)) =
+-      texts.get_mut(entity)
++    if let Ok((
++      _,
++      mut text_transform,
++      mut text,
++      mut font,
++      mut text_color,
++      mut text_anchor,
++      mut visibility,
++    )) = texts.get_mut(entity)
+     {
+       *text_transform = transform;
+       text.0.clear();
+@@ -743,6 +772,7 @@ fn update_native_vector_tile_label_text(
+       font.font = label_font.clone();
+       font.font_size = font_size;
+       text_color.0 = color;
++      *text_anchor = anchor;
+       *visibility = Visibility::Visible;
+       return entity;
+     }
+@@ -755,7 +785,7 @@ fn update_native_vector_tile_label_text(
+       TextFont::from_font_size(font_size).with_font(label_font.clone()),
+       TextColor(color),
+       TextLayout::new_with_justify(Justify::Left),
+-      Anchor::CENTER_LEFT,
++      anchor,
+       transform,
+       BevyNativeVectorTileLabelText,
+     ))
+@@ -803,7 +833,7 @@ fn hide_native_vector_tile_labels(
+   for (_, _, _, mut visibility) in markers.iter_mut() {
+     *visibility = Visibility::Hidden;
+   }
+-  for (_, _, _, _, _, mut visibility) in texts.iter_mut() {
++  for (_, _, _, _, _, _, mut visibility) in texts.iter_mut() {
+     *visibility = Visibility::Hidden;
+   }
+ }
+@@ -817,7 +847,7 @@ fn hide_native_vector_tile_label_entities(
+     if let Ok((_, _, _, mut visibility)) = markers.get_mut(copy.marker) {
+       *visibility = Visibility::Hidden;
+     }
+-    if let Ok((_, _, _, _, _, mut visibility)) = texts.get_mut(copy.text) {
++    if let Ok((_, _, _, _, _, _, mut visibility)) = texts.get_mut(copy.text) {
+       *visibility = Visibility::Hidden;
+     }
+   }
+@@ -879,7 +909,7 @@ fn despawn_untracked_native_vector_tile_labels(
+     *visibility = Visibility::Hidden;
+     commands.entity(entity).try_despawn();
+   }
+-  for (entity, _, _, _, _, mut visibility) in texts.iter_mut() {
++  for (entity, _, _, _, _, _, mut visibility) in texts.iter_mut() {
+     if tracked_entities.contains(&entity) {
+       continue;
+     }
+diff --git a/src/bevy_renderer/tiles/native_vector/content.rs b/src/bevy_renderer/tiles/native_vector/content.rs
+index 9ec6c77..a11bb61 100644
+--- a/src/bevy_renderer/tiles/native_vector/content.rs
++++ b/src/bevy_renderer/tiles/native_vector/content.rs
+@@ -2,8 +2,8 @@ use crate::map::{
+   coordinates::{PixelCoordinate, Tile},
+   tile_renderer::{
+     TileRenderError, background_color, feature_is_national_capital, feature_string_property,
+-    get_fill_color, get_place_font_size, get_road_styling, label_feature_kind_detail,
+-    label_population_rank, should_show_place, style_config,
++    get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
++    label_feature_kind_detail, label_population_rank, should_show_place, style_config,
+   },
+ };
+ use bevy::{
+@@ -476,8 +476,10 @@ fn native_vector_debug_style_summary(
+     geo_types::Geometry::Point(_) | geo_types::Geometry::MultiPoint(_) => {
+       let show = should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom);
+       let font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
++      let label_style = get_place_label_style(feature_kind_detail);
+       format!(
+-        "label visible={show}, font={font_size:.1}px, rank={population_rank:?}, national_capital={is_capital}, tile_world_size={tile_world_size:.2}"
++        "label visible={show}, font={font_size:.1}px, marker={}, rank={population_rank:?}, national_capital={is_capital}, tile_world_size={tile_world_size:.2}",
++        label_style.show_marker
+       )
+     }
+     _ => "unsupported geometry".to_string(),
+@@ -563,6 +565,7 @@ fn append_native_vector_label(
+   if !should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom) {
+     return;
+   }
++  let label_style = get_place_label_style(feature_kind_detail);
+ 
+   labels.push(NativeVectorTileLabelSpec {
+     coord: PixelCoordinate {
+@@ -571,6 +574,9 @@ fn append_native_vector_label(
+     },
+     text: label_text.to_string(),
+     base_font_size: get_place_font_size(feature_kind_detail, is_capital, population_rank),
++    text_color: native_vector_color(label_style.text_color),
++    show_marker: label_style.show_marker,
++    centered: label_style.centered,
+     tile_world_size,
+   });
+ }
+diff --git a/src/bevy_renderer/tiles/results.rs b/src/bevy_renderer/tiles/results.rs
+index f1e2b45..bdaeb27 100644
+--- a/src/bevy_renderer/tiles/results.rs
++++ b/src/bevy_renderer/tiles/results.rs
+@@ -75,6 +75,9 @@ pub(super) fn collect_finished_tiles(
+             coord: spec.coord,
+             text: spec.text,
+             base_font_size: spec.base_font_size,
++            text_color: spec.text_color,
++            show_marker: spec.show_marker,
++            centered: spec.centered,
+             tile_world_size: spec.tile_world_size,
+             entities: Vec::new(),
+           })
+diff --git a/src/map/tile_renderer.rs b/src/map/tile_renderer.rs
+index b8b0234..0e37a1d 100644
+--- a/src/map/tile_renderer.rs
++++ b/src/map/tile_renderer.rs
+@@ -8,9 +8,9 @@ pub(crate) use vector::metadata::{
+   label_population_rank,
+ };
+ pub use vector::styling::{
+-  MapStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color, get_place_font_size,
+-  get_road_styling, init_style_config, save_style_config, set_style_config, should_show_place,
+-  style_config, style_version,
++  MapStyle, PlaceLabelStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color,
++  get_place_font_size, get_place_label_style, get_road_styling, init_style_config,
++  save_style_config, set_style_config, should_show_place, style_config, style_version,
+ };
+ 
+ use thiserror::Error;
+diff --git a/src/map/tile_renderer/vector.rs b/src/map/tile_renderer/vector.rs
+index 6f79268..3111154 100644
+--- a/src/map/tile_renderer/vector.rs
++++ b/src/map/tile_renderer/vector.rs
+@@ -25,8 +25,8 @@ use metadata::{
+   label_population_rank,
+ };
+ use styling::{
+-  background_color, get_fill_color, get_place_font_size, get_road_styling, should_show_place,
+-  style_config,
++  background_color, get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
++  should_show_place, style_config,
+ };
+ 
+ use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
+@@ -383,31 +383,43 @@ impl VectorTileRenderer {
+       // Get font size from centralized config
+       let cfg = style_config();
+       let base_font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
++      let label_style = get_place_label_style(feature_kind_detail);
+ 
+       // Scale font size based on tile resolution, but cap to prevent huge text
+       let font_size =
+         (base_font_size * (tile_size as f32 / 256.0)).min(cfg.font_sizes.max_font_size);
+ 
+       // Draw small marker dot
+-      let radius = cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
+-      let mut pb = PathBuilder::new();
+-      pb.push_circle(x, y, radius);
+-
+-      if let Some(path) = pb.finish() {
+-        let mut paint = Paint::default();
+-        paint.set_color(cfg.marker_dot.to_color());
+-        paint.anti_alias = true;
+-        pixmap.fill_path(
+-          &path,
+-          &paint,
+-          tiny_skia::FillRule::Winding,
+-          Transform::identity(),
+-          None,
+-        );
+-      }
++      let radius = if label_style.show_marker {
++        let radius =
++          cfg.markers.base_radius * (tile_size as f32 / 256.0).min(cfg.markers.max_radius);
++        let mut pb = PathBuilder::new();
++        pb.push_circle(x, y, radius);
++
++        if let Some(path) = pb.finish() {
++          let mut paint = Paint::default();
++          paint.set_color(cfg.marker_dot.to_color());
++          paint.anti_alias = true;
++          pixmap.fill_path(
++            &path,
++            &paint,
++            tiny_skia::FillRule::Winding,
++            Transform::identity(),
++            None,
++          );
++        }
++        radius
++      } else {
++        0.0
++      };
+ 
+-      // Render text label offset to the right of the point
+-      let text_x = x + radius + cfg.markers.text_offset_x;
++      let text_width =
++        label_text.chars().count() as f32 * font_size * cfg.font_sizes.char_width_ratio;
++      let text_x = if label_style.centered {
++        x - text_width * 0.5
++      } else {
++        x + radius + cfg.markers.text_offset_x
++      };
+       let text_y = y + font_size / cfg.markers.text_vertical_center_factor;
+ 
+       render_text(
+@@ -416,7 +428,7 @@ impl VectorTileRenderer {
+         text_x,
+         text_y,
+         font_size,
+-        cfg.place_label.to_color(),
++        label_style.text_color,
+       );
+     }
+   }
+diff --git a/src/map/tile_renderer/vector/styling.rs b/src/map/tile_renderer/vector/styling.rs
+index 93e5ef8..eb4bbf9 100644
+--- a/src/map/tile_renderer/vector/styling.rs
++++ b/src/map/tile_renderer/vector/styling.rs
+@@ -206,6 +206,14 @@ impl<'de> Deserialize<'de> for Rgb {
+   }
+ }
+ 
++/// Render-time styling for point labels.
++#[derive(Debug, Clone, Copy)]
++pub struct PlaceLabelStyle {
++  pub text_color: Color,
++  pub show_marker: bool,
++  pub centered: bool,
++}
++
+ /// Road styling configuration
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct RoadStyle {
+@@ -1152,6 +1160,37 @@ pub fn get_place_font_size(
+   }
+ }
+ 
++/// Get marker and text styling for a place feature.
++#[must_use]
++pub fn get_place_label_style(feature_kind_detail: Option<&str>) -> PlaceLabelStyle {
++  let cfg = style_config();
++  if feature_kind_detail == Some("country") {
++    PlaceLabelStyle {
++      text_color: country_label_color(&cfg),
++      show_marker: false,
++      centered: true,
++    }
++  } else {
++    PlaceLabelStyle {
++      text_color: cfg.place_label.to_color(),
++      show_marker: true,
++      centered: false,
++    }
++  }
++}
++
++fn country_label_color(cfg: &StyleConfig) -> Color {
++  if color_luminance(cfg.background) < 96.0 {
++    Rgb::new(170, 170, 170).to_color()
++  } else {
++    Rgb::new(105, 105, 105).to_color()
++  }
++}
++
++fn color_luminance(color: Rgb) -> f32 {
++  0.2126 * f32::from(color.r) + 0.7152 * f32::from(color.g) + 0.0722 * f32::from(color.b)
++}
++
+ /// Check if a place feature should be shown at the given zoom level
+ #[must_use]
+ #[allow(clippy::match_same_arms)]
+@@ -1181,3 +1220,35 @@ pub fn should_show_place(
+     _ => false,
+   }
+ }
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  #[test]
++  fn country_labels_are_markerless_and_muted() {
++    let style = get_place_label_style(Some("country"));
++
++    assert!(!style.show_marker);
++    assert!(style.centered);
++  }
++
++  #[test]
++  fn city_labels_keep_marker_and_place_color() {
++    let style = get_place_label_style(Some("city"));
++
++    assert!(style.show_marker);
++    assert!(!style.centered);
++  }
++
++  #[test]
++  fn country_label_color_is_neutral_for_light_and_dark_backgrounds() {
++    let color = country_label_color(&StyleConfig::default()).to_color_u8();
++    assert_eq!([color.red(), color.green(), color.blue()], [105, 105, 105]);
++
++    let mut dark = StyleConfig::default();
++    dark.background = Rgb::new(20, 20, 20);
++    let color = country_label_color(&dark).to_color_u8();
++    assert_eq!([color.red(), color.green(), color.blue()], [170, 170, 170]);
++  }
++}
