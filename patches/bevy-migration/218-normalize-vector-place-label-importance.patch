@@ -1,0 +1,551 @@
+diff --git a/src/bevy_renderer/tiles/native_vector/content.rs b/src/bevy_renderer/tiles/native_vector/content.rs
+index f947bf3..9ec6c77 100644
+--- a/src/bevy_renderer/tiles/native_vector/content.rs
++++ b/src/bevy_renderer/tiles/native_vector/content.rs
+@@ -1,8 +1,9 @@
+ use crate::map::{
+   coordinates::{PixelCoordinate, Tile},
+   tile_renderer::{
+-    TileRenderError, background_color, get_fill_color, get_place_font_size, get_road_styling,
+-    should_show_place, style_config,
++    TileRenderError, background_color, feature_is_national_capital, feature_string_property,
++    get_fill_color, get_place_font_size, get_road_styling, label_feature_kind_detail,
++    label_population_rank, should_show_place, style_config,
+   },
+ };
+ use bevy::{
+@@ -151,8 +152,9 @@ fn append_native_vector_layer(
+       feature_class,
+     );
+     let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
+-    let population_rank = label_population_rank(&feature, feature_class);
+-    let is_capital = feature_is_capital(&feature);
++    let population_rank =
++      label_population_rank(&feature, feature_kind_detail.unwrap_or(feature_class));
++    let is_capital = feature_is_national_capital(&feature);
+     if let Some(debug_feature) = native_vector_debug_feature(
+       tile,
+       feature_index,
+@@ -474,7 +476,9 @@ fn native_vector_debug_style_summary(
+     geo_types::Geometry::Point(_) | geo_types::Geometry::MultiPoint(_) => {
+       let show = should_show_place(feature_kind_detail, population_rank, is_capital, tile_zoom);
+       let font_size = get_place_font_size(feature_kind_detail, is_capital, population_rank);
+-      format!("label visible={show}, font={font_size:.1}px, tile_world_size={tile_world_size:.2}")
++      format!(
++        "label visible={show}, font={font_size:.1}px, rank={population_rank:?}, national_capital={is_capital}, tile_world_size={tile_world_size:.2}"
++      )
+     }
+     _ => "unsupported geometry".to_string(),
+   }
+@@ -505,105 +509,6 @@ fn feature_value_to_string(value: &mvt_reader::feature::Value) -> String {
+   }
+ }
+ 
+-fn feature_string_property<'a>(
+-  feature: &'a mvt_reader::feature::Feature,
+-  keys: &[&str],
+-) -> Option<&'a str> {
+-  let properties = feature.properties.as_ref()?;
+-  keys.iter().find_map(|key| match properties.get(*key) {
+-    Some(mvt_reader::feature::Value::String(value)) => Some(value.as_str()),
+-    _ => None,
+-  })
+-}
+-
+-fn label_feature_kind_detail<'a>(
+-  layer_name: &str,
+-  feature_kind_detail: Option<&'a str>,
+-  feature_kind: Option<&'a str>,
+-  feature_class: &'a str,
+-) -> Option<&'a str> {
+-  feature_kind_detail.or(feature_kind).or_else(|| {
+-    if layer_name != "place" {
+-      return None;
+-    }
+-    match feature_class {
+-      "country" | "city" | "locality" | "town" | "village" => Some(feature_class),
+-      "hamlet" => Some("village"),
+-      "suburb" | "neighbourhood" | "quarter" => Some("locality"),
+-      _ => None,
+-    }
+-  })
+-}
+-
+-fn label_population_rank(
+-  feature: &mvt_reader::feature::Feature,
+-  feature_class: &str,
+-) -> Option<i64> {
+-  feature
+-    .properties
+-    .as_ref()
+-    .and_then(|properties| properties.get("population_rank"))
+-    .and_then(feature_value_as_i64)
+-    .or_else(|| {
+-      feature
+-        .properties
+-        .as_ref()
+-        .and_then(|properties| properties.get("rank"))
+-        .and_then(feature_value_as_i64)
+-        .map(|rank| normalized_openfreemap_place_rank(feature_class, rank))
+-    })
+-}
+-
+-fn normalized_openfreemap_place_rank(feature_class: &str, rank: i64) -> i64 {
+-  if !matches!(feature_class, "city" | "locality") {
+-    return rank;
+-  }
+-
+-  match rank {
+-    i64::MIN..=3 => 13,
+-    4..=7 => 14,
+-    8..=11 => 15,
+-    12..=14 => 16,
+-    _ => 17,
+-  }
+-}
+-
+-fn feature_is_capital(feature: &mvt_reader::feature::Feature) -> bool {
+-  feature
+-    .properties
+-    .as_ref()
+-    .and_then(|properties| properties.get("capital"))
+-    .is_some_and(feature_value_is_capital)
+-}
+-
+-fn feature_value_as_i64(value: &mvt_reader::feature::Value) -> Option<i64> {
+-  match value {
+-    mvt_reader::feature::Value::UInt(value) => i64::try_from(*value).ok(),
+-    mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
+-      Some(*value)
+-    }
+-    _ => None,
+-  }
+-}
+-
+-fn feature_value_is_capital(value: &mvt_reader::feature::Value) -> bool {
+-  match value {
+-    mvt_reader::feature::Value::Bool(value) => *value,
+-    mvt_reader::feature::Value::UInt(value) => (1..=4).contains(value),
+-    mvt_reader::feature::Value::Int(value) | mvt_reader::feature::Value::SInt(value) => {
+-      (1..=4).contains(value)
+-    }
+-    mvt_reader::feature::Value::String(value) => {
+-      let value = value.to_ascii_lowercase();
+-      matches!(value.as_str(), "yes" | "true" | "capital")
+-        || value
+-          .parse::<i64>()
+-          .is_ok_and(|rank| (1..=4).contains(&rank))
+-    }
+-    _ => false,
+-  }
+-}
+-
+ fn polygon_feature_class<'a>(
+   layer_name: &str,
+   feature_class: &'a str,
+@@ -971,25 +876,3 @@ pub(super) fn native_vector_color(color: tiny_skia::Color) -> Color {
+     f32::from(color.alpha()) / 255.0,
+   )
+ }
+-
+-#[cfg(test)]
+-mod tests {
+-  use super::*;
+-
+-  #[test]
+-  fn openfreemap_city_rank_maps_to_place_size_buckets() {
+-    assert_eq!(normalized_openfreemap_place_rank("city", 2), 13);
+-    assert_eq!(normalized_openfreemap_place_rank("city", 11), 15);
+-    assert_eq!(normalized_openfreemap_place_rank("city", 15), 17);
+-  }
+-
+-  #[test]
+-  fn openfreemap_capital_rank_distinguishes_capitals_from_admin_centers() {
+-    assert!(feature_value_is_capital(&mvt_reader::feature::Value::UInt(
+-      2
+-    )));
+-    assert!(!feature_value_is_capital(
+-      &mvt_reader::feature::Value::UInt(6)
+-    ));
+-  }
+-}
+diff --git a/src/map/tile_renderer.rs b/src/map/tile_renderer.rs
+index da96ec0..b8b0234 100644
+--- a/src/map/tile_renderer.rs
++++ b/src/map/tile_renderer.rs
+@@ -3,6 +3,10 @@ mod vector;
+ 
+ pub use raster::RasterTileRenderer;
+ pub use vector::VectorTileRenderer;
++pub(crate) use vector::metadata::{
++  feature_is_national_capital, feature_string_property, label_feature_kind_detail,
++  label_population_rank,
++};
+ pub use vector::styling::{
+   MapStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color, get_place_font_size,
+   get_road_styling, init_style_config, save_style_config, set_style_config, should_show_place,
+diff --git a/src/map/tile_renderer/vector.rs b/src/map/tile_renderer/vector.rs
+index 7899011..6f79268 100644
+--- a/src/map/tile_renderer/vector.rs
++++ b/src/map/tile_renderer/vector.rs
+@@ -11,6 +11,7 @@
+ 
+ mod buildings;
+ mod labels;
++pub(crate) mod metadata;
+ mod places;
+ mod roads;
+ pub mod styling;
+@@ -19,6 +20,10 @@ mod water;
+ 
+ // Re-export key functions from submodules
+ use labels::{calculate_path_length, render_text, render_text_along_path};
++use metadata::{
++  feature_is_national_capital, feature_string_property, label_feature_kind_detail,
++  label_population_rank,
++};
+ use styling::{
+   background_color, get_fill_color, get_place_font_size, get_road_styling, should_show_place,
+   style_config,
+@@ -101,85 +106,18 @@ impl VectorTileRenderer {
+     for feature in features {
+       feature_count += 1;
+ 
+-      // Get the feature class/type for better color selection
+-      let feature_class = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| props.get("class"))
+-        .or_else(|| {
+-          feature
+-            .properties
+-            .as_ref()
+-            .and_then(|props| props.get("type"))
+-        })
+-        .and_then(|v| {
+-          if let mvt_reader::feature::Value::String(s) = v {
+-            Some(s.as_str())
+-          } else {
+-            None
+-          }
+-        })
+-        .unwrap_or("");
+-
+-      // Extract name for labeling
+-      let feature_name = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| {
+-          props
+-            .get("name")
+-            .or_else(|| props.get("name:en"))
+-            .or_else(|| props.get("name_en"))
+-        })
+-        .and_then(|v| {
+-          if let mvt_reader::feature::Value::String(s) = v {
+-            Some(s.as_str())
+-          } else {
+-            None
+-          }
+-        });
+-
+-      // Extract Protomaps-specific properties for filtering
+-      let feature_kind = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| props.get("kind"))
+-        .and_then(|v| {
+-          if let mvt_reader::feature::Value::String(s) = v {
+-            Some(s.as_str())
+-          } else {
+-            None
+-          }
+-        });
+-
+-      let feature_kind_detail = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| props.get("kind_detail"))
+-        .and_then(|v| {
+-          if let mvt_reader::feature::Value::String(s) = v {
+-            Some(s.as_str())
+-          } else {
+-            None
+-          }
+-        });
+-
+-      let population_rank = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| props.get("population_rank"))
+-        .and_then(|v| match v {
+-          mvt_reader::feature::Value::UInt(n) => Some(*n as i64),
+-          mvt_reader::feature::Value::Int(n) => Some(*n),
+-          mvt_reader::feature::Value::SInt(n) => Some(*n),
+-          _ => None,
+-        });
+-
+-      let is_capital = feature
+-        .properties
+-        .as_ref()
+-        .and_then(|props| props.get("capital"))
+-        .is_some();
++      let feature_class = feature_string_property(&feature, &["class", "type"]).unwrap_or("");
++      let feature_name = feature_string_property(&feature, &["name", "name:en", "name_en"]);
++      let feature_kind = feature_string_property(&feature, &["kind"]);
++      let feature_kind_detail = label_feature_kind_detail(
++        layer_name,
++        feature_string_property(&feature, &["kind_detail"]),
++        feature_kind,
++        feature_class,
++      );
++      let population_rank =
++        label_population_rank(&feature, feature_kind_detail.unwrap_or(feature_class));
++      let is_capital = feature_is_national_capital(&feature);
+ 
+       match &feature.geometry {
+         geo_types::Geometry::Polygon(polygon) => {
+diff --git a/src/map/tile_renderer/vector/metadata.rs b/src/map/tile_renderer/vector/metadata.rs
+new file mode 100644
+index 0000000..1d7a2fb
+--- /dev/null
++++ b/src/map/tile_renderer/vector/metadata.rs
+@@ -0,0 +1,238 @@
++use std::collections::HashMap;
++
++use mvt_reader::feature::{Feature, Value};
++
++pub(crate) fn feature_string_property<'a>(feature: &'a Feature, keys: &[&str]) -> Option<&'a str> {
++  let properties = feature.properties.as_ref()?;
++  keys.iter().find_map(|key| match properties.get(*key) {
++    Some(Value::String(value)) => Some(value.as_str()),
++    _ => None,
++  })
++}
++
++pub(crate) fn label_feature_kind_detail<'a>(
++  layer_name: &str,
++  feature_kind_detail: Option<&'a str>,
++  feature_kind: Option<&'a str>,
++  feature_class: &'a str,
++) -> Option<&'a str> {
++  feature_kind_detail.or(feature_kind).or_else(|| {
++    if layer_name != "place" {
++      return None;
++    }
++    match feature_class {
++      "country" | "city" | "locality" | "town" | "village" => Some(feature_class),
++      "hamlet" => Some("village"),
++      "suburb" | "neighbourhood" | "quarter" => Some("locality"),
++      _ => None,
++    }
++  })
++}
++
++pub(crate) fn label_population_rank(feature: &Feature, feature_class: &str) -> Option<i64> {
++  let properties = feature.properties.as_ref()?;
++  feature_i64_property(properties, &["population_rank", "pop_rank"])
++    .map(normalized_population_rank)
++    .or_else(|| {
++      feature_i64_property(properties, &["rank"])
++        .map(|rank| normalized_openfreemap_place_rank(feature_class, rank))
++    })
++    .or_else(|| {
++      feature_i64_property(properties, &["scalerank"])
++        .map(|rank| normalized_openfreemap_place_rank(feature_class, rank))
++    })
++    .or_else(|| {
++      feature_i64_property(properties, &["population", "pop_max", "pop_min"])
++        .and_then(population_to_place_rank)
++    })
++}
++
++pub(crate) fn feature_is_national_capital(feature: &Feature) -> bool {
++  let Some(properties) = feature.properties.as_ref() else {
++    return false;
++  };
++  ["capital", "capital:type", "capital_type", "is_capital"]
++    .iter()
++    .any(|key| {
++      properties
++        .get(*key)
++        .is_some_and(feature_value_is_national_capital)
++    })
++}
++
++fn feature_i64_property(properties: &HashMap<String, Value>, keys: &[&str]) -> Option<i64> {
++  keys
++    .iter()
++    .find_map(|key| properties.get(*key).and_then(feature_value_as_i64))
++}
++
++fn normalized_openfreemap_place_rank(feature_class: &str, rank: i64) -> i64 {
++  if !matches!(feature_class, "city" | "locality") {
++    return rank;
++  }
++
++  match rank {
++    i64::MIN..=3 => 13,
++    4..=7 => 14,
++    8..=11 => 15,
++    12..=14 => 16,
++    _ => 17,
++  }
++}
++
++fn normalized_population_rank(rank: i64) -> i64 {
++  match rank {
++    14..=i64::MAX => 13,
++    13 => 14,
++    12 => 15,
++    11 => 16,
++    _ => 17,
++  }
++}
++
++fn population_to_place_rank(population: i64) -> Option<i64> {
++  match population {
++    i64::MIN..=0 => None,
++    10_000_000.. => Some(13),
++    5_000_000..=9_999_999 => Some(14),
++    1_000_000..=4_999_999 => Some(15),
++    500_000..=999_999 => Some(16),
++    _ => Some(17),
++  }
++}
++
++fn feature_value_as_i64(value: &Value) -> Option<i64> {
++  match value {
++    Value::UInt(value) => i64::try_from(*value).ok(),
++    Value::Int(value) | Value::SInt(value) => Some(*value),
++    Value::Float(value) => finite_number_to_i64(f64::from(*value)),
++    Value::Double(value) => finite_number_to_i64(*value),
++    Value::String(value) => parse_number_string(value).and_then(finite_number_to_i64),
++    _ => None,
++  }
++}
++
++#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
++fn finite_number_to_i64(value: f64) -> Option<i64> {
++  if value.is_finite() && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
++    Some(value.round() as i64)
++  } else {
++    None
++  }
++}
++
++fn parse_number_string(value: &str) -> Option<f64> {
++  let normalized = value
++    .trim()
++    .chars()
++    .filter(|character| !matches!(character, ',' | '_' | ' '))
++    .collect::<String>();
++  if normalized.is_empty() {
++    return None;
++  }
++  normalized.parse::<f64>().ok()
++}
++
++fn feature_value_is_national_capital(value: &Value) -> bool {
++  match value {
++    Value::Bool(value) => *value,
++    Value::UInt(value) => matches!(*value, 1 | 2),
++    Value::Int(value) | Value::SInt(value) => matches!(*value, 1 | 2),
++    Value::String(value) => {
++      let value = value.trim().to_ascii_lowercase();
++      matches!(
++        value.as_str(),
++        "yes"
++          | "true"
++          | "capital"
++          | "national"
++          | "national_capital"
++          | "country"
++          | "country_capital"
++          | "primary"
++      ) || value.parse::<i64>().is_ok_and(|rank| matches!(rank, 1 | 2))
++    }
++    _ => false,
++  }
++}
++
++#[cfg(test)]
++mod tests {
++  use std::collections::HashMap;
++
++  use super::*;
++
++  fn feature_with_properties(
++    properties: impl IntoIterator<Item = (&'static str, Value)>,
++  ) -> Feature {
++    Feature {
++      geometry: geo_types::Geometry::Point(geo_types::Point::new(0.0, 0.0)),
++      id: None,
++      properties: Some(
++        properties
++          .into_iter()
++          .map(|(key, value)| (key.to_string(), value))
++          .collect::<HashMap<_, _>>(),
++      ),
++    }
++  }
++
++  #[test]
++  fn openfreemap_city_rank_maps_to_place_size_buckets() {
++    assert_eq!(normalized_openfreemap_place_rank("city", 2), 13);
++    assert_eq!(normalized_openfreemap_place_rank("city", 11), 15);
++    assert_eq!(normalized_openfreemap_place_rank("city", 15), 17);
++    assert_eq!(normalized_openfreemap_place_rank("town", 2), 2);
++  }
++
++  #[test]
++  fn population_property_falls_back_to_place_rank() {
++    let berlin = feature_with_properties([("population", Value::UInt(3_850_809))]);
++    let kaiserslautern =
++      feature_with_properties([("population", Value::String("99,662".to_string()))]);
++
++    assert_eq!(label_population_rank(&berlin, "city"), Some(15));
++    assert_eq!(label_population_rank(&kaiserslautern, "city"), Some(17));
++  }
++
++  #[test]
++  fn population_rank_uses_higher_values_as_more_important() {
++    let berlin = feature_with_properties([
++      ("population_rank", Value::UInt(12)),
++      ("population", Value::UInt(3_850_809)),
++    ]);
++    let kaiserslautern = feature_with_properties([
++      ("population_rank", Value::UInt(8)),
++      ("population", Value::UInt(97_162)),
++    ]);
++
++    assert_eq!(label_population_rank(&berlin, "city"), Some(15));
++    assert_eq!(label_population_rank(&kaiserslautern, "city"), Some(17));
++  }
++
++  #[test]
++  fn capital_rank_distinguishes_national_capitals_from_admin_centers() {
++    assert!(feature_value_is_national_capital(&Value::UInt(2)));
++    assert!(feature_value_is_national_capital(&Value::String(
++      "yes".to_string()
++    )));
++    assert!(!feature_value_is_national_capital(&Value::UInt(4)));
++    assert!(!feature_value_is_national_capital(&Value::UInt(6)));
++    assert!(!feature_value_is_national_capital(&Value::String(
++      "4".to_string()
++    )));
++  }
++
++  #[test]
++  fn numeric_strings_and_float_values_parse_as_ranks() {
++    assert_eq!(
++      feature_value_as_i64(&Value::String("15.0".to_string())),
++      Some(15)
++    );
++    assert_eq!(
++      feature_value_as_i64(&Value::String("3,850,809".to_string())),
++      Some(3_850_809)
++    );
++    assert_eq!(feature_value_as_i64(&Value::Double(16.0)), Some(16));
++  }
++}

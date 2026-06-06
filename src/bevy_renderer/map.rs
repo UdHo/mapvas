@@ -49,6 +49,8 @@ pub struct BevyMapControl {
   hover_pos: Option<PixelPosition>,
   pointer_blocking_rects: Vec<PixelRect>,
   last_left_click: Option<(PixelPosition, f64)>,
+  left_drag_moved: bool,
+  suppress_left_click_action: bool,
   secondary_drag_start: Option<PixelPosition>,
   secondary_drag_moved: bool,
   actions: Vec<BevyMapAction>,
@@ -63,6 +65,7 @@ pub struct BevyCommandDrag {
 pub enum BevyMapAction {
   CommandDrag(BevyCommandDrag),
   ContextMenu(PixelPosition),
+  Click(PixelPosition),
   DoubleClick(PixelPosition),
   DroppedFile(PathBuf),
   Shortcut(BevyMapShortcut),
@@ -85,6 +88,8 @@ impl Default for BevyMapControl {
       hover_pos: None,
       pointer_blocking_rects: Vec::new(),
       last_left_click: None,
+      left_drag_moved: false,
+      suppress_left_click_action: false,
       secondary_drag_start: None,
       secondary_drag_moved: false,
       actions: Vec::new(),
@@ -174,6 +179,8 @@ fn bevy_map_input(
   if egui_pointer_blocked {
     control.dragging = false;
     control.last_cursor_pos = cursor;
+    control.left_drag_moved = false;
+    control.suppress_left_click_action = false;
     control.secondary_drag_start = None;
     control.secondary_drag_moved = false;
   }
@@ -187,15 +194,31 @@ fn bevy_map_input(
         if interval <= DOUBLE_CLICK_MAX_INTERVAL_SECS && distance <= DOUBLE_CLICK_MAX_DISTANCE {
           control.actions.push(BevyMapAction::DoubleClick(current));
           control.last_left_click = None;
+          control.suppress_left_click_action = true;
         } else {
           control.last_left_click = Some((current, now));
+          control.suppress_left_click_action = false;
         }
       } else {
         control.last_left_click = Some((current, now));
+        control.suppress_left_click_action = false;
       }
     }
     control.dragging = true;
+    control.left_drag_moved = false;
     control.last_cursor_pos = cursor;
+  }
+  if buttons.just_released(MouseButton::Left) {
+    if !egui_pointer_blocked
+      && cursor_in_viewport
+      && !control.left_drag_moved
+      && !control.suppress_left_click_action
+      && let Some(cursor) = cursor
+    {
+      control.actions.push(BevyMapAction::Click(cursor));
+    }
+    control.left_drag_moved = false;
+    control.suppress_left_click_action = false;
   }
   if !buttons.pressed(MouseButton::Left) {
     control.dragging = false;
@@ -208,6 +231,7 @@ fn bevy_map_input(
   {
     let delta = pixel_delta(last, current);
     if delta != PixelPosition::default() {
+      control.left_drag_moved = true;
       transform.translate(delta);
       control.last_cursor_pos = Some(current);
       changed = true;

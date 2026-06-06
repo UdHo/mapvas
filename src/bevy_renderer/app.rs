@@ -122,6 +122,7 @@ fn handle_bevy_map_action(app: &mut MapApp, action: BevyMapAction) {
     BevyMapAction::CommandDrag(drag) => {
       app.handle_map_command_drag(drag.pos, drag.delta, drag.transform);
     }
+    BevyMapAction::Click(_) => {}
     BevyMapAction::ContextMenu(pos) => {
       app.open_map_context_menu(pos);
     }
@@ -196,7 +197,12 @@ fn mapvas_ui_system(
     .show(&egui_ctx, |ui| {
       if let Some(app) = state.app.as_mut() {
         for action in bevy_map.take_actions() {
-          handle_bevy_map_action(app, action);
+          match action {
+            BevyMapAction::Click(pos) => {
+              bevy_tiles.select_debug_feature(pos, bevy_viewport.get());
+            }
+            action => handle_bevy_map_action(app, action),
+          }
         }
         app.handle_bevy_map_hover(bevy_map.hover_pos());
         {

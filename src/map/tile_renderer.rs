@@ -3,9 +3,14 @@ mod vector;
 
 pub use raster::RasterTileRenderer;
 pub use vector::VectorTileRenderer;
+pub(crate) use vector::metadata::{
+  feature_is_national_capital, feature_string_property, label_feature_kind_detail,
+  label_population_rank,
+};
 pub use vector::styling::{
-  MapStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color, get_place_font_size,
-  get_road_styling, init_style_config, save_style_config, set_style_config, should_show_place,
+  MapStyle, PlaceLabelStyle, Rgb, RoadStyle, StyleConfig, background_color, get_fill_color,
+  get_place_font_size, get_place_label_style, get_road_styling, init_style_config,
+  save_style_config, set_style_config, should_show_place, should_show_place_point_label,
   style_config, style_version,
 };
 
