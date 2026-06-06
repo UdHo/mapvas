@@ -1,3 +1,5 @@
+/// Bevy map renderer integration.
+pub mod bevy_renderer;
 /// Vim-like command line interface.
 pub mod command_line;
 /// Contains the configuration for the application.

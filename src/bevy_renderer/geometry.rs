@@ -1,10 +1,4 @@
-use bevy::{
-  asset::RenderAssetUsages,
-  mesh::{Indices, PrimitiveTopology},
-  prelude::*,
-  window::PrimaryWindow,
-};
-use mapvas::{
+use crate::{
   config::{Config, HeadingStyle},
   map::{
     color::Color as MapColor,
@@ -13,8 +7,13 @@ use mapvas::{
     viewport::{GeometrySnapshot, MapViewport},
   },
 };
+use bevy::{
+  asset::RenderAssetUsages,
+  mesh::{Indices, PrimitiveTopology},
+  prelude::*,
+};
 
-use crate::bevy_map::BevyMapViewport;
+use super::{map::BevyMapViewport, surface::BevyRenderSurface};
 
 const POINT_RADIUS: f32 = 4.0;
 const HIGHLIGHT_POINT_RADIUS: f32 = 10.0;
@@ -222,7 +221,7 @@ fn draw_bevy_geometry(
   mut commands: Commands,
   mut layer: ResMut<BevyGeometryLayer>,
   viewport: Res<BevyMapViewport>,
-  windows: Query<&Window, With<PrimaryWindow>>,
+  surface: Res<BevyRenderSurface>,
   mut meshes: ResMut<Assets<Mesh>>,
   mut materials: ResMut<Assets<ColorMaterial>>,
   mut fills: Query<
@@ -267,19 +266,13 @@ fn draw_bevy_geometry(
     layer.draw_stats = draw_stats;
     return;
   };
-  let Ok(window) = windows.single() else {
-    set_fill_visibility(&mut fills, false);
-    set_highlight_fill_visibility(&mut highlight_fills, false);
-    set_point_fill_visibility(&mut point_fills, false);
-    layer.draw_stats = draw_stats;
-    return;
-  };
+  let surface = *surface;
 
   rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
   update_polygon_fills(
     &mut commands,
     viewport,
-    window,
+    surface,
     &mut layer.polygon_fill_instances,
     &mut fills,
   );
@@ -288,7 +281,7 @@ fn draw_bevy_geometry(
   update_highlight_polygon_fills(
     &mut commands,
     viewport,
-    window,
+    surface,
     &mut layer.highlight_polygon_fill_instances,
     &mut highlight_fills,
   );
@@ -296,7 +289,7 @@ fn draw_bevy_geometry(
   update_point_fills(
     &mut commands,
     viewport,
-    window,
+    surface,
     &mut layer.point_fill_instances,
     &mut point_fills,
   );
@@ -305,14 +298,14 @@ fn draw_bevy_geometry(
     draw_geometry(
       geometry,
       viewport,
-      window,
+      surface,
       heading_style,
       &mut gizmos,
       &mut draw_stats,
     );
   }
   for geometry in &layer.highlighted_geometries {
-    draw_highlighted_geometry(geometry, viewport, window, &mut highlight_gizmos);
+    draw_highlighted_geometry(geometry, viewport, surface, &mut highlight_gizmos);
   }
   layer.draw_stats = draw_stats;
 }
@@ -481,7 +474,7 @@ fn rebuild_highlight_polygon_fills_if_needed(
 fn update_polygon_fills(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   fill_instances: &mut [PolygonFillInstance],
   fills: &mut Query<
     (&mut Transform, &mut Visibility),
@@ -497,7 +490,7 @@ fn update_polygon_fills(
     for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
       let transform = polygon_fill_transform(
         viewport,
-        window,
+        surface,
         instance.origin,
         wrap_offset,
         GEOMETRY_FILL_Z,
@@ -523,7 +516,7 @@ fn update_polygon_fills(
 fn update_highlight_polygon_fills(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   fill_instances: &mut [PolygonFillInstance],
   fills: &mut Query<
     (&mut Transform, &mut Visibility),
@@ -539,7 +532,7 @@ fn update_highlight_polygon_fills(
     for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
       let transform = polygon_fill_transform(
         viewport,
-        window,
+        surface,
         instance.origin,
         wrap_offset,
         HIGHLIGHT_FILL_Z,
@@ -565,7 +558,7 @@ fn update_highlight_polygon_fills(
 fn update_point_fills(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   point_instances: &mut [PointFillInstance],
   fills: &mut Query<
     (&mut Transform, &mut Visibility),
@@ -579,7 +572,7 @@ fn update_point_fills(
   for instance in point_instances {
     let screens = coordinate_screen_positions(instance.coord, viewport);
     for (entity_index, screen) in screens.iter().copied().enumerate() {
-      let center = screen_to_bevy(screen, window);
+      let center = screen_to_bevy(screen, surface);
       let transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
       if let Some(entity) = instance.entities.get(entity_index).copied() {
         if let Ok((mut fill_transform, mut visibility)) = fills.get_mut(entity) {
@@ -705,15 +698,15 @@ fn viewport_world_bounds(viewport: MapViewport) -> (f32, f32, f32, f32) {
 
 fn polygon_fill_transform(
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   origin: PixelCoordinate,
   wrap_offset: f32,
   z: f32,
 ) -> Transform {
   Transform::from_xyz(
     viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
-      - window.width() / 2.0,
-    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
+      - surface.width() / 2.0,
+    surface.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
     z,
   )
   .with_scale(Vec3::new(
@@ -915,7 +908,7 @@ fn bounds_from_coords(coords: &[PixelCoordinate]) -> Option<GeometryBounds> {
 fn draw_geometry(
   geometry: &Geometry<PixelCoordinate>,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   heading_style: HeadingStyle,
   gizmos: &mut Gizmos<BevyGeometryGizmos>,
   stats: &mut GeometryStats,
@@ -927,7 +920,7 @@ fn draw_geometry(
   match geometry {
     Geometry::GeometryCollection(geometries, _) => {
       for geometry in geometries {
-        draw_geometry(geometry, viewport, window, heading_style, gizmos, stats);
+        draw_geometry(geometry, viewport, surface, heading_style, gizmos, stats);
       }
     }
     Geometry::Point(coord, metadata) => {
@@ -938,7 +931,7 @@ fn draw_geometry(
 
       let color = style_color(metadata.style.as_ref());
       for screen in &screens {
-        let center = screen_to_bevy(*screen, window);
+        let center = screen_to_bevy(*screen, surface);
         gizmos.circle_2d(center, POINT_RADIUS, color);
         if let Some(heading) = metadata.heading {
           draw_heading(gizmos, center, heading, color, heading_style);
@@ -951,20 +944,20 @@ fn draw_geometry(
     Geometry::LineString(coords, metadata) => {
       let color = style_color(metadata.style.as_ref());
       stats.geometries += 1;
-      stats.line_segments += draw_lines(coords, false, viewport, window, color, gizmos);
+      stats.line_segments += draw_lines(coords, false, viewport, surface, color, gizmos);
     }
     Geometry::Polygon(coords, metadata) => {
       let color = style_color(metadata.style.as_ref());
       stats.geometries += 1;
       stats.polygons += 1;
-      stats.line_segments += draw_lines(coords, true, viewport, window, color, gizmos);
+      stats.line_segments += draw_lines(coords, true, viewport, surface, color, gizmos);
     }
     Geometry::Heatmap(coords, metadata) => {
       let color = style_color(metadata.style.as_ref());
       stats.geometries += 1;
       for coord in coords.iter().take(MAX_HEATMAP_POINTS_PER_FRAME) {
         for screen in coordinate_screen_positions(*coord, viewport) {
-          gizmos.circle_2d(screen_to_bevy(screen, window), 1.5, color);
+          gizmos.circle_2d(screen_to_bevy(screen, surface), 1.5, color);
           stats.heatmap_points += 1;
         }
       }
@@ -976,7 +969,7 @@ fn draw_lines(
   coords: &[PixelCoordinate],
   closed: bool,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   color: Color,
   gizmos: &mut Gizmos<BevyGeometryGizmos>,
 ) -> usize {
@@ -986,11 +979,11 @@ fn draw_lines(
 
   let mut drawn_segments = 0;
   for segment in coords.windows(2) {
-    drawn_segments += draw_segment(segment[0], segment[1], viewport, window, color, gizmos);
+    drawn_segments += draw_segment(segment[0], segment[1], viewport, surface, color, gizmos);
   }
 
   if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
-    drawn_segments += draw_segment(*last, *first, viewport, window, color, gizmos);
+    drawn_segments += draw_segment(*last, *first, viewport, surface, color, gizmos);
   }
 
   drawn_segments
@@ -1000,15 +993,15 @@ fn draw_segment(
   start: PixelCoordinate,
   end: PixelCoordinate,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   color: Color,
   gizmos: &mut Gizmos<BevyGeometryGizmos>,
 ) -> usize {
   let screen_segments = segment_screen_positions(start, end, viewport);
   for (screen_start, screen_end) in &screen_segments {
     gizmos.line_2d(
-      screen_to_bevy(*screen_start, window),
-      screen_to_bevy(*screen_end, window),
+      screen_to_bevy(*screen_start, surface),
+      screen_to_bevy(*screen_end, surface),
       color,
     );
   }
@@ -1019,7 +1012,7 @@ fn draw_segment(
 fn draw_highlighted_geometry(
   geometry: &Geometry<PixelCoordinate>,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   gizmos: &mut Gizmos<BevyHighlightGizmos>,
 ) {
   if !geometry_intersects_viewport(geometry, viewport) {
@@ -1029,7 +1022,7 @@ fn draw_highlighted_geometry(
   match geometry {
     Geometry::GeometryCollection(geometries, _) => {
       for geometry in geometries {
-        draw_highlighted_geometry(geometry, viewport, window, gizmos);
+        draw_highlighted_geometry(geometry, viewport, surface, gizmos);
       }
     }
     Geometry::Point(coord, metadata) => {
@@ -1040,7 +1033,7 @@ fn draw_highlighted_geometry(
       let color = highlight_color(metadata.style.as_ref());
       for screen in screens {
         gizmos.circle_2d(
-          screen_to_bevy(screen, window),
+          screen_to_bevy(screen, surface),
           HIGHLIGHT_POINT_RADIUS,
           color,
         );
@@ -1051,7 +1044,7 @@ fn draw_highlighted_geometry(
         coords,
         false,
         viewport,
-        window,
+        surface,
         highlight_color(metadata.style.as_ref()),
         gizmos,
       );
@@ -1061,7 +1054,7 @@ fn draw_highlighted_geometry(
         coords,
         true,
         viewport,
-        window,
+        surface,
         highlight_color(metadata.style.as_ref()),
         gizmos,
       );
@@ -1074,7 +1067,7 @@ fn draw_highlighted_lines(
   coords: &[PixelCoordinate],
   closed: bool,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   color: Color,
   gizmos: &mut Gizmos<BevyHighlightGizmos>,
 ) {
@@ -1083,11 +1076,11 @@ fn draw_highlighted_lines(
   }
 
   for segment in coords.windows(2) {
-    draw_highlighted_segment(segment[0], segment[1], viewport, window, color, gizmos);
+    draw_highlighted_segment(segment[0], segment[1], viewport, surface, color, gizmos);
   }
 
   if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
-    draw_highlighted_segment(*last, *first, viewport, window, color, gizmos);
+    draw_highlighted_segment(*last, *first, viewport, surface, color, gizmos);
   }
 }
 
@@ -1095,14 +1088,14 @@ fn draw_highlighted_segment(
   start: PixelCoordinate,
   end: PixelCoordinate,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   color: Color,
   gizmos: &mut Gizmos<BevyHighlightGizmos>,
 ) {
   for (screen_start, screen_end) in segment_screen_positions(start, end, viewport) {
     gizmos.line_2d(
-      screen_to_bevy(screen_start, window),
-      screen_to_bevy(screen_end, window),
+      screen_to_bevy(screen_start, surface),
+      screen_to_bevy(screen_end, surface),
       color,
     );
   }
@@ -1222,10 +1215,10 @@ fn segment_screen_positions(
     .collect()
 }
 
-fn screen_to_bevy(screen: PixelPosition, window: &Window) -> Vec2 {
+fn screen_to_bevy(screen: PixelPosition, surface: BevyRenderSurface) -> Vec2 {
   Vec2::new(
-    screen.x - window.width() / 2.0,
-    window.height() / 2.0 - screen.y,
+    screen.x - surface.width() / 2.0,
+    surface.height() / 2.0 - screen.y,
   )
 }
 

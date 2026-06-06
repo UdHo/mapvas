@@ -3,8 +3,8 @@ use std::sync::{
   mpsc::{self, Receiver},
 };
 
+use crate::remote::RepaintSignal;
 use bevy::{prelude::*, window::RequestRedraw};
-use mapvas::remote::RepaintSignal;
 
 pub struct BevyRepaintPlugin;
 

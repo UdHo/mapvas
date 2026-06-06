@@ -1,0 +1,856 @@
+--- a/src/bevy_renderer.rs
++++ b/src/bevy_renderer.rs
+@@ -3,6 +3,7 @@
+ pub mod map;
+ pub mod repaint;
+ pub mod screenshot;
++pub mod surface;
+ pub mod tiles;
+ 
+ pub use app::run;
+--- a/src/bevy_renderer/app.rs
++++ b/src/bevy_renderer/app.rs
+@@ -13,6 +13,7 @@
+   map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
+   repaint::{BevyRepaintPlugin, BevyRepaintRequests},
+   screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
++  surface::BevyRenderSurfacePlugin,
+   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
+ };
+ 
+@@ -230,6 +231,7 @@
+     )
+     .add_plugins(EguiPlugin::default())
+     .add_plugins(BevyMapPlugin)
++    .add_plugins(BevyRenderSurfacePlugin)
+     .add_plugins(BevyRepaintPlugin)
+     .add_plugins(BevyScreenshotPlugin)
+     .add_plugins(BevyTilePlugin)
+--- a/src/bevy_renderer/geometry.rs
++++ b/src/bevy_renderer/geometry.rs
+@@ -11,10 +11,9 @@
+   asset::RenderAssetUsages,
+   mesh::{Indices, PrimitiveTopology},
+   prelude::*,
+-  window::PrimaryWindow,
+ };
+ 
+-use super::map::BevyMapViewport;
++use super::{map::BevyMapViewport, surface::BevyRenderSurface};
+ 
+ const POINT_RADIUS: f32 = 4.0;
+ const HIGHLIGHT_POINT_RADIUS: f32 = 10.0;
+@@ -222,7 +221,7 @@
+   mut commands: Commands,
+   mut layer: ResMut<BevyGeometryLayer>,
+   viewport: Res<BevyMapViewport>,
+-  windows: Query<&Window, With<PrimaryWindow>>,
++  surface: Res<BevyRenderSurface>,
+   mut meshes: ResMut<Assets<Mesh>>,
+   mut materials: ResMut<Assets<ColorMaterial>>,
+   mut fills: Query<
+@@ -267,19 +266,13 @@
+     layer.draw_stats = draw_stats;
+     return;
+   };
+-  let Ok(window) = windows.single() else {
+-    set_fill_visibility(&mut fills, false);
+-    set_highlight_fill_visibility(&mut highlight_fills, false);
+-    set_point_fill_visibility(&mut point_fills, false);
+-    layer.draw_stats = draw_stats;
+-    return;
+-  };
++  let surface = *surface;
+ 
+   rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+   update_polygon_fills(
+     &mut commands,
+     viewport,
+-    window,
++    surface,
+     &mut layer.polygon_fill_instances,
+     &mut fills,
+   );
+@@ -288,7 +281,7 @@
+   update_highlight_polygon_fills(
+     &mut commands,
+     viewport,
+-    window,
++    surface,
+     &mut layer.highlight_polygon_fill_instances,
+     &mut highlight_fills,
+   );
+@@ -296,7 +289,7 @@
+   update_point_fills(
+     &mut commands,
+     viewport,
+-    window,
++    surface,
+     &mut layer.point_fill_instances,
+     &mut point_fills,
+   );
+@@ -305,14 +298,14 @@
+     draw_geometry(
+       geometry,
+       viewport,
+-      window,
++      surface,
+       heading_style,
+       &mut gizmos,
+       &mut draw_stats,
+     );
+   }
+   for geometry in &layer.highlighted_geometries {
+-    draw_highlighted_geometry(geometry, viewport, window, &mut highlight_gizmos);
++    draw_highlighted_geometry(geometry, viewport, surface, &mut highlight_gizmos);
+   }
+   layer.draw_stats = draw_stats;
+ }
+@@ -481,7 +474,7 @@
+ fn update_polygon_fills(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   fill_instances: &mut [PolygonFillInstance],
+   fills: &mut Query<
+     (&mut Transform, &mut Visibility),
+@@ -497,7 +490,7 @@
+     for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
+       let transform = polygon_fill_transform(
+         viewport,
+-        window,
++        surface,
+         instance.origin,
+         wrap_offset,
+         GEOMETRY_FILL_Z,
+@@ -523,7 +516,7 @@
+ fn update_highlight_polygon_fills(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   fill_instances: &mut [PolygonFillInstance],
+   fills: &mut Query<
+     (&mut Transform, &mut Visibility),
+@@ -539,7 +532,7 @@
+     for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
+       let transform = polygon_fill_transform(
+         viewport,
+-        window,
++        surface,
+         instance.origin,
+         wrap_offset,
+         HIGHLIGHT_FILL_Z,
+@@ -565,7 +558,7 @@
+ fn update_point_fills(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   point_instances: &mut [PointFillInstance],
+   fills: &mut Query<
+     (&mut Transform, &mut Visibility),
+@@ -579,7 +572,7 @@
+   for instance in point_instances {
+     let screens = coordinate_screen_positions(instance.coord, viewport);
+     for (entity_index, screen) in screens.iter().copied().enumerate() {
+-      let center = screen_to_bevy(screen, window);
++      let center = screen_to_bevy(screen, surface);
+       let transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
+       if let Some(entity) = instance.entities.get(entity_index).copied() {
+         if let Ok((mut fill_transform, mut visibility)) = fills.get_mut(entity) {
+@@ -705,15 +698,15 @@
+ 
+ fn polygon_fill_transform(
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   origin: PixelCoordinate,
+   wrap_offset: f32,
+   z: f32,
+ ) -> Transform {
+   Transform::from_xyz(
+     viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
+-      - window.width() / 2.0,
+-    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
++      - surface.width() / 2.0,
++    surface.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
+     z,
+   )
+   .with_scale(Vec3::new(
+@@ -915,7 +908,7 @@
+ fn draw_geometry(
+   geometry: &Geometry<PixelCoordinate>,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   heading_style: HeadingStyle,
+   gizmos: &mut Gizmos<BevyGeometryGizmos>,
+   stats: &mut GeometryStats,
+@@ -927,7 +920,7 @@
+   match geometry {
+     Geometry::GeometryCollection(geometries, _) => {
+       for geometry in geometries {
+-        draw_geometry(geometry, viewport, window, heading_style, gizmos, stats);
++        draw_geometry(geometry, viewport, surface, heading_style, gizmos, stats);
+       }
+     }
+     Geometry::Point(coord, metadata) => {
+@@ -938,7 +931,7 @@
+ 
+       let color = style_color(metadata.style.as_ref());
+       for screen in &screens {
+-        let center = screen_to_bevy(*screen, window);
++        let center = screen_to_bevy(*screen, surface);
+         gizmos.circle_2d(center, POINT_RADIUS, color);
+         if let Some(heading) = metadata.heading {
+           draw_heading(gizmos, center, heading, color, heading_style);
+@@ -951,20 +944,20 @@
+     Geometry::LineString(coords, metadata) => {
+       let color = style_color(metadata.style.as_ref());
+       stats.geometries += 1;
+-      stats.line_segments += draw_lines(coords, false, viewport, window, color, gizmos);
++      stats.line_segments += draw_lines(coords, false, viewport, surface, color, gizmos);
+     }
+     Geometry::Polygon(coords, metadata) => {
+       let color = style_color(metadata.style.as_ref());
+       stats.geometries += 1;
+       stats.polygons += 1;
+-      stats.line_segments += draw_lines(coords, true, viewport, window, color, gizmos);
++      stats.line_segments += draw_lines(coords, true, viewport, surface, color, gizmos);
+     }
+     Geometry::Heatmap(coords, metadata) => {
+       let color = style_color(metadata.style.as_ref());
+       stats.geometries += 1;
+       for coord in coords.iter().take(MAX_HEATMAP_POINTS_PER_FRAME) {
+         for screen in coordinate_screen_positions(*coord, viewport) {
+-          gizmos.circle_2d(screen_to_bevy(screen, window), 1.5, color);
++          gizmos.circle_2d(screen_to_bevy(screen, surface), 1.5, color);
+           stats.heatmap_points += 1;
+         }
+       }
+@@ -976,7 +969,7 @@
+   coords: &[PixelCoordinate],
+   closed: bool,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   color: Color,
+   gizmos: &mut Gizmos<BevyGeometryGizmos>,
+ ) -> usize {
+@@ -986,11 +979,11 @@
+ 
+   let mut drawn_segments = 0;
+   for segment in coords.windows(2) {
+-    drawn_segments += draw_segment(segment[0], segment[1], viewport, window, color, gizmos);
++    drawn_segments += draw_segment(segment[0], segment[1], viewport, surface, color, gizmos);
+   }
+ 
+   if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
+-    drawn_segments += draw_segment(*last, *first, viewport, window, color, gizmos);
++    drawn_segments += draw_segment(*last, *first, viewport, surface, color, gizmos);
+   }
+ 
+   drawn_segments
+@@ -1000,15 +993,15 @@
+   start: PixelCoordinate,
+   end: PixelCoordinate,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   color: Color,
+   gizmos: &mut Gizmos<BevyGeometryGizmos>,
+ ) -> usize {
+   let screen_segments = segment_screen_positions(start, end, viewport);
+   for (screen_start, screen_end) in &screen_segments {
+     gizmos.line_2d(
+-      screen_to_bevy(*screen_start, window),
+-      screen_to_bevy(*screen_end, window),
++      screen_to_bevy(*screen_start, surface),
++      screen_to_bevy(*screen_end, surface),
+       color,
+     );
+   }
+@@ -1019,7 +1012,7 @@
+ fn draw_highlighted_geometry(
+   geometry: &Geometry<PixelCoordinate>,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+   if !geometry_intersects_viewport(geometry, viewport) {
+@@ -1029,7 +1022,7 @@
+   match geometry {
+     Geometry::GeometryCollection(geometries, _) => {
+       for geometry in geometries {
+-        draw_highlighted_geometry(geometry, viewport, window, gizmos);
++        draw_highlighted_geometry(geometry, viewport, surface, gizmos);
+       }
+     }
+     Geometry::Point(coord, metadata) => {
+@@ -1040,7 +1033,7 @@
+       let color = highlight_color(metadata.style.as_ref());
+       for screen in screens {
+         gizmos.circle_2d(
+-          screen_to_bevy(screen, window),
++          screen_to_bevy(screen, surface),
+           HIGHLIGHT_POINT_RADIUS,
+           color,
+         );
+@@ -1051,7 +1044,7 @@
+         coords,
+         false,
+         viewport,
+-        window,
++        surface,
+         highlight_color(metadata.style.as_ref()),
+         gizmos,
+       );
+@@ -1061,7 +1054,7 @@
+         coords,
+         true,
+         viewport,
+-        window,
++        surface,
+         highlight_color(metadata.style.as_ref()),
+         gizmos,
+       );
+@@ -1074,7 +1067,7 @@
+   coords: &[PixelCoordinate],
+   closed: bool,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   color: Color,
+   gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+@@ -1083,11 +1076,11 @@
+   }
+ 
+   for segment in coords.windows(2) {
+-    draw_highlighted_segment(segment[0], segment[1], viewport, window, color, gizmos);
++    draw_highlighted_segment(segment[0], segment[1], viewport, surface, color, gizmos);
+   }
+ 
+   if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
+-    draw_highlighted_segment(*last, *first, viewport, window, color, gizmos);
++    draw_highlighted_segment(*last, *first, viewport, surface, color, gizmos);
+   }
+ }
+ 
+@@ -1095,14 +1088,14 @@
+   start: PixelCoordinate,
+   end: PixelCoordinate,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   color: Color,
+   gizmos: &mut Gizmos<BevyHighlightGizmos>,
+ ) {
+   for (screen_start, screen_end) in segment_screen_positions(start, end, viewport) {
+     gizmos.line_2d(
+-      screen_to_bevy(screen_start, window),
+-      screen_to_bevy(screen_end, window),
++      screen_to_bevy(screen_start, surface),
++      screen_to_bevy(screen_end, surface),
+       color,
+     );
+   }
+@@ -1222,10 +1215,10 @@
+     .collect()
+ }
+ 
+-fn screen_to_bevy(screen: PixelPosition, window: &Window) -> Vec2 {
++fn screen_to_bevy(screen: PixelPosition, surface: BevyRenderSurface) -> Vec2 {
+   Vec2::new(
+-    screen.x - window.width() / 2.0,
+-    window.height() / 2.0 - screen.y,
++    screen.x - surface.width() / 2.0,
++    surface.height() / 2.0 - screen.y,
+   )
+ }
+ 
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -30,10 +30,9 @@
+   prelude::*,
+   render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+   sprite::Anchor,
+-  window::PrimaryWindow,
+ };
+ 
+-use super::map::BevyMapViewport;
++use super::{map::BevyMapViewport, surface::BevyRenderSurface};
+ 
+ const MAX_PRELOAD_TILES: usize = 20;
+ const TILE_LABEL_WIDTH: f32 = 100.0;
+@@ -1032,7 +1031,7 @@
+   mut layer: ResMut<BevyTileLayer>,
+   viewport: Res<BevyMapViewport>,
+   runtime: Res<BevyTileRuntime>,
+-  windows: Query<&Window, With<PrimaryWindow>>,
++  surface: Res<BevyRenderSurface>,
+   mut sprites: Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
+   mut grid_sprites: Query<
+     (&mut Transform, &mut Sprite, &mut Visibility),
+@@ -1112,19 +1111,7 @@
+     hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
+     return;
+   };
+-  let Ok(window) = windows.single() else {
+-    hide_tile_sprites(&mut sprites);
+-    despawn_untracked_tile_sprites(
+-      &mut commands,
+-      &tracked_tile_entities(&layer),
+-      &stale_entities,
+-      &mut sprites,
+-    );
+-    hide_grid_tile_sprites(&mut grid_sprites);
+-    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
+-    hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
+-    return;
+-  };
++  let surface = *surface;
+ 
+   let visible_tiles = layer.visible_tiles(viewport);
+   let runtime_handle = runtime.0.clone();
+@@ -1153,13 +1140,13 @@
+     update_grid_tile_sprites(
+       &mut commands,
+       viewport,
+-      window,
++      surface,
+       &visible_tiles,
+       &mut grid_sprites,
+     );
+     draw_coordinate_tile_borders(
+       viewport,
+-      window,
++      surface,
+       &visible_tiles,
+       layer.coordinate_display_mode,
+       &mut overlay_gizmos,
+@@ -1167,7 +1154,7 @@
+     update_tile_labels(
+       &mut commands,
+       viewport,
+-      window,
++      surface,
+       &visible_tiles,
+       &mut label_backgrounds,
+       &mut label_texts,
+@@ -1175,7 +1162,7 @@
+     update_osm_attribution(
+       &mut commands,
+       viewport,
+-      window,
++      surface,
+       show_osm_attribution,
+       &mut attribution_backgrounds,
+       &mut attribution_texts,
+@@ -1186,7 +1173,7 @@
+ 
+   draw_coordinate_tile_borders(
+     viewport,
+-    window,
++    surface,
+     &visible_tiles,
+     layer.coordinate_display_mode,
+     &mut overlay_gizmos,
+@@ -1197,7 +1184,7 @@
+     update_tile_labels(
+       &mut commands,
+       viewport,
+-      window,
++      surface,
+       &visible_tiles,
+       &mut label_backgrounds,
+       &mut label_texts,
+@@ -1206,7 +1193,7 @@
+   update_osm_attribution(
+     &mut commands,
+     viewport,
+-    window,
++    surface,
+     show_osm_attribution,
+     &mut attribution_backgrounds,
+     &mut attribution_texts,
+@@ -1234,7 +1221,7 @@
+     let mut visible_entity_count = 0;
+ 
+     for tile_rect in tile_rects {
+-      let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
++      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
+       let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
+       let image = entry.image.clone();
+ 
+@@ -1295,7 +1282,7 @@
+   mut layer: ResMut<BevyTileLayer>,
+   viewport: Res<BevyMapViewport>,
+   runtime: Res<BevyTileRuntime>,
+-  windows: Query<&Window, With<PrimaryWindow>>,
++  surface: Res<BevyRenderSurface>,
+   mut meshes: Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
+ ) {
+   let stale_entities = layer
+@@ -1326,16 +1313,7 @@
+     );
+     return;
+   };
+-  let Ok(window) = windows.single() else {
+-    hide_native_vector_tile_meshes(&mut meshes);
+-    despawn_untracked_native_vector_tile_meshes(
+-      &mut commands,
+-      &tracked_native_vector_tile_entities(&layer),
+-      &stale_entities,
+-      &mut meshes,
+-    );
+-    return;
+-  };
++  let surface = *surface;
+ 
+   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+     hide_native_vector_tile_meshes(&mut meshes);
+@@ -1368,7 +1346,7 @@
+       update_native_vector_tile_mesh_instance(
+         &mut commands,
+         viewport,
+-        window,
++        surface,
+         instance,
+         &mut meshes,
+       );
+@@ -1397,7 +1375,7 @@
+   mut layer: ResMut<BevyTileLayer>,
+   label_fonts: Res<BevyTileLabelFonts>,
+   viewport: Res<BevyMapViewport>,
+-  windows: Query<&Window, With<PrimaryWindow>>,
++  surface: Res<BevyRenderSurface>,
+   mut markers: NativeVectorLabelMarkerQuery<'_, '_>,
+   mut texts: NativeVectorLabelTextQuery<'_, '_>,
+ ) {
+@@ -1421,16 +1399,7 @@
+     );
+     return;
+   };
+-  let Ok(window) = windows.single() else {
+-    hide_native_vector_tile_labels(&mut markers, &mut texts);
+-    despawn_untracked_native_vector_tile_labels(
+-      &mut commands,
+-      &tracked_native_vector_tile_label_entities(&layer),
+-      &mut markers,
+-      &mut texts,
+-    );
+-    return;
+-  };
++  let surface = *surface;
+   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
+     hide_native_vector_tile_labels(&mut markers, &mut texts);
+     despawn_untracked_native_vector_tile_labels(
+@@ -1475,7 +1444,7 @@
+       update_native_vector_tile_label_instance(
+         &mut commands,
+         viewport,
+-        window,
++        surface,
+         label,
+         &cfg,
+         &label_fonts.map_label,
+@@ -1544,14 +1513,14 @@
+ fn update_native_vector_tile_mesh_instance(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   instance: &mut NativeVectorTileMeshInstance,
+   meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
+ ) {
+   let wrap_offsets = native_vector_bounds_visible_wrap_offsets(instance.bounds, viewport);
+   for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
+     let transform =
+-      native_vector_tile_transform(viewport, window, instance.origin, wrap_offset, instance.z);
++      native_vector_tile_transform(viewport, surface, instance.origin, wrap_offset, instance.z);
+     if let Some(entity) = instance.entities.get(entity_index).copied() {
+       if let Ok((_, mut mesh_transform, mut visibility)) = meshes.get_mut(entity) {
+         *mesh_transform = transform;
+@@ -1572,7 +1541,7 @@
+ fn update_native_vector_tile_label_instance(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   label: &mut NativeVectorTileLabelInstance,
+   cfg: &StyleConfig,
+   label_font: &Handle<Font>,
+@@ -1589,7 +1558,7 @@
+   let text_offset_x = radius + cfg.markers.text_offset_x * scale;
+ 
+   for (entity_index, screen_pos) in positions.iter().copied().enumerate() {
+-    let bevy_pos = screen_to_bevy_2d(screen_pos, window);
++    let bevy_pos = screen_to_bevy_2d(screen_pos, surface);
+     let marker_transform =
+       Transform::from_xyz(bevy_pos.x, bevy_pos.y, NATIVE_VECTOR_LABEL_MARKER_Z);
+     let text_transform = Transform::from_xyz(
+@@ -1941,7 +1910,7 @@
+ fn update_grid_tile_sprites(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   visible_tiles: &[Tile],
+   sprites: &mut Query<
+     (&mut Transform, &mut Sprite, &mut Visibility),
+@@ -1951,7 +1920,7 @@
+   let mut sprite_iter = sprites.iter_mut();
+   for tile in visible_tiles {
+     for tile_rect in coordinate_tile_rects(viewport, *tile) {
+-      let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
++      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
+       let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
+       let color = grid_tile_color(*tile);
+ 
+@@ -1978,7 +1947,7 @@
+ fn update_tile_labels(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   visible_tiles: &[Tile],
+   backgrounds: &mut Query<
+     (&mut Transform, &mut Sprite, &mut Visibility),
+@@ -2009,20 +1978,20 @@
+ 
+       if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
+         *transform =
+-          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z);
++          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z);
+         sprite.custom_size = Some(label.background_size);
+         sprite.color = tile_label_background_color();
+         *visibility = Visibility::Visible;
+       } else {
+         commands.spawn((
+           Sprite::from_color(tile_label_background_color(), label.background_size),
+-          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z),
++          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z),
+           BevyTileLabelBackground,
+         ));
+       }
+ 
+       if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
+-        *transform = transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z);
++        *transform = transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z);
+         text.0 = label.text;
+         *visibility = Visibility::Visible;
+       } else {
+@@ -2032,7 +2001,7 @@
+           TextColor(Color::WHITE),
+           TextLayout::new_with_justify(Justify::Left),
+           Anchor::TOP_LEFT,
+-          transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z),
++          transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z),
+           BevyTileLabelText,
+         ));
+       }
+@@ -2050,7 +2019,7 @@
+ fn update_osm_attribution(
+   commands: &mut Commands,
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   visible: bool,
+   backgrounds: &mut Query<
+     (&mut Transform, &mut Sprite, &mut Visibility),
+@@ -2085,14 +2054,14 @@
+ 
+   let mut background_iter = backgrounds.iter_mut();
+   if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
+-    *transform = transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_BACKGROUND_Z);
++    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z);
+     sprite.custom_size = Some(size);
+     sprite.color = osm_attribution_background_color();
+     *visibility = Visibility::Visible;
+   } else {
+     commands.spawn((
+       Sprite::from_color(osm_attribution_background_color(), size),
+-      transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_BACKGROUND_Z),
++      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z),
+       BevyOsmAttributionBackground,
+     ));
+   }
+@@ -2102,7 +2071,7 @@
+ 
+   let mut text_iter = texts.iter_mut();
+   if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
+-    *transform = transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_TEXT_Z);
++    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z);
+     text.0 = OSM_ATTRIBUTION_TEXT.to_string();
+     *visibility = Visibility::Visible;
+   } else {
+@@ -2111,7 +2080,7 @@
+       TextFont::from_font_size(OSM_ATTRIBUTION_FONT_SIZE),
+       TextColor(Color::srgb(35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0)),
+       TextLayout::new_with_justify(Justify::Center),
+-      transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_TEXT_Z),
++      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z),
+       BevyOsmAttributionText,
+     ));
+   }
+@@ -2180,7 +2149,7 @@
+ 
+ fn draw_coordinate_tile_borders(
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   visible_tiles: &[Tile],
+   mode: CoordinateDisplayMode,
+   gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
+@@ -2192,23 +2161,23 @@
+   let color = tile_border_color(mode);
+   for tile in visible_tiles {
+     for tile_rect in coordinate_tile_rects(viewport, *tile) {
+-      draw_tile_border(tile_rect, window, color, gizmos);
++      draw_tile_border(tile_rect, surface, color, gizmos);
+     }
+   }
+ }
+ 
+ fn draw_tile_border(
+   rect: PixelRect,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   color: Color,
+   gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
+ ) {
+   let min = rect.min;
+   let max = rect.max;
+-  let top_left = screen_to_bevy_2d(min, window);
+-  let top_right = screen_to_bevy_2d(PixelPosition { x: max.x, y: min.y }, window);
+-  let bottom_right = screen_to_bevy_2d(max, window);
+-  let bottom_left = screen_to_bevy_2d(PixelPosition { x: min.x, y: max.y }, window);
++  let top_left = screen_to_bevy_2d(min, surface);
++  let top_right = screen_to_bevy_2d(PixelPosition { x: max.x, y: min.y }, surface);
++  let bottom_right = screen_to_bevy_2d(max, surface);
++  let bottom_left = screen_to_bevy_2d(PixelPosition { x: min.x, y: max.y }, surface);
+ 
+   gizmos.line_2d(top_left, top_right, color);
+   gizmos.line_2d(top_right, bottom_right, color);
+@@ -2285,15 +2254,15 @@
+ 
+ fn native_vector_tile_transform(
+   viewport: MapViewport,
+-  window: &Window,
++  surface: BevyRenderSurface,
+   origin: PixelCoordinate,
+   wrap_offset: f32,
+   z: f32,
+ ) -> Transform {
+   Transform::from_xyz(
+     viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
+-      - window.width() / 2.0,
+-    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
++      - surface.width() / 2.0,
++    surface.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
+     z,
+   )
+   .with_scale(Vec3::new(
+@@ -2393,25 +2362,33 @@
+   tile_rects
+ }
+ 
+-fn transform_for_screen_rect(rect: PixelRect, window: &Window, tile_zoom: u8) -> Transform {
++fn transform_for_screen_rect(
++  rect: PixelRect,
++  surface: BevyRenderSurface,
++  tile_zoom: u8,
++) -> Transform {
+   let z = -10.0 + f32::from(tile_zoom) * 0.001;
+-  transform_for_screen_rect_at_z(rect, window, z)
++  transform_for_screen_rect_at_z(rect, surface, z)
+ }
+ 
+-fn transform_for_screen_rect_at_z(rect: PixelRect, window: &Window, z: f32) -> Transform {
++fn transform_for_screen_rect_at_z(
++  rect: PixelRect,
++  surface: BevyRenderSurface,
++  z: f32,
++) -> Transform {
+   let center = rect.center();
+-  transform_for_screen_pos(center, window, z)
++  transform_for_screen_pos(center, surface, z)
+ }
+ 
+-fn transform_for_screen_pos(pos: PixelPosition, window: &Window, z: f32) -> Transform {
+-  let bevy_pos = screen_to_bevy_2d(pos, window);
++fn transform_for_screen_pos(pos: PixelPosition, surface: BevyRenderSurface, z: f32) -> Transform {
++  let bevy_pos = screen_to_bevy_2d(pos, surface);
+   Transform::from_xyz(bevy_pos.x, bevy_pos.y, z)
+ }
+ 
+-fn screen_to_bevy_2d(screen: PixelPosition, window: &Window) -> Vec2 {
++fn screen_to_bevy_2d(screen: PixelPosition, surface: BevyRenderSurface) -> Vec2 {
+   Vec2::new(
+-    screen.x - window.width() / 2.0,
+-    window.height() / 2.0 - screen.y,
++    screen.x - surface.width() / 2.0,
++    surface.height() / 2.0 - screen.y,
+   )
+ }
+ 
+--- /dev/null
++++ b/src/bevy_renderer/surface.rs
+@@ -0,0 +1,53 @@
++use bevy::{
++  prelude::*,
++  window::{PrimaryWindow, Window},
++};
++
++#[derive(Resource, Clone, Copy, Debug, PartialEq)]
++pub struct BevyRenderSurface {
++  width: f32,
++  height: f32,
++}
++
++impl BevyRenderSurface {
++  #[must_use]
++  pub fn new(width: f32, height: f32) -> Self {
++    Self { width, height }
++  }
++
++  #[must_use]
++  pub fn width(self) -> f32 {
++    self.width
++  }
++
++  #[must_use]
++  pub fn height(self) -> f32 {
++    self.height
++  }
++}
++
++impl Default for BevyRenderSurface {
++  fn default() -> Self {
++    Self::new(1600.0, 1200.0)
++  }
++}
++
++pub struct BevyRenderSurfacePlugin;
++
++impl Plugin for BevyRenderSurfacePlugin {
++  fn build(&self, app: &mut App) {
++    app
++      .init_resource::<BevyRenderSurface>()
++      .add_systems(Update, update_render_surface_from_window);
++  }
++}
++
++fn update_render_surface_from_window(
++  mut surface: ResMut<BevyRenderSurface>,
++  windows: Query<&Window, With<PrimaryWindow>>,
++) {
++  let Ok(window) = windows.single() else {
++    return;
++  };
++  *surface = BevyRenderSurface::new(window.width(), window.height());
++}

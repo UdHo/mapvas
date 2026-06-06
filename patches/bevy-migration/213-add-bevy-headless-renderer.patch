@@ -1,0 +1,443 @@
+--- a/src/bevy_renderer.rs
++++ b/src/bevy_renderer.rs
+@@ -1,9 +1,11 @@
+ pub mod app;
+ pub mod geometry;
++pub mod headless;
+ pub mod map;
+ pub mod repaint;
+ pub mod screenshot;
+ pub mod surface;
+ pub mod tiles;
+ 
+-pub use app::run;
++pub use app::{MapvasBevyRenderPlugin, run};
++pub use headless::BevyHeadlessRenderer;
+--- a/src/bevy_renderer/app.rs
++++ b/src/bevy_renderer/app.rs
+@@ -16,7 +16,44 @@
+   surface::BevyRenderSurfacePlugin,
+   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
+ };
++
++#[derive(Clone, Copy)]
++pub struct MapvasBevyRenderPlugin {
++  interactive: bool,
++}
++
++impl MapvasBevyRenderPlugin {
++  #[must_use]
++  pub fn interactive() -> Self {
++    Self { interactive: true }
++  }
++
++  #[must_use]
++  pub fn headless() -> Self {
++    Self { interactive: false }
++  }
++}
++
++impl Plugin for MapvasBevyRenderPlugin {
++  fn build(&self, app: &mut App) {
++    app.init_resource::<BevyGeometryLayer>();
++
++    if self.interactive {
++      app
++        .add_plugins(BevyMapPlugin)
++        .add_plugins(BevyRenderSurfacePlugin)
++        .add_plugins(BevyRepaintPlugin)
++        .add_plugins(BevyScreenshotPlugin);
++    } else {
++      app.init_resource::<BevyMapViewport>();
++    }
+ 
++    app
++      .add_plugins(BevyTilePlugin)
++      .add_plugins(BevyGeometryPlugin);
++  }
++}
++
+ pub(crate) struct MapvasBevyState {
+   runtime: tokio::runtime::Runtime,
+   runtime_monitor: Option<RuntimeMonitor>,
+@@ -65,7 +102,7 @@
+   }
+ }
+ 
+-fn build_runtime() -> tokio::runtime::Runtime {
++pub(crate) fn build_runtime() -> tokio::runtime::Runtime {
+   match tokio::runtime::Builder::new_multi_thread()
+     .worker_threads(4)
+     .thread_name("async-io")
+@@ -230,12 +267,7 @@
+         .disable::<LogPlugin>(),
+     )
+     .add_plugins(EguiPlugin::default())
+-    .add_plugins(BevyMapPlugin)
+-    .add_plugins(BevyRenderSurfacePlugin)
+-    .add_plugins(BevyRepaintPlugin)
+-    .add_plugins(BevyScreenshotPlugin)
+-    .add_plugins(BevyTilePlugin)
+-    .add_plugins(BevyGeometryPlugin)
++    .add_plugins(MapvasBevyRenderPlugin::interactive())
+     .add_systems(Startup, setup_camera)
+     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
+     .run();
+--- /dev/null
++++ b/src/bevy_renderer/headless.rs
+@@ -0,0 +1,304 @@
++use std::{
++  sync::mpsc::{Receiver, Sender},
++  time::Duration,
++};
++
++use bevy::{
++  app::ScheduleRunnerPlugin,
++  camera::RenderTarget,
++  log::LogPlugin,
++  prelude::*,
++  render::{
++    render_resource::{TextureFormat, TextureUsages},
++    view::screenshot::{Screenshot, ScreenshotCaptured},
++  },
++  window::{ExitCondition, WindowPlugin},
++  winit::WinitPlugin,
++};
++
++use crate::{
++  config::Config,
++  map::{
++    Map,
++    coordinates::{PixelPosition, PixelRect},
++    map_event::MapEvent,
++    tile_renderer::init_style_config,
++  },
++  remote::RepaintSignal,
++};
++
++use super::{
++  MapvasBevyRenderPlugin,
++  app::build_runtime,
++  geometry::BevyGeometryLayer,
++  map::BevyMapViewport,
++  surface::BevyRenderSurface,
++  tiles::{BevyTileLayer, BevyTileRuntime},
++};
++
++const HEADLESS_STABLE_IDLE_FRAMES: u32 = 3;
++const HEADLESS_MAX_FRAMES: u32 = 60 * 60;
++
++#[derive(Debug, thiserror::Error)]
++pub enum BevyHeadlessRenderError {
++  #[error("headless Bevy renderer did not capture an image")]
++  CaptureMissing,
++  #[error("failed to convert Bevy screenshot image: {0}")]
++  ImageConversion(String),
++}
++
++pub struct BevyHeadlessRenderer {
++  config: Config,
++  wait_for_tiles: bool,
++  no_map: bool,
++  clear_color: Color,
++}
++
++impl BevyHeadlessRenderer {
++  #[must_use]
++  pub fn new() -> Self {
++    Self::with_config(Config::new())
++  }
++
++  #[must_use]
++  pub fn with_config(config: Config) -> Self {
++    Self {
++      config,
++      wait_for_tiles: true,
++      no_map: false,
++      clear_color: Color::WHITE,
++    }
++  }
++
++  #[must_use]
++  pub fn without_tiles(mut self) -> Self {
++    self.wait_for_tiles = false;
++    self
++  }
++
++  #[must_use]
++  pub fn without_map(mut self) -> Self {
++    self.no_map = true;
++    self.wait_for_tiles = false;
++    self.clear_color = Color::BLACK;
++    self
++  }
++
++  #[must_use]
++  pub fn with_clear_color(mut self, color: Color) -> Self {
++    self.clear_color = color;
++    self
++  }
++
++  pub fn render(
++    &self,
++    events: &[MapEvent],
++    width: u32,
++    height: u32,
++  ) -> Result<image::RgbaImage, BevyHeadlessRenderError> {
++    init_style_config(self.config.vector_style_file.as_deref());
++
++    let runtime = build_runtime();
++    let runtime_handle = runtime.handle().clone();
++    let (repaint_sender, _repaint_receiver) = std::sync::mpsc::channel();
++    let (mut map, remote, _data_holder) =
++      Map::new_bevy(self.config.clone(), RepaintSignal::channel(repaint_sender));
++    map.set_headless();
++
++    for event in events {
++      remote.handle_map_event(event.clone());
++    }
++
++    let mut tile_layer = BevyTileLayer::new(self.config.clone());
++    tile_layer.set_preload_enabled(false);
++    if self.no_map {
++      tile_layer.set_visible(false);
++    }
++
++    let (capture_sender, capture_receiver) = std::sync::mpsc::channel();
++    let mut app = App::new();
++    app
++      .insert_non_send_resource(BevyHeadlessState::new(
++        map,
++        self.config.clone(),
++        width,
++        height,
++        self.wait_for_tiles,
++        capture_sender,
++      ))
++      .insert_resource(ClearColor(self.clear_color))
++      .insert_resource(BevyRenderSurface::new(width as f32, height as f32))
++      .insert_resource(BevyTileRuntime(runtime_handle))
++      .insert_resource(tile_layer)
++      .add_plugins(
++        DefaultPlugins
++          .set(WindowPlugin {
++            primary_window: None,
++            exit_condition: ExitCondition::DontExit,
++            ..Default::default()
++          })
++          .disable::<LogPlugin>()
++          .disable::<WinitPlugin>(),
++      )
++      .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
++        1.0 / 60.0,
++      )))
++      .add_plugins(MapvasBevyRenderPlugin::headless())
++      .add_systems(Startup, setup_headless_camera)
++      .add_systems(PreUpdate, drive_headless_map_frame);
++
++    let _runtime_guard = runtime.handle().enter();
++    app.run();
++    drop(_runtime_guard);
++    drop(runtime);
++
++    receive_capture(capture_receiver)
++  }
++}
++
++impl Default for BevyHeadlessRenderer {
++  fn default() -> Self {
++    Self::new()
++  }
++}
++
++#[derive(Resource, Clone)]
++struct HeadlessRenderTarget(Handle<Image>);
++
++struct BevyHeadlessState {
++  map: Map,
++  config: Config,
++  width: u32,
++  height: u32,
++  wait_for_tiles: bool,
++  capture_sender: Sender<Result<image::RgbaImage, BevyHeadlessRenderError>>,
++  known_snapshot_version: u64,
++  known_geometry_version: u64,
++  idle_frames: u32,
++  frames: u32,
++  capture_requested: bool,
++}
++
++impl BevyHeadlessState {
++  fn new(
++    map: Map,
++    config: Config,
++    width: u32,
++    height: u32,
++    wait_for_tiles: bool,
++    capture_sender: Sender<Result<image::RgbaImage, BevyHeadlessRenderError>>,
++  ) -> Self {
++    Self {
++      map,
++      config,
++      width,
++      height,
++      wait_for_tiles,
++      capture_sender,
++      known_snapshot_version: u64::MAX,
++      known_geometry_version: u64::MAX,
++      idle_frames: 0,
++      frames: 0,
++      capture_requested: false,
++    }
++  }
++
++  fn rect(&self) -> PixelRect {
++    PixelRect::from_min_size(
++      PixelPosition { x: 0.0, y: 0.0 },
++      PixelPosition {
++        x: self.width as f32,
++        y: self.height as f32,
++      },
++    )
++  }
++}
++
++fn setup_headless_camera(
++  mut commands: Commands,
++  mut images: ResMut<Assets<Image>>,
++  state: NonSend<BevyHeadlessState>,
++) {
++  let mut image = Image::new_target_texture(
++    state.width,
++    state.height,
++    TextureFormat::bevy_default(),
++    None,
++  );
++  image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
++  let target = images.add(image);
++  commands.insert_resource(HeadlessRenderTarget(target.clone()));
++  commands.spawn((Camera2d, RenderTarget::Image(target.into())));
++}
++
++fn drive_headless_map_frame(
++  mut commands: Commands,
++  mut state: NonSendMut<BevyHeadlessState>,
++  mut viewport: ResMut<BevyMapViewport>,
++  mut geometry: ResMut<BevyGeometryLayer>,
++  mut tiles: ResMut<BevyTileLayer>,
++  target: Option<Res<HeadlessRenderTarget>>,
++) {
++  if state.capture_requested {
++    return;
++  }
++
++  state.frames = state.frames.saturating_add(1);
++  let rect = state.rect();
++  state.map.prepare_headless_bevy_frame(rect);
++  viewport.set(state.map.viewport());
++  geometry.update_config(&state.config);
++  tiles.update_config(&state.config);
++  tiles.refresh_style_version();
++
++  let snapshot_version = state.map.geometry_snapshot_version();
++  if snapshot_version != state.known_snapshot_version {
++    let snapshot = state
++      .map
++      .geometry_snapshot_since(state.known_geometry_version);
++    state.known_snapshot_version = snapshot.version;
++    state.known_geometry_version = snapshot.geometry_version;
++    geometry.update_snapshot(snapshot);
++  }
++
++  let pending = state.map.has_pending_work() || (state.wait_for_tiles && tiles.has_pending_work());
++  if pending && state.frames < HEADLESS_MAX_FRAMES {
++    state.idle_frames = 0;
++    return;
++  }
++
++  if pending {
++    log::warn!("Headless Bevy render captured after timeout with pending tile or map work");
++  } else {
++    state.idle_frames = state.idle_frames.saturating_add(1);
++    if state.idle_frames < HEADLESS_STABLE_IDLE_FRAMES {
++      return;
++    }
++  }
++
++  let Some(target) = target else {
++    return;
++  };
++  let capture_sender = state.capture_sender.clone();
++  state.capture_requested = true;
++  commands.spawn(Screenshot::image(target.0.clone())).observe(
++    move |capture: On<ScreenshotCaptured>, mut app_exit: MessageWriter<AppExit>| {
++      let image = capture
++        .image
++        .clone()
++        .try_into_dynamic()
++        .map(|image| image.to_rgba8())
++        .map_err(|error| BevyHeadlessRenderError::ImageConversion(format!("{error:?}")));
++      let _ = capture_sender.send(image);
++      app_exit.write(AppExit::Success);
++    },
++  );
++}
++
++fn receive_capture(
++  receiver: Receiver<Result<image::RgbaImage, BevyHeadlessRenderError>>,
++) -> Result<image::RgbaImage, BevyHeadlessRenderError> {
++  receiver
++    .recv()
++    .map_err(|_| BevyHeadlessRenderError::CaptureMissing)?
++}
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -416,9 +416,30 @@
+     }
+ 
+     self.last_style_version = current_style_version;
++    self.clear_tiles();
++  }
++
++  pub fn set_visible(&mut self, visible: bool) {
++    if self.visible == visible {
++      return;
++    }
++
++    self.visible = visible;
+     self.clear_tiles();
+   }
+ 
++  pub fn set_preload_enabled(&mut self, preload_enabled: bool) {
++    self.preload_enabled = preload_enabled;
++  }
++
++  #[must_use]
++  pub fn has_pending_work(&self) -> bool {
++    !self.in_flight_tiles.is_empty()
++      || self
++        .tile_loader()
++        .is_some_and(|loader| loader.tiles_downloading() > 0 || loader.tiles_queued() > 0)
++  }
++
+   pub fn ui(&mut self, ui: &mut egui::Ui) {
+     ui.collapsing("Bevy Tile Layer", |ui| {
+       ui.checkbox(&mut self.visible, "visible");
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -832,6 +832,15 @@
+ 
+     response
+   }
++
++  pub fn prepare_headless_bevy_frame(&mut self, rect: PixelRect) {
++    profile_scope!("Map::prepare_headless_bevy_frame");
++    self.initialize_transform_if_needed(rect);
++    self.update_frame_viewport(rect);
++    self.process_pending_layer_data();
++    self.handle_map_events(rect);
++    self.update_state_snapshot();
++  }
+ }
+ 
+ impl Map {

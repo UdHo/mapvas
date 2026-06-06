@@ -7,15 +7,7 @@ use std::{
   },
 };
 
-use bevy::{
-  asset::RenderAssetUsages,
-  mesh::{Indices, PrimitiveTopology},
-  prelude::*,
-  render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-  sprite::Anchor,
-  window::PrimaryWindow,
-};
-use mapvas::{
+use crate::{
   config::{Config, TileProvider, TileType},
   map::{
     coordinates::{
@@ -32,8 +24,15 @@ use mapvas::{
   },
   task_tracker::{TaskCategory, TaskGuard},
 };
+use bevy::{
+  asset::RenderAssetUsages,
+  mesh::{Indices, PrimitiveTopology},
+  prelude::*,
+  render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+  sprite::Anchor,
+};
 
-use crate::bevy_map::BevyMapViewport;
+use super::{map::BevyMapViewport, surface::BevyRenderSurface};
 
 const MAX_PRELOAD_TILES: usize = 20;
 const TILE_LABEL_WIDTH: f32 = 100.0;
@@ -61,7 +60,7 @@ const NATIVE_VECTOR_ROAD_CASING_Z: f32 = -26.0;
 const NATIVE_VECTOR_ROAD_INNER_Z: f32 = -25.0;
 const NATIVE_VECTOR_LABEL_MARKER_Z: f32 = -24.0;
 const NATIVE_VECTOR_LABEL_TEXT_Z: f32 = -23.0;
-const EMBEDDED_MAP_LABEL_FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
+const EMBEDDED_MAP_LABEL_FONT_DATA: &[u8] = include_bytes!("../assets/fonts/Roboto-Regular.ttf");
 const PREFERRED_MAP_LABEL_FONT_PATHS: &[&str] = &[
   "/System/Library/Fonts/Supplemental/NotoSans-Regular.ttf",
   "/Library/Fonts/NotoSans-Regular.ttf",
@@ -420,6 +419,27 @@ impl BevyTileLayer {
     self.clear_tiles();
   }
 
+  pub fn set_visible(&mut self, visible: bool) {
+    if self.visible == visible {
+      return;
+    }
+
+    self.visible = visible;
+    self.clear_tiles();
+  }
+
+  pub fn set_preload_enabled(&mut self, preload_enabled: bool) {
+    self.preload_enabled = preload_enabled;
+  }
+
+  #[must_use]
+  pub fn has_pending_work(&self) -> bool {
+    !self.in_flight_tiles.is_empty()
+      || self
+        .tile_loader()
+        .is_some_and(|loader| loader.tiles_downloading() > 0 || loader.tiles_queued() > 0)
+  }
+
   pub fn ui(&mut self, ui: &mut egui::Ui) {
     ui.collapsing("Bevy Tile Layer", |ui| {
       ui.checkbox(&mut self.visible, "visible");
@@ -673,7 +693,7 @@ impl BevyTileLayer {
         return;
       };
 
-      let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER
+      let (render_rx, _) = crate::render_scheduler::RENDER_SCHEDULER
         .submit(priority, move || renderer.render(&tile, &tile_data));
 
       let render_result = tokio::time::timeout(std::time::Duration::from_secs(30), render_rx).await;
@@ -760,7 +780,7 @@ impl BevyTileLayer {
         return;
       };
 
-      let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
+      let (render_rx, _) = crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
         renderer.render_scaled(&parent_tile, &tile_data, scale)
       });
 
@@ -827,7 +847,7 @@ impl BevyTileLayer {
         return;
       };
 
-      let (render_rx, _) = mapvas::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
+      let (render_rx, _) = crate::render_scheduler::RENDER_SCHEDULER.submit(priority, move || {
         native_vector_tile_content(&tile, style_zoom, &tile_data)
       });
 
@@ -1032,7 +1052,7 @@ fn update_bevy_tiles(
   mut layer: ResMut<BevyTileLayer>,
   viewport: Res<BevyMapViewport>,
   runtime: Res<BevyTileRuntime>,
-  windows: Query<&Window, With<PrimaryWindow>>,
+  surface: Res<BevyRenderSurface>,
   mut sprites: Query<(Entity, &mut Transform, &mut Sprite, &mut Visibility), With<BevyTileSprite>>,
   mut grid_sprites: Query<
     (&mut Transform, &mut Sprite, &mut Visibility),
@@ -1112,19 +1132,7 @@ fn update_bevy_tiles(
     hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
     return;
   };
-  let Ok(window) = windows.single() else {
-    hide_tile_sprites(&mut sprites);
-    despawn_untracked_tile_sprites(
-      &mut commands,
-      &tracked_tile_entities(&layer),
-      &stale_entities,
-      &mut sprites,
-    );
-    hide_grid_tile_sprites(&mut grid_sprites);
-    hide_tile_labels(&mut label_backgrounds, &mut label_texts);
-    hide_osm_attribution(&mut attribution_backgrounds, &mut attribution_texts);
-    return;
-  };
+  let surface = *surface;
 
   let visible_tiles = layer.visible_tiles(viewport);
   let runtime_handle = runtime.0.clone();
@@ -1153,13 +1161,13 @@ fn update_bevy_tiles(
     update_grid_tile_sprites(
       &mut commands,
       viewport,
-      window,
+      surface,
       &visible_tiles,
       &mut grid_sprites,
     );
     draw_coordinate_tile_borders(
       viewport,
-      window,
+      surface,
       &visible_tiles,
       layer.coordinate_display_mode,
       &mut overlay_gizmos,
@@ -1167,7 +1175,7 @@ fn update_bevy_tiles(
     update_tile_labels(
       &mut commands,
       viewport,
-      window,
+      surface,
       &visible_tiles,
       &mut label_backgrounds,
       &mut label_texts,
@@ -1175,7 +1183,7 @@ fn update_bevy_tiles(
     update_osm_attribution(
       &mut commands,
       viewport,
-      window,
+      surface,
       show_osm_attribution,
       &mut attribution_backgrounds,
       &mut attribution_texts,
@@ -1186,7 +1194,7 @@ fn update_bevy_tiles(
 
   draw_coordinate_tile_borders(
     viewport,
-    window,
+    surface,
     &visible_tiles,
     layer.coordinate_display_mode,
     &mut overlay_gizmos,
@@ -1197,7 +1205,7 @@ fn update_bevy_tiles(
     update_tile_labels(
       &mut commands,
       viewport,
-      window,
+      surface,
       &visible_tiles,
       &mut label_backgrounds,
       &mut label_texts,
@@ -1206,7 +1214,7 @@ fn update_bevy_tiles(
   update_osm_attribution(
     &mut commands,
     viewport,
-    window,
+    surface,
     show_osm_attribution,
     &mut attribution_backgrounds,
     &mut attribution_texts,
@@ -1234,7 +1242,7 @@ fn update_bevy_tiles(
     let mut visible_entity_count = 0;
 
     for tile_rect in tile_rects {
-      let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
+      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
       let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
       let image = entry.image.clone();
 
@@ -1295,7 +1303,7 @@ fn update_native_vector_tiles(
   mut layer: ResMut<BevyTileLayer>,
   viewport: Res<BevyMapViewport>,
   runtime: Res<BevyTileRuntime>,
-  windows: Query<&Window, With<PrimaryWindow>>,
+  surface: Res<BevyRenderSurface>,
   mut meshes: Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
 ) {
   let stale_entities = layer
@@ -1326,16 +1334,7 @@ fn update_native_vector_tiles(
     );
     return;
   };
-  let Ok(window) = windows.single() else {
-    hide_native_vector_tile_meshes(&mut meshes);
-    despawn_untracked_native_vector_tile_meshes(
-      &mut commands,
-      &tracked_native_vector_tile_entities(&layer),
-      &stale_entities,
-      &mut meshes,
-    );
-    return;
-  };
+  let surface = *surface;
 
   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
     hide_native_vector_tile_meshes(&mut meshes);
@@ -1368,7 +1367,7 @@ fn update_native_vector_tiles(
       update_native_vector_tile_mesh_instance(
         &mut commands,
         viewport,
-        window,
+        surface,
         instance,
         &mut meshes,
       );
@@ -1397,7 +1396,7 @@ fn update_native_vector_tile_labels(
   mut layer: ResMut<BevyTileLayer>,
   label_fonts: Res<BevyTileLabelFonts>,
   viewport: Res<BevyMapViewport>,
-  windows: Query<&Window, With<PrimaryWindow>>,
+  surface: Res<BevyRenderSurface>,
   mut markers: NativeVectorLabelMarkerQuery<'_, '_>,
   mut texts: NativeVectorLabelTextQuery<'_, '_>,
 ) {
@@ -1421,16 +1420,7 @@ fn update_native_vector_tile_labels(
     );
     return;
   };
-  let Ok(window) = windows.single() else {
-    hide_native_vector_tile_labels(&mut markers, &mut texts);
-    despawn_untracked_native_vector_tile_labels(
-      &mut commands,
-      &tracked_native_vector_tile_label_entities(&layer),
-      &mut markers,
-      &mut texts,
-    );
-    return;
-  };
+  let surface = *surface;
   if layer.coordinate_display_mode == CoordinateDisplayMode::GridOnly {
     hide_native_vector_tile_labels(&mut markers, &mut texts);
     despawn_untracked_native_vector_tile_labels(
@@ -1475,7 +1465,7 @@ fn update_native_vector_tile_labels(
       update_native_vector_tile_label_instance(
         &mut commands,
         viewport,
-        window,
+        surface,
         label,
         &cfg,
         &label_fonts.map_label,
@@ -1544,14 +1534,14 @@ fn native_vector_label_request_tile(coord: PixelCoordinate, zoom: u8) -> Tile {
 fn update_native_vector_tile_mesh_instance(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   instance: &mut NativeVectorTileMeshInstance,
   meshes: &mut Query<(Entity, &mut Transform, &mut Visibility), With<BevyNativeVectorTileMesh>>,
 ) {
   let wrap_offsets = native_vector_bounds_visible_wrap_offsets(instance.bounds, viewport);
   for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
     let transform =
-      native_vector_tile_transform(viewport, window, instance.origin, wrap_offset, instance.z);
+      native_vector_tile_transform(viewport, surface, instance.origin, wrap_offset, instance.z);
     if let Some(entity) = instance.entities.get(entity_index).copied() {
       if let Ok((_, mut mesh_transform, mut visibility)) = meshes.get_mut(entity) {
         *mesh_transform = transform;
@@ -1572,7 +1562,7 @@ fn update_native_vector_tile_mesh_instance(
 fn update_native_vector_tile_label_instance(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   label: &mut NativeVectorTileLabelInstance,
   cfg: &StyleConfig,
   label_font: &Handle<Font>,
@@ -1589,7 +1579,7 @@ fn update_native_vector_tile_label_instance(
   let text_offset_x = radius + cfg.markers.text_offset_x * scale;
 
   for (entity_index, screen_pos) in positions.iter().copied().enumerate() {
-    let bevy_pos = screen_to_bevy_2d(screen_pos, window);
+    let bevy_pos = screen_to_bevy_2d(screen_pos, surface);
     let marker_transform =
       Transform::from_xyz(bevy_pos.x, bevy_pos.y, NATIVE_VECTOR_LABEL_MARKER_Z);
     let text_transform = Transform::from_xyz(
@@ -1941,7 +1931,7 @@ fn hide_osm_attribution(
 fn update_grid_tile_sprites(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   visible_tiles: &[Tile],
   sprites: &mut Query<
     (&mut Transform, &mut Sprite, &mut Visibility),
@@ -1951,7 +1941,7 @@ fn update_grid_tile_sprites(
   let mut sprite_iter = sprites.iter_mut();
   for tile in visible_tiles {
     for tile_rect in coordinate_tile_rects(viewport, *tile) {
-      let transform = transform_for_screen_rect(tile_rect, window, tile.zoom);
+      let transform = transform_for_screen_rect(tile_rect, surface, tile.zoom);
       let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
       let color = grid_tile_color(*tile);
 
@@ -1978,7 +1968,7 @@ fn update_grid_tile_sprites(
 fn update_tile_labels(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   visible_tiles: &[Tile],
   backgrounds: &mut Query<
     (&mut Transform, &mut Sprite, &mut Visibility),
@@ -2009,20 +1999,20 @@ fn update_tile_labels(
 
       if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
         *transform =
-          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z);
+          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z);
         sprite.custom_size = Some(label.background_size);
         sprite.color = tile_label_background_color();
         *visibility = Visibility::Visible;
       } else {
         commands.spawn((
           Sprite::from_color(tile_label_background_color(), label.background_size),
-          transform_for_screen_rect_at_z(label.background_rect, window, TILE_LABEL_BACKGROUND_Z),
+          transform_for_screen_rect_at_z(label.background_rect, surface, TILE_LABEL_BACKGROUND_Z),
           BevyTileLabelBackground,
         ));
       }
 
       if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
-        *transform = transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z);
+        *transform = transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z);
         text.0 = label.text;
         *visibility = Visibility::Visible;
       } else {
@@ -2032,7 +2022,7 @@ fn update_tile_labels(
           TextColor(Color::WHITE),
           TextLayout::new_with_justify(Justify::Left),
           Anchor::TOP_LEFT,
-          transform_for_screen_pos(label.text_pos, window, TILE_LABEL_TEXT_Z),
+          transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z),
           BevyTileLabelText,
         ));
       }
@@ -2050,7 +2040,7 @@ fn update_tile_labels(
 fn update_osm_attribution(
   commands: &mut Commands,
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   visible: bool,
   backgrounds: &mut Query<
     (&mut Transform, &mut Sprite, &mut Visibility),
@@ -2085,14 +2075,14 @@ fn update_osm_attribution(
 
   let mut background_iter = backgrounds.iter_mut();
   if let Some((mut transform, mut sprite, mut visibility)) = background_iter.next() {
-    *transform = transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_BACKGROUND_Z);
+    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z);
     sprite.custom_size = Some(size);
     sprite.color = osm_attribution_background_color();
     *visibility = Visibility::Visible;
   } else {
     commands.spawn((
       Sprite::from_color(osm_attribution_background_color(), size),
-      transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_BACKGROUND_Z),
+      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_BACKGROUND_Z),
       BevyOsmAttributionBackground,
     ));
   }
@@ -2102,7 +2092,7 @@ fn update_osm_attribution(
 
   let mut text_iter = texts.iter_mut();
   if let Some((mut transform, mut text, mut visibility)) = text_iter.next() {
-    *transform = transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_TEXT_Z);
+    *transform = transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z);
     text.0 = OSM_ATTRIBUTION_TEXT.to_string();
     *visibility = Visibility::Visible;
   } else {
@@ -2111,7 +2101,7 @@ fn update_osm_attribution(
       TextFont::from_font_size(OSM_ATTRIBUTION_FONT_SIZE),
       TextColor(Color::srgb(35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0)),
       TextLayout::new_with_justify(Justify::Center),
-      transform_for_screen_rect_at_z(rect, window, OSM_ATTRIBUTION_TEXT_Z),
+      transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z),
       BevyOsmAttributionText,
     ));
   }
@@ -2180,7 +2170,7 @@ fn osm_attribution_background_color() -> Color {
 
 fn draw_coordinate_tile_borders(
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   visible_tiles: &[Tile],
   mode: CoordinateDisplayMode,
   gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
@@ -2192,23 +2182,23 @@ fn draw_coordinate_tile_borders(
   let color = tile_border_color(mode);
   for tile in visible_tiles {
     for tile_rect in coordinate_tile_rects(viewport, *tile) {
-      draw_tile_border(tile_rect, window, color, gizmos);
+      draw_tile_border(tile_rect, surface, color, gizmos);
     }
   }
 }
 
 fn draw_tile_border(
   rect: PixelRect,
-  window: &Window,
+  surface: BevyRenderSurface,
   color: Color,
   gizmos: &mut Gizmos<BevyTileOverlayGizmos>,
 ) {
   let min = rect.min;
   let max = rect.max;
-  let top_left = screen_to_bevy_2d(min, window);
-  let top_right = screen_to_bevy_2d(PixelPosition { x: max.x, y: min.y }, window);
-  let bottom_right = screen_to_bevy_2d(max, window);
-  let bottom_left = screen_to_bevy_2d(PixelPosition { x: min.x, y: max.y }, window);
+  let top_left = screen_to_bevy_2d(min, surface);
+  let top_right = screen_to_bevy_2d(PixelPosition { x: max.x, y: min.y }, surface);
+  let bottom_right = screen_to_bevy_2d(max, surface);
+  let bottom_left = screen_to_bevy_2d(PixelPosition { x: min.x, y: max.y }, surface);
 
   gizmos.line_2d(top_left, top_right, color);
   gizmos.line_2d(top_right, bottom_right, color);
@@ -2285,15 +2275,15 @@ fn native_vector_bounds_visible_wrap_offsets(
 
 fn native_vector_tile_transform(
   viewport: MapViewport,
-  window: &Window,
+  surface: BevyRenderSurface,
   origin: PixelCoordinate,
   wrap_offset: f32,
   z: f32,
 ) -> Transform {
   Transform::from_xyz(
     viewport.transform.trans.x + (origin.x + wrap_offset) * viewport.transform.zoom
-      - window.width() / 2.0,
-    window.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
+      - surface.width() / 2.0,
+    surface.height() / 2.0 - viewport.transform.trans.y - origin.y * viewport.transform.zoom,
     z,
   )
   .with_scale(Vec3::new(
@@ -2393,25 +2383,33 @@ fn coordinate_tile_rects(viewport: MapViewport, tile: Tile) -> Vec<PixelRect> {
   tile_rects
 }
 
-fn transform_for_screen_rect(rect: PixelRect, window: &Window, tile_zoom: u8) -> Transform {
+fn transform_for_screen_rect(
+  rect: PixelRect,
+  surface: BevyRenderSurface,
+  tile_zoom: u8,
+) -> Transform {
   let z = -10.0 + f32::from(tile_zoom) * 0.001;
-  transform_for_screen_rect_at_z(rect, window, z)
+  transform_for_screen_rect_at_z(rect, surface, z)
 }
 
-fn transform_for_screen_rect_at_z(rect: PixelRect, window: &Window, z: f32) -> Transform {
+fn transform_for_screen_rect_at_z(
+  rect: PixelRect,
+  surface: BevyRenderSurface,
+  z: f32,
+) -> Transform {
   let center = rect.center();
-  transform_for_screen_pos(center, window, z)
+  transform_for_screen_pos(center, surface, z)
 }
 
-fn transform_for_screen_pos(pos: PixelPosition, window: &Window, z: f32) -> Transform {
-  let bevy_pos = screen_to_bevy_2d(pos, window);
+fn transform_for_screen_pos(pos: PixelPosition, surface: BevyRenderSurface, z: f32) -> Transform {
+  let bevy_pos = screen_to_bevy_2d(pos, surface);
   Transform::from_xyz(bevy_pos.x, bevy_pos.y, z)
 }
 
-fn screen_to_bevy_2d(screen: PixelPosition, window: &Window) -> Vec2 {
+fn screen_to_bevy_2d(screen: PixelPosition, surface: BevyRenderSurface) -> Vec2 {
   Vec2::new(
-    screen.x - window.width() / 2.0,
-    window.height() / 2.0 - screen.y,
+    screen.x - surface.width() / 2.0,
+    surface.height() / 2.0 - screen.y,
   )
 }
 
@@ -2428,7 +2426,7 @@ fn tile_tint(mode: CoordinateDisplayMode, tile: Tile) -> Color {
 }
 
 fn tile_zoom_with_detail_factor(
-  transform: mapvas::map::coordinates::Transform,
+  transform: crate::map::coordinates::Transform,
   detail_factor: f32,
 ) -> u8 {
   let mut detail_transform = transform;
@@ -3152,7 +3150,7 @@ mod tests {
 
   #[test]
   fn tile_detail_factor_maps_to_adjacent_zoom_levels() {
-    let mut transform = mapvas::map::coordinates::Transform::default();
+    let mut transform = crate::map::coordinates::Transform::default();
     transform.zoom = 2f32.powi(10);
 
     assert_eq!(tile_zoom_with_detail_factor(transform, 0.5), 12);

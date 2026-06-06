@@ -1,20 +1,58 @@
-use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
-use mapvas::{
+use crate::{
   config::Config,
   map::{Map, tile_renderer::init_style_config},
   mapvas_ui::{KnownBevyGeometrySnapshot, MapApp, MapAppOutput},
   remote::{RepaintSignal, spawn_remote_runner_on_handle},
 };
+use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use tokio_metrics::RuntimeMonitor;
 
-use crate::{
-  bevy_geometry::{BevyGeometryLayer, BevyGeometryPlugin},
-  bevy_map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
-  bevy_repaint::{BevyRepaintPlugin, BevyRepaintRequests},
-  bevy_screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
-  bevy_tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
+use super::{
+  geometry::{BevyGeometryLayer, BevyGeometryPlugin},
+  map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
+  repaint::{BevyRepaintPlugin, BevyRepaintRequests},
+  screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
+  surface::BevyRenderSurfacePlugin,
+  tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
 };
+
+#[derive(Clone, Copy)]
+pub struct MapvasBevyRenderPlugin {
+  interactive: bool,
+}
+
+impl MapvasBevyRenderPlugin {
+  #[must_use]
+  pub fn interactive() -> Self {
+    Self { interactive: true }
+  }
+
+  #[must_use]
+  pub fn headless() -> Self {
+    Self { interactive: false }
+  }
+}
+
+impl Plugin for MapvasBevyRenderPlugin {
+  fn build(&self, app: &mut App) {
+    app.init_resource::<BevyGeometryLayer>();
+
+    if self.interactive {
+      app
+        .add_plugins(BevyMapPlugin)
+        .add_plugins(BevyRenderSurfacePlugin)
+        .add_plugins(BevyRepaintPlugin)
+        .add_plugins(BevyScreenshotPlugin);
+    } else {
+      app.init_resource::<BevyMapViewport>();
+    }
+
+    app
+      .add_plugins(BevyTilePlugin)
+      .add_plugins(BevyGeometryPlugin);
+  }
+}
 
 pub(crate) struct MapvasBevyState {
   runtime: tokio::runtime::Runtime,
@@ -64,7 +102,7 @@ impl MapvasBevyState {
   }
 }
 
-fn build_runtime() -> tokio::runtime::Runtime {
+pub(crate) fn build_runtime() -> tokio::runtime::Runtime {
   match tokio::runtime::Builder::new_multi_thread()
     .worker_threads(4)
     .thread_name("async-io")
@@ -198,7 +236,7 @@ fn setup_camera(mut commands: Commands) {
   commands.spawn((Camera2d, PrimaryEguiContext));
 }
 
-pub(crate) fn run() {
+pub fn run() {
   let runtime = build_runtime();
   let runtime_handle = runtime.handle().clone();
   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
@@ -229,11 +267,7 @@ pub(crate) fn run() {
         .disable::<LogPlugin>(),
     )
     .add_plugins(EguiPlugin::default())
-    .add_plugins(BevyMapPlugin)
-    .add_plugins(BevyRepaintPlugin)
-    .add_plugins(BevyScreenshotPlugin)
-    .add_plugins(BevyTilePlugin)
-    .add_plugins(BevyGeometryPlugin)
+    .add_plugins(MapvasBevyRenderPlugin::interactive())
     .add_systems(Startup, setup_camera)
     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
     .run();

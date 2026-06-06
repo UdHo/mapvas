@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
+use crate::map::{
+  coordinates::{PixelPosition, PixelRect, Transform},
+  viewport::{MapViewport, fit_to_screen, zoom_with_center},
+};
 use bevy::{
   input::mouse::AccumulatedMouseScroll,
   prelude::*,
   window::{FileDragAndDrop, PrimaryWindow, Window},
 };
 use bevy_egui::{egui, input::EguiWantsInput};
-use mapvas::map::{
-  coordinates::{PixelPosition, PixelRect, Transform},
-  viewport::{MapViewport, fit_to_screen, zoom_with_center},
-};
 
 const KEY_PAN_SPEED: f32 = 500.0;
 const DOUBLE_CLICK_MAX_INTERVAL_SECS: f64 = 0.35;
