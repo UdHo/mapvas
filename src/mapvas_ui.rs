@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc};
+use std::{collections::VecDeque, path::PathBuf, rc::Rc};
 
 use crate::{
   command_line::{Command, CommandLine, handle_command_line_input, show_command_line_ui},
@@ -30,6 +30,7 @@ pub struct MapApp {
   last_output_config: Option<Config>,
   command_line: CommandLine,
   runtime_monitor: Option<RuntimeMonitor>,
+  fps_counter: FpsCounter,
   headless: bool,
   ui_mode: MapUiMode,
   quit_requested: bool,
@@ -39,6 +40,64 @@ pub struct MapApp {
 enum MapUiMode {
   Egui,
   Bevy,
+}
+
+const FPS_SMOOTHING_ALPHA: f64 = 0.12;
+const MAX_FPS_SAMPLE_SECONDS: f64 = 1.0;
+const FPS_HISTORY_SAMPLES: usize = 180;
+const FPS_GRAPH_HEIGHT: f32 = 78.0;
+const FPS_GRAPH_MAX_FPS: f64 = 240.0;
+
+#[derive(Clone, Default)]
+struct FpsStats {
+  fps: Option<f64>,
+  frame_time_ms: Option<f64>,
+  history: Vec<f64>,
+}
+
+#[derive(Default)]
+struct FpsCounter {
+  last_frame_time: Option<f64>,
+  fps: Option<f64>,
+  frame_time_ms: Option<f64>,
+  history: VecDeque<f64>,
+}
+
+impl FpsCounter {
+  fn update(&mut self, now: f64) {
+    let Some(last_frame_time) = self.last_frame_time.replace(now) else {
+      return;
+    };
+    let dt = now - last_frame_time;
+    if dt <= 0.0 || dt > MAX_FPS_SAMPLE_SECONDS {
+      return;
+    }
+
+    let current_fps = 1.0 / dt;
+    let current_frame_time_ms = dt * 1_000.0;
+    self.fps = Some(smooth_metric(self.fps, current_fps));
+    self.frame_time_ms = Some(smooth_metric(self.frame_time_ms, current_frame_time_ms));
+    if let Some(fps) = self.fps {
+      self.history.push_back(fps);
+      while self.history.len() > FPS_HISTORY_SAMPLES {
+        self.history.pop_front();
+      }
+    }
+  }
+
+  fn stats(&self) -> FpsStats {
+    FpsStats {
+      fps: self.fps,
+      frame_time_ms: self.frame_time_ms,
+      history: self.history.iter().copied().collect(),
+    }
+  }
+}
+
+fn smooth_metric(previous: Option<f64>, current: f64) -> f64 {
+  previous.map_or(current, |previous| {
+    previous.mul_add(1.0 - FPS_SMOOTHING_ALPHA, current * FPS_SMOOTHING_ALPHA)
+  })
 }
 
 impl MapUiMode {
@@ -122,6 +181,7 @@ impl MapApp {
       last_output_config: None,
       command_line: CommandLine::new(),
       runtime_monitor,
+      fps_counter: FpsCounter::default(),
       headless: false,
       ui_mode,
       quit_requested: false,
@@ -262,6 +322,7 @@ impl MapApp {
     profile_scope!("MapApp::update");
     // Mark frame for profiling
     crate::profiling::new_frame();
+    self.fps_counter.update(ctx.input(|i| i.time));
 
     // Handle keyboard shortcuts
     ctx.input(|i| {
@@ -416,9 +477,12 @@ impl MapApp {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
-          self
-            .sidebar
-            .ui(ui, self.runtime_monitor.as_ref(), map_layer_controls);
+          self.sidebar.ui(
+            ui,
+            self.fps_counter.stats(),
+            self.runtime_monitor.as_ref(),
+            map_layer_controls,
+          );
 
           self.sidebar.width = ui.available_width().clamp(200.0, 600.0);
         });
@@ -898,7 +962,41 @@ impl Sidebar {
   }
 
   /// Display performance monitoring
-  fn show_performance_monitoring(ui: &mut egui::Ui, runtime_monitor: Option<&RuntimeMonitor>) {
+  fn show_performance_monitoring(
+    ui: &mut egui::Ui,
+    fps_stats: FpsStats,
+    runtime_monitor: Option<&RuntimeMonitor>,
+  ) {
+    ui.horizontal(|ui| {
+      ui.label("FPS:");
+      if let Some(fps) = fps_stats.fps {
+        ui.label(
+          egui::RichText::new(format!("{fps:.1}"))
+            .strong()
+            .color(Self::fps_color(fps)),
+        );
+      } else {
+        ui.label(
+          egui::RichText::new("warming up")
+            .italics()
+            .color(egui::Color32::GRAY),
+        );
+      }
+    });
+
+    if let Some(frame_time_ms) = fps_stats.frame_time_ms {
+      ui.horizontal(|ui| {
+        ui.label("Frame time:");
+        ui.label(format!("{frame_time_ms:.1} ms"));
+      });
+    }
+
+    ui.add_space(4.0);
+    Self::show_fps_graph(ui, &fps_stats.history);
+
+    ui.add_space(8.0);
+    ui.separator();
+
     // Show runtime metrics if monitor is available
     if let Some(monitor) = runtime_monitor {
       let intervals: Vec<_> = monitor.intervals().take(1).collect();
@@ -935,6 +1033,87 @@ impl Sidebar {
     ui.add_space(4.0);
 
     Self::show_active_tasks(ui);
+  }
+
+  #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+  fn show_fps_graph(ui: &mut egui::Ui, samples: &[f64]) {
+    let graph_size = egui::vec2(ui.available_width().max(160.0), FPS_GRAPH_HEIGHT);
+    let (rect, _) = ui.allocate_exact_size(graph_size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    let graph_rect = rect.shrink2(egui::vec2(8.0, 7.0));
+
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    painter.rect_stroke(
+      rect,
+      4.0,
+      egui::Stroke::new(1.0, visuals.window_stroke().color),
+      egui::epaint::StrokeKind::Outside,
+    );
+
+    if samples.is_empty() {
+      painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "collecting FPS",
+        egui::FontId::proportional(11.0),
+        egui::Color32::GRAY,
+      );
+      return;
+    }
+
+    let max_fps = samples
+      .iter()
+      .copied()
+      .fold(60.0_f64, f64::max)
+      .min(FPS_GRAPH_MAX_FPS);
+    for marker in [30.0_f64, 60.0] {
+      if marker > max_fps {
+        continue;
+      }
+      let y = graph_rect.bottom() - graph_rect.height() * (marker / max_fps) as f32;
+      painter.line_segment(
+        [
+          egui::pos2(graph_rect.left(), y),
+          egui::pos2(graph_rect.right(), y),
+        ],
+        egui::Stroke::new(1.0, visuals.faint_bg_color),
+      );
+      painter.text(
+        egui::pos2(graph_rect.left() + 3.0, y - 2.0),
+        egui::Align2::LEFT_BOTTOM,
+        format!("{marker:.0}"),
+        egui::FontId::monospace(9.0),
+        egui::Color32::GRAY,
+      );
+    }
+
+    let last_index = samples.len().saturating_sub(1).max(1);
+    let mut previous = None;
+    let stroke = egui::Stroke::new(
+      1.5,
+      Self::fps_color(samples.last().copied().unwrap_or_default()),
+    );
+    for (index, sample) in samples.iter().copied().enumerate() {
+      let x = graph_rect.left() + graph_rect.width() * (index as f32 / last_index as f32);
+      let fps = sample.clamp(0.0, max_fps);
+      let y = graph_rect.bottom() - graph_rect.height() * (fps / max_fps) as f32;
+      let point = egui::pos2(x, y);
+      if let Some(previous) = previous {
+        painter.line_segment([previous, point], stroke);
+      }
+      previous = Some(point);
+    }
+  }
+
+  fn fps_color(fps: f64) -> egui::Color32 {
+    if fps >= 50.0 {
+      egui::Color32::from_rgb(100, 180, 100)
+    } else if fps >= 30.0 {
+      egui::Color32::from_rgb(180, 180, 0)
+    } else {
+      egui::Color32::from_rgb(200, 100, 0)
+    }
   }
 
   /// Display active task list
@@ -1047,6 +1226,7 @@ impl Sidebar {
   fn ui(
     &mut self,
     ui: &mut egui::Ui,
+    fps_stats: FpsStats,
     runtime_monitor: Option<&RuntimeMonitor>,
     map_layer_controls: &mut dyn FnMut(&mut egui::Ui),
   ) {
@@ -1126,7 +1306,7 @@ impl Sidebar {
           egui::CollapsingHeader::new("📊 Performance Monitoring")
             .default_open(false)
             .show(ui, |ui| {
-              Self::show_performance_monitoring(ui, runtime_monitor);
+              Self::show_performance_monitoring(ui, fps_stats, runtime_monitor);
             });
         });
     });

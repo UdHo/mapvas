@@ -35,7 +35,6 @@ pub(super) const SCROLL_AREA_MAX_HEIGHT: f32 = 600.0;
 const HIGLIGHT_PIXEL_DISTANCE: f64 = 10.0;
 /// Render resolution (pixels) for every geometry tile, regardless of zoom level.
 const GEO_TILE_PIXEL_SIZE: u32 = 512;
-
 /// Entry stored in the R-tree spatial index.
 struct GeometryEntry {
   layer_id: String,
@@ -333,16 +332,8 @@ impl ShapeLayer {
       if let MapEvent::Layer(EventLayer { id, geometries }) = event {
         received = true;
         let l = self.shape_map.entry(id.clone()).or_default();
-        let start_idx = l.len();
         l.extend(geometries);
         self.layer_visibility.entry(id.clone()).or_insert(true);
-
-        for i in start_idx..l.len() {
-          self
-            .geometry_visibility
-            .entry((id.clone(), i))
-            .or_insert(true);
-        }
       }
     }
     for (id, visible) in self.vis_receiver.try_iter() {
@@ -394,6 +385,8 @@ impl ShapeLayer {
     if !self.visible() {
       return false;
     }
+
+    self.sync_geometry_cache();
 
     if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
       self.update_hover_highlighting(pos_to_pixel(mouse_pos), transform);
@@ -961,7 +954,6 @@ impl Layer for ShapeLayer {
   }
   fn process_pending_events(&mut self) {
     self.handle_new_shapes();
-    self.sync_geometry_cache();
   }
 
   fn discard_pending_events(&mut self) {
@@ -976,7 +968,6 @@ impl Layer for ShapeLayer {
     profile_scope!("ShapeLayer::handle_hover");
     self.current_transform = *transform;
     self.handle_new_shapes();
-    self.sync_geometry_cache();
 
     let Some(pos) = pos else {
       self.geometry_highlighter.clear_highlighting();
@@ -986,6 +977,7 @@ impl Layer for ShapeLayer {
       self.geometry_highlighter.clear_highlighting();
       return;
     }
+    self.sync_geometry_cache();
 
     self.update_hover_highlighting(pos, transform);
   }
