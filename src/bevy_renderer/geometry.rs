@@ -2,43 +2,43 @@ use crate::{
   config::{Config, HeadingStyle},
   map::{
     color::Color as MapColor,
-    coordinates::{CANVAS_SIZE, PixelCoordinate, PixelPosition, PixelRect},
+    coordinates::{
+      CANVAS_SIZE, PixelCoordinate, PixelPosition, PixelRect, Tile, TileCoordinate,
+      tile_zoom_for_transform, tiles_in_box,
+    },
     geometry_collection::{DEFAULT_STYLE, Geometry, Style},
+    mapvas_egui::layer::geometry_rasterizer,
     viewport::{GeometrySnapshot, MapViewport},
   },
 };
+use std::collections::HashMap;
+
 use bevy::{
   asset::RenderAssetUsages,
   mesh::{Indices, PrimitiveTopology},
   prelude::*,
+  render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+use rstar::{AABB, RTree, RTreeObject};
 
 use super::{map::BevyMapViewport, surface::BevyRenderSurface};
 
-const POINT_RADIUS: f32 = 4.0;
 const HIGHLIGHT_POINT_RADIUS: f32 = 10.0;
-const GEOMETRY_STROKE_WIDTH: f32 = 4.0;
 const HIGHLIGHT_STROKE_WIDTH: f32 = 6.0;
-const MAX_HEATMAP_POINTS_PER_FRAME: usize = 20_000;
-const GEOMETRY_FILL_Z: f32 = -5.0;
 const HIGHLIGHT_FILL_Z: f32 = -4.5;
-const POINT_FILL_Z: f32 = -4.0;
+const GEOMETRY_TILE_PIXEL_SIZE: u32 = 512;
+const GEOMETRY_TILE_Z: f32 = -4.8;
 
 pub struct BevyGeometryPlugin;
 
 impl Plugin for BevyGeometryPlugin {
   fn build(&self, app: &mut App) {
     app
-      .init_gizmo_group::<BevyGeometryGizmos>()
       .init_gizmo_group::<BevyHighlightGizmos>()
       .add_systems(Startup, configure_bevy_geometry_gizmos)
       .add_systems(Update, draw_bevy_geometry);
   }
 }
-
-#[derive(Default, Reflect, GizmoConfigGroup)]
-#[reflect(Default)]
-struct BevyGeometryGizmos;
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
 #[reflect(Default)]
@@ -62,10 +62,9 @@ pub struct BevyGeometryLayer {
   highlighted_geometries: Vec<Geometry<PixelCoordinate>>,
   snapshot_stats: GeometryStats,
   draw_stats: GeometryStats,
-  polygon_fill_instances: Vec<PolygonFillInstance>,
-  fill_snapshot_version: u64,
-  point_fill_instances: Vec<PointFillInstance>,
-  point_fill_snapshot_version: u64,
+  geometry_tile_entries: HashMap<Tile, GeometryTileEntry>,
+  geometry_tile_index: RTree<GeometryTileIndexEntry>,
+  geometry_tile_index_version: u64,
   highlight_polygon_fill_instances: Vec<PolygonFillInstance>,
   highlight_fill_snapshot_version: u64,
   heading_style: HeadingStyle,
@@ -81,10 +80,9 @@ impl Default for BevyGeometryLayer {
       highlighted_geometries: Vec::new(),
       snapshot_stats: GeometryStats::default(),
       draw_stats: GeometryStats::default(),
-      polygon_fill_instances: Vec::new(),
-      fill_snapshot_version: u64::MAX,
-      point_fill_instances: Vec::new(),
-      point_fill_snapshot_version: u64::MAX,
+      geometry_tile_entries: HashMap::new(),
+      geometry_tile_index: RTree::new(),
+      geometry_tile_index_version: u64::MAX,
       highlight_polygon_fill_instances: Vec::new(),
       highlight_fill_snapshot_version: u64::MAX,
       heading_style: HeadingStyle::default(),
@@ -118,16 +116,32 @@ struct BevyHighlightPolygonFill;
 #[derive(Component)]
 struct BevyPointFill;
 
+#[derive(Component)]
+struct BevyGeometryTileSprite;
+
+struct GeometryTileEntry {
+  image: Handle<Image>,
+  entities: Vec<Entity>,
+}
+
+struct GeometryTileIndexEntry {
+  geometry_index: usize,
+  envelope: AABB<[f32; 2]>,
+}
+
+impl RTreeObject for GeometryTileIndexEntry {
+  type Envelope = AABB<[f32; 2]>;
+
+  fn envelope(&self) -> Self::Envelope {
+    self.envelope
+  }
+}
+
 struct PolygonFillSpec {
   mesh: Mesh,
   color: Color,
   bounds: GeometryBounds,
   origin: PixelCoordinate,
-}
-
-struct PointFillSpec {
-  coord: PixelCoordinate,
-  color: Color,
 }
 
 struct PolygonFillInstance {
@@ -138,19 +152,7 @@ struct PolygonFillInstance {
   entities: Vec<Entity>,
 }
 
-struct PointFillInstance {
-  mesh: Handle<Mesh>,
-  material: Handle<ColorMaterial>,
-  coord: PixelCoordinate,
-  entities: Vec<Entity>,
-}
-
 fn configure_bevy_geometry_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
-  let (config, _) = config_store.config_mut::<BevyGeometryGizmos>();
-  config.line.width = GEOMETRY_STROKE_WIDTH;
-  config.line.joints = GizmoLineJoint::Round(4);
-  config.depth_bias = -1.0;
-
   let (config, _) = config_store.config_mut::<BevyHighlightGizmos>();
   config.line.width = HIGHLIGHT_STROKE_WIDTH;
   config.line.joints = GizmoLineJoint::Round(4);
@@ -222,14 +224,25 @@ fn draw_bevy_geometry(
   mut layer: ResMut<BevyGeometryLayer>,
   viewport: Res<BevyMapViewport>,
   surface: Res<BevyRenderSurface>,
+  mut images: ResMut<Assets<Image>>,
   mut meshes: ResMut<Assets<Mesh>>,
   mut materials: ResMut<Assets<ColorMaterial>>,
+  mut geometry_tile_sprites: Query<
+    (Entity, &mut Transform, &mut Sprite, &mut Visibility),
+    (
+      With<BevyGeometryTileSprite>,
+      Without<BevyPolygonFill>,
+      Without<BevyHighlightPolygonFill>,
+      Without<BevyPointFill>,
+    ),
+  >,
   mut fills: Query<
     (&mut Transform, &mut Visibility),
     (
       With<BevyPolygonFill>,
       Without<BevyHighlightPolygonFill>,
       Without<BevyPointFill>,
+      Without<BevyGeometryTileSprite>,
     ),
   >,
   mut highlight_fills: Query<
@@ -238,45 +251,38 @@ fn draw_bevy_geometry(
       With<BevyHighlightPolygonFill>,
       Without<BevyPolygonFill>,
       Without<BevyPointFill>,
+      Without<BevyGeometryTileSprite>,
     ),
   >,
-  mut point_fills: Query<
-    (&mut Transform, &mut Visibility),
-    (
-      With<BevyPointFill>,
-      Without<BevyPolygonFill>,
-      Without<BevyHighlightPolygonFill>,
-    ),
-  >,
-  mut gizmos: Gizmos<BevyGeometryGizmos>,
   mut highlight_gizmos: Gizmos<BevyHighlightGizmos>,
 ) {
-  let mut draw_stats = GeometryStats::default();
+  let draw_stats = GeometryStats::default();
   if !layer.enabled {
+    hide_geometry_tile_sprites(&mut geometry_tile_sprites);
     set_fill_visibility(&mut fills, false);
     set_highlight_fill_visibility(&mut highlight_fills, false);
-    set_point_fill_visibility(&mut point_fills, false);
     layer.draw_stats = draw_stats;
     return;
   }
   let Some(viewport) = viewport.get() else {
+    hide_geometry_tile_sprites(&mut geometry_tile_sprites);
     set_fill_visibility(&mut fills, false);
     set_highlight_fill_visibility(&mut highlight_fills, false);
-    set_point_fill_visibility(&mut point_fills, false);
     layer.draw_stats = draw_stats;
     return;
   };
   let surface = *surface;
 
-  rebuild_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
-  update_polygon_fills(
+  rebuild_geometry_tile_index_if_needed(&mut commands, &mut layer);
+  update_geometry_tiles(
     &mut commands,
     viewport,
     surface,
-    &mut layer.polygon_fill_instances,
-    &mut fills,
+    &mut images,
+    &mut layer,
+    &mut geometry_tile_sprites,
   );
-  rebuild_point_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
+  set_fill_visibility(&mut fills, false);
   rebuild_highlight_polygon_fills_if_needed(&mut commands, &mut meshes, &mut materials, &mut layer);
   update_highlight_polygon_fills(
     &mut commands,
@@ -286,24 +292,6 @@ fn draw_bevy_geometry(
     &mut highlight_fills,
   );
 
-  update_point_fills(
-    &mut commands,
-    viewport,
-    surface,
-    &mut layer.point_fill_instances,
-    &mut point_fills,
-  );
-  let heading_style = layer.heading_style;
-  for geometry in &layer.geometries {
-    draw_geometry(
-      geometry,
-      viewport,
-      surface,
-      heading_style,
-      &mut gizmos,
-      &mut draw_stats,
-    );
-  }
   for geometry in &layer.highlighted_geometries {
     draw_highlighted_geometry(geometry, viewport, surface, &mut highlight_gizmos);
   }
@@ -317,6 +305,7 @@ fn set_fill_visibility(
       With<BevyPolygonFill>,
       Without<BevyHighlightPolygonFill>,
       Without<BevyPointFill>,
+      Without<BevyGeometryTileSprite>,
     ),
   >,
   visible: bool,
@@ -337,6 +326,7 @@ fn set_highlight_fill_visibility(
       With<BevyHighlightPolygonFill>,
       Without<BevyPolygonFill>,
       Without<BevyPointFill>,
+      Without<BevyGeometryTileSprite>,
     ),
   >,
   visible: bool,
@@ -350,91 +340,261 @@ fn set_highlight_fill_visibility(
   }
 }
 
-fn set_point_fill_visibility(
-  fills: &mut Query<
-    (&mut Transform, &mut Visibility),
+fn hide_geometry_tile_sprites(
+  sprites: &mut Query<
+    (Entity, &mut Transform, &mut Sprite, &mut Visibility),
     (
-      With<BevyPointFill>,
+      With<BevyGeometryTileSprite>,
       Without<BevyPolygonFill>,
       Without<BevyHighlightPolygonFill>,
+      Without<BevyPointFill>,
     ),
   >,
-  visible: bool,
 ) {
-  for (_, mut visibility) in fills.iter_mut() {
-    *visibility = if visible {
-      Visibility::Visible
-    } else {
-      Visibility::Hidden
+  for (_, _, _, mut visibility) in sprites.iter_mut() {
+    *visibility = Visibility::Hidden;
+  }
+}
+
+fn rebuild_geometry_tile_index_if_needed(commands: &mut Commands, layer: &mut BevyGeometryLayer) {
+  if layer.geometry_tile_index_version == layer.geometries_version {
+    return;
+  }
+
+  for (_, entry) in layer.geometry_tile_entries.drain() {
+    for entity in entry.entities {
+      commands.entity(entity).despawn();
+    }
+  }
+
+  let entries = layer
+    .geometries
+    .iter()
+    .enumerate()
+    .filter_map(|(geometry_index, geometry)| {
+      let bbox = geometry.bounding_box();
+      bbox.is_valid().then(|| GeometryTileIndexEntry {
+        geometry_index,
+        envelope: AABB::from_corners([bbox.min_x(), bbox.min_y()], [bbox.max_x(), bbox.max_y()]),
+      })
+    })
+    .collect::<Vec<_>>();
+
+  layer.geometry_tile_index = RTree::bulk_load(entries);
+  layer.geometry_tile_index_version = layer.geometries_version;
+}
+
+fn update_geometry_tiles(
+  commands: &mut Commands,
+  viewport: MapViewport,
+  surface: BevyRenderSurface,
+  images: &mut Assets<Image>,
+  layer: &mut BevyGeometryLayer,
+  sprites: &mut Query<
+    (Entity, &mut Transform, &mut Sprite, &mut Visibility),
+    (
+      With<BevyGeometryTileSprite>,
+      Without<BevyPolygonFill>,
+      Without<BevyHighlightPolygonFill>,
+      Without<BevyPointFill>,
+    ),
+  >,
+) {
+  let visible_tiles = visible_geometry_tiles(viewport);
+  for tile in &visible_tiles {
+    if !layer.geometry_tile_entries.contains_key(tile) {
+      if let Some(image) = rasterize_geometry_tile(layer, *tile) {
+        layer.geometry_tile_entries.insert(
+          *tile,
+          GeometryTileEntry {
+            image: images.add(image),
+            entities: Vec::new(),
+          },
+        );
+      }
+    }
+  }
+
+  let mut visible_set = std::collections::HashSet::new();
+  for tile in visible_tiles {
+    let Some(entry) = layer.geometry_tile_entries.get_mut(&tile) else {
+      continue;
     };
-  }
-}
+    visible_set.insert(tile);
+    let tile_rects = geometry_tile_screen_rects(viewport, tile);
+    let mut visible_entity_count = 0;
+    for tile_rect in tile_rects {
+      let transform = geometry_tile_transform(tile_rect, surface);
+      let custom_size = Vec2::new(tile_rect.width(), tile_rect.height());
+      let image = entry.image.clone();
 
-fn rebuild_polygon_fills_if_needed(
-  commands: &mut Commands,
-  meshes: &mut Assets<Mesh>,
-  materials: &mut Assets<ColorMaterial>,
-  layer: &mut BevyGeometryLayer,
-) {
-  if layer.fill_snapshot_version == layer.geometries_version {
-    return;
-  }
+      if let Some(entity) = entry.entities.get(visible_entity_count).copied() {
+        if let Ok((_, mut sprite_transform, mut sprite, mut visibility)) = sprites.get_mut(entity) {
+          *sprite_transform = transform;
+          sprite.image = image;
+          sprite.custom_size = Some(custom_size);
+          *visibility = Visibility::Visible;
+        } else {
+          entry.entities[visible_entity_count] =
+            spawn_geometry_tile_sprite(commands, image, transform, custom_size);
+        }
+      } else {
+        entry.entities.push(spawn_geometry_tile_sprite(
+          commands,
+          image,
+          transform,
+          custom_size,
+        ));
+      }
 
-  for instance in layer.polygon_fill_instances.drain(..) {
-    for entity in instance.entities {
-      commands.entity(entity).despawn();
+      visible_entity_count += 1;
+    }
+
+    for entity in entry.entities.iter().skip(visible_entity_count).copied() {
+      if let Ok((_, _, _, mut visibility)) = sprites.get_mut(entity) {
+        *visibility = Visibility::Hidden;
+      }
     }
   }
 
-  let fill_specs = polygon_fill_specs(&layer.geometries);
-  let mut fill_instances = Vec::new();
-  for spec in fill_specs {
-    let mesh = meshes.add(spec.mesh);
-    let material = materials.add(ColorMaterial::from(spec.color));
-    fill_instances.push(PolygonFillInstance {
-      mesh,
-      material,
-      bounds: spec.bounds,
-      origin: spec.origin,
-      entities: Vec::new(),
-    });
-  }
-
-  layer.polygon_fill_instances = fill_instances;
-  layer.fill_snapshot_version = layer.geometries_version;
-}
-
-fn rebuild_point_fills_if_needed(
-  commands: &mut Commands,
-  meshes: &mut Assets<Mesh>,
-  materials: &mut Assets<ColorMaterial>,
-  layer: &mut BevyGeometryLayer,
-) {
-  if layer.point_fill_snapshot_version == layer.geometries_version {
-    return;
-  }
-
-  for instance in layer.point_fill_instances.drain(..) {
-    for entity in instance.entities {
-      commands.entity(entity).despawn();
+  for (tile, entry) in &mut layer.geometry_tile_entries {
+    if visible_set.contains(tile) {
+      continue;
+    }
+    for entity in &entry.entities {
+      if let Ok((_, _, _, mut visibility)) = sprites.get_mut(*entity) {
+        *visibility = Visibility::Hidden;
+      }
     }
   }
+}
 
-  let mesh = meshes.add(Circle::new(POINT_RADIUS).mesh().resolution(16));
-  let fill_specs = point_fill_specs(&layer.geometries);
-  let mut point_fill_instances = Vec::new();
-  for spec in fill_specs {
-    let material = materials.add(ColorMaterial::from(spec.color));
-    point_fill_instances.push(PointFillInstance {
-      mesh: mesh.clone(),
-      material,
-      coord: spec.coord,
-      entities: Vec::new(),
-    });
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn visible_geometry_tiles(viewport: MapViewport) -> Vec<Tile> {
+  let zoom = tile_zoom_for_transform(&viewport.transform).min(19);
+  let inv = viewport.transform.invert();
+  let min_pos = TileCoordinate::from_pixel_position(inv.apply(viewport.min()), zoom);
+  let max_pos = TileCoordinate::from_pixel_position(inv.apply(viewport.max()), zoom);
+  tiles_in_box(min_pos, max_pos).collect()
+}
+
+fn rasterize_geometry_tile(layer: &BevyGeometryLayer, tile: Tile) -> Option<Image> {
+  let (nw, se) = tile.position();
+  let query = AABB::from_corners([nw.x, nw.y], [se.x, se.y]);
+  let geometries = layer
+    .geometry_tile_index
+    .locate_in_envelope_intersecting(query)
+    .filter_map(|entry| layer.geometries.get(entry.geometry_index))
+    .collect::<Vec<_>>();
+  if geometries.is_empty() {
+    return None;
   }
 
-  layer.point_fill_instances = point_fill_instances;
-  layer.point_fill_snapshot_version = layer.geometries_version;
+  let tile_transform = geometry_tile_raster_transform(tile);
+  #[allow(clippy::cast_precision_loss)]
+  let tile_rect = PixelRect::from_min_size(
+    PixelPosition { x: 0.0, y: 0.0 },
+    PixelPosition {
+      x: GEOMETRY_TILE_PIXEL_SIZE as f32,
+      y: GEOMETRY_TILE_PIXEL_SIZE as f32,
+    },
+  );
+  let pixmap = geometry_rasterizer::rasterize_geometries(
+    geometries.into_iter(),
+    &tile_transform,
+    tile_rect,
+    layer.heading_style,
+  )?;
+
+  Some(pixmap_to_bevy_image(&pixmap))
+}
+
+fn geometry_tile_raster_transform(tile: Tile) -> crate::map::coordinates::Transform {
+  let (nw, se) = tile.position();
+  let world_size = se.x - nw.x;
+  #[allow(clippy::cast_precision_loss)]
+  let zoom_factor = GEOMETRY_TILE_PIXEL_SIZE as f32 / world_size;
+
+  crate::map::coordinates::Transform::default()
+    .zoomed(zoom_factor)
+    .translated(PixelPosition {
+      x: -nw.x * zoom_factor,
+      y: -nw.y * zoom_factor,
+    })
+}
+
+fn pixmap_to_bevy_image(pixmap: &tiny_skia::Pixmap) -> Image {
+  let mut straight = Vec::with_capacity(pixmap.data().len());
+  for pixel in pixmap.data().chunks_exact(4) {
+    let alpha = pixel[3];
+    if alpha == 0 {
+      straight.extend_from_slice(&[0, 0, 0, 0]);
+      continue;
+    }
+
+    let inv_alpha = 255.0_f32 / f32::from(alpha);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+      straight.push((f32::from(pixel[0]) * inv_alpha).min(255.0) as u8);
+      straight.push((f32::from(pixel[1]) * inv_alpha).min(255.0) as u8);
+      straight.push((f32::from(pixel[2]) * inv_alpha).min(255.0) as u8);
+    }
+    straight.push(alpha);
+  }
+
+  Image::new(
+    Extent3d {
+      width: pixmap.width(),
+      height: pixmap.height(),
+      depth_or_array_layers: 1,
+    },
+    TextureDimension::D2,
+    straight,
+    TextureFormat::Rgba8UnormSrgb,
+    RenderAssetUsages::RENDER_WORLD,
+  )
+}
+
+fn geometry_tile_screen_rects(viewport: MapViewport, tile: Tile) -> Vec<PixelRect> {
+  let (nw, se) = tile.position();
+  let wrap_offsets = visible_wrap_offsets(nw.x, se.x, viewport);
+  wrap_offsets
+    .into_iter()
+    .filter_map(|wrap_offset| {
+      let shifted_nw = PixelCoordinate {
+        x: nw.x + wrap_offset,
+        y: nw.y,
+      };
+      let shifted_se = PixelCoordinate {
+        x: se.x + wrap_offset,
+        y: se.y,
+      };
+      let rect = PixelRect::from_min_max(
+        viewport.transform.apply(shifted_nw),
+        viewport.transform.apply(shifted_se),
+      );
+      rect.intersects(viewport.rect).then_some(rect)
+    })
+    .collect()
+}
+
+fn geometry_tile_transform(rect: PixelRect, surface: BevyRenderSurface) -> Transform {
+  let center = rect.center();
+  let bevy_pos = screen_to_bevy(center, surface);
+  Transform::from_xyz(bevy_pos.x, bevy_pos.y, GEOMETRY_TILE_Z)
+}
+
+fn spawn_geometry_tile_sprite(
+  commands: &mut Commands,
+  image: Handle<Image>,
+  transform: Transform,
+  custom_size: Vec2,
+) -> Entity {
+  let mut sprite = Sprite::from_image(image);
+  sprite.custom_size = Some(custom_size);
+  commands
+    .spawn((sprite, transform, BevyGeometryTileSprite))
+    .id()
 }
 
 fn rebuild_highlight_polygon_fills_if_needed(
@@ -471,48 +631,6 @@ fn rebuild_highlight_polygon_fills_if_needed(
   layer.highlight_fill_snapshot_version = layer.snapshot_version;
 }
 
-fn update_polygon_fills(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  fill_instances: &mut [PolygonFillInstance],
-  fills: &mut Query<
-    (&mut Transform, &mut Visibility),
-    (
-      With<BevyPolygonFill>,
-      Without<BevyHighlightPolygonFill>,
-      Without<BevyPointFill>,
-    ),
-  >,
-) {
-  for instance in fill_instances {
-    let wrap_offsets = bounds_visible_wrap_offsets(instance.bounds, viewport);
-    for (entity_index, wrap_offset) in wrap_offsets.iter().copied().enumerate() {
-      let transform = polygon_fill_transform(
-        viewport,
-        surface,
-        instance.origin,
-        wrap_offset,
-        GEOMETRY_FILL_Z,
-      );
-      if let Some(entity) = instance.entities.get(entity_index).copied() {
-        if let Ok((mut fill_transform, mut visibility)) = fills.get_mut(entity) {
-          *fill_transform = transform;
-          *visibility = Visibility::Visible;
-        } else {
-          instance.entities[entity_index] =
-            spawn_polygon_fill(commands, instance, transform, BevyPolygonFill);
-        }
-      } else {
-        let entity = spawn_polygon_fill(commands, instance, transform, BevyPolygonFill);
-        instance.entities.push(entity);
-      }
-    }
-
-    hide_extra_fill_entities(&instance.entities, wrap_offsets.len(), fills);
-  }
-}
-
 fn update_highlight_polygon_fills(
   commands: &mut Commands,
   viewport: MapViewport,
@@ -524,6 +642,7 @@ fn update_highlight_polygon_fills(
       With<BevyHighlightPolygonFill>,
       Without<BevyPolygonFill>,
       Without<BevyPointFill>,
+      Without<BevyGeometryTileSprite>,
     ),
   >,
 ) {
@@ -555,42 +674,6 @@ fn update_highlight_polygon_fills(
   }
 }
 
-fn update_point_fills(
-  commands: &mut Commands,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  point_instances: &mut [PointFillInstance],
-  fills: &mut Query<
-    (&mut Transform, &mut Visibility),
-    (
-      With<BevyPointFill>,
-      Without<BevyPolygonFill>,
-      Without<BevyHighlightPolygonFill>,
-    ),
-  >,
-) {
-  for instance in point_instances {
-    let screens = coordinate_screen_positions(instance.coord, viewport);
-    for (entity_index, screen) in screens.iter().copied().enumerate() {
-      let center = screen_to_bevy(screen, surface);
-      let transform = Transform::from_xyz(center.x, center.y, POINT_FILL_Z);
-      if let Some(entity) = instance.entities.get(entity_index).copied() {
-        if let Ok((mut fill_transform, mut visibility)) = fills.get_mut(entity) {
-          *fill_transform = transform;
-          *visibility = Visibility::Visible;
-        } else {
-          instance.entities[entity_index] = spawn_point_fill(commands, instance, transform);
-        }
-      } else {
-        let entity = spawn_point_fill(commands, instance, transform);
-        instance.entities.push(entity);
-      }
-    }
-
-    hide_extra_fill_entities(&instance.entities, screens.len(), fills);
-  }
-}
-
 fn spawn_polygon_fill<M: Component>(
   commands: &mut Commands,
   instance: &PolygonFillInstance,
@@ -603,21 +686,6 @@ fn spawn_polygon_fill<M: Component>(
       MeshMaterial2d(instance.material.clone()),
       transform,
       marker,
-    ))
-    .id()
-}
-
-fn spawn_point_fill(
-  commands: &mut Commands,
-  instance: &PointFillInstance,
-  transform: Transform,
-) -> Entity {
-  commands
-    .spawn((
-      Mesh2d(instance.mesh.clone()),
-      MeshMaterial2d(instance.material.clone()),
-      transform,
-      BevyPointFill,
     ))
     .id()
 }
@@ -716,14 +784,6 @@ fn polygon_fill_transform(
   ))
 }
 
-fn polygon_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PolygonFillSpec> {
-  let mut fills = Vec::new();
-  for geometry in geometries {
-    collect_polygon_fill_specs(geometry, &mut fills);
-  }
-  fills
-}
-
 fn highlighted_polygon_fill_specs(
   geometries: &[Geometry<PixelCoordinate>],
 ) -> Vec<PolygonFillSpec> {
@@ -732,52 +792,6 @@ fn highlighted_polygon_fill_specs(
     collect_highlighted_polygon_fill_specs(geometry, &mut fills);
   }
   fills
-}
-
-fn point_fill_specs(geometries: &[Geometry<PixelCoordinate>]) -> Vec<PointFillSpec> {
-  let mut fills = Vec::new();
-  for geometry in geometries {
-    collect_point_fill_specs(geometry, &mut fills);
-  }
-  fills
-}
-
-fn collect_polygon_fill_specs(
-  geometry: &Geometry<PixelCoordinate>,
-  fills: &mut Vec<PolygonFillSpec>,
-) {
-  match geometry {
-    Geometry::GeometryCollection(geometries, _) => {
-      for geometry in geometries {
-        collect_polygon_fill_specs(geometry, fills);
-      }
-    }
-    Geometry::Polygon(coords, metadata) => {
-      let fill_color = metadata
-        .style
-        .as_ref()
-        .unwrap_or(&DEFAULT_STYLE)
-        .fill_color()
-        .gamma_multiply(0.7);
-      if fill_color.a() == 0 {
-        return;
-      }
-      let Some(bounds) = bounds_from_coords(coords) else {
-        return;
-      };
-      let origin = bounds.min();
-      let Some(mesh) = polygon_fill_mesh(coords, origin) else {
-        return;
-      };
-      fills.push(PolygonFillSpec {
-        mesh,
-        color: map_color_to_bevy(fill_color),
-        bounds,
-        origin,
-      });
-    }
-    Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
-  }
 }
 
 fn collect_highlighted_polygon_fill_specs(
@@ -810,26 +824,6 @@ fn collect_highlighted_polygon_fill_specs(
       });
     }
     Geometry::Point(_, _) | Geometry::LineString(_, _) | Geometry::Heatmap(_, _) => {}
-  }
-}
-
-fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Vec<PointFillSpec>) {
-  match geometry {
-    Geometry::GeometryCollection(geometries, _) => {
-      for geometry in geometries {
-        collect_point_fill_specs(geometry, fills);
-      }
-    }
-    Geometry::Point(coord, metadata) => {
-      if !coord.is_valid() {
-        return;
-      }
-      fills.push(PointFillSpec {
-        coord: *coord,
-        color: point_fill_color(metadata.style.as_ref()),
-      });
-    }
-    Geometry::LineString(_, _) | Geometry::Polygon(_, _) | Geometry::Heatmap(_, _) => {}
   }
 }
 
@@ -903,109 +897,6 @@ fn bounds_from_coords(coords: &[PixelCoordinate]) -> Option<GeometryBounds> {
   }
 
   Some(bounds)
-}
-
-fn draw_geometry(
-  geometry: &Geometry<PixelCoordinate>,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  heading_style: HeadingStyle,
-  gizmos: &mut Gizmos<BevyGeometryGizmos>,
-  stats: &mut GeometryStats,
-) {
-  if !geometry_intersects_viewport(geometry, viewport) {
-    return;
-  }
-
-  match geometry {
-    Geometry::GeometryCollection(geometries, _) => {
-      for geometry in geometries {
-        draw_geometry(geometry, viewport, surface, heading_style, gizmos, stats);
-      }
-    }
-    Geometry::Point(coord, metadata) => {
-      let screens = coordinate_screen_positions(*coord, viewport);
-      if screens.is_empty() {
-        return;
-      }
-
-      for screen in &screens {
-        if let Some(heading) = metadata.heading {
-          let color = point_fill_color(metadata.style.as_ref());
-          let center = screen_to_bevy(*screen, surface);
-          draw_heading(gizmos, center, heading, color, heading_style);
-        }
-      }
-
-      stats.geometries += 1;
-      stats.points += screens.len();
-    }
-    Geometry::LineString(coords, metadata) => {
-      let color = style_color(metadata.style.as_ref());
-      stats.geometries += 1;
-      stats.line_segments += draw_lines(coords, false, viewport, surface, color, gizmos);
-    }
-    Geometry::Polygon(coords, metadata) => {
-      let color = style_color(metadata.style.as_ref());
-      stats.geometries += 1;
-      stats.polygons += 1;
-      stats.line_segments += draw_lines(coords, true, viewport, surface, color, gizmos);
-    }
-    Geometry::Heatmap(coords, metadata) => {
-      let color = style_color(metadata.style.as_ref());
-      stats.geometries += 1;
-      for coord in coords.iter().take(MAX_HEATMAP_POINTS_PER_FRAME) {
-        for screen in coordinate_screen_positions(*coord, viewport) {
-          gizmos.circle_2d(screen_to_bevy(screen, surface), 1.5, color);
-          stats.heatmap_points += 1;
-        }
-      }
-    }
-  }
-}
-
-fn draw_lines(
-  coords: &[PixelCoordinate],
-  closed: bool,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  color: Color,
-  gizmos: &mut Gizmos<BevyGeometryGizmos>,
-) -> usize {
-  if coords.len() < 2 {
-    return 0;
-  }
-
-  let mut drawn_segments = 0;
-  for segment in coords.windows(2) {
-    drawn_segments += draw_segment(segment[0], segment[1], viewport, surface, color, gizmos);
-  }
-
-  if closed && let (Some(first), Some(last)) = (coords.first(), coords.last()) {
-    drawn_segments += draw_segment(*last, *first, viewport, surface, color, gizmos);
-  }
-
-  drawn_segments
-}
-
-fn draw_segment(
-  start: PixelCoordinate,
-  end: PixelCoordinate,
-  viewport: MapViewport,
-  surface: BevyRenderSurface,
-  color: Color,
-  gizmos: &mut Gizmos<BevyGeometryGizmos>,
-) -> usize {
-  let screen_segments = segment_screen_positions(start, end, viewport);
-  for (screen_start, screen_end) in &screen_segments {
-    gizmos.line_2d(
-      screen_to_bevy(*screen_start, surface),
-      screen_to_bevy(*screen_end, surface),
-      color,
-    );
-  }
-
-  screen_segments.len()
 }
 
 fn draw_highlighted_geometry(
@@ -1100,94 +991,6 @@ fn draw_highlighted_segment(
   }
 }
 
-fn draw_heading(
-  gizmos: &mut Gizmos<BevyGeometryGizmos>,
-  center: Vec2,
-  heading_degrees: f32,
-  color: Color,
-  style: HeadingStyle,
-) {
-  let (forward, right) = heading_vectors(heading_degrees);
-
-  match style {
-    HeadingStyle::Arrow => {
-      let length = POINT_RADIUS + 8.0;
-      let half_width = 2.0;
-      let tip = center + forward * length;
-      let base_left = center + right * half_width;
-      let base_right = center - right * half_width;
-      draw_line_loop(gizmos, &[tip, base_left, base_right], color);
-    }
-    HeadingStyle::Line => {
-      gizmos.line_2d(center, center + forward * (POINT_RADIUS + 6.0), color);
-    }
-    HeadingStyle::Chevron => {
-      let length = POINT_RADIUS + 4.0;
-      let tip = center + forward * length;
-      let back = forward * (length * 0.55);
-      let wing = right * (length * 0.35);
-      gizmos.line_2d(tip - back + wing, tip, color);
-      gizmos.line_2d(tip, tip - back - wing, color);
-    }
-    HeadingStyle::Needle => {
-      let length = POINT_RADIUS + 8.0;
-      let tip = center + forward * length;
-      gizmos.line_2d(center, tip, color);
-      let head_base = tip - forward * 2.0;
-      gizmos.line_2d(tip, head_base + right, color);
-      gizmos.line_2d(tip, head_base - right, color);
-    }
-    HeadingStyle::Sector => {
-      let radius = POINT_RADIUS + 4.0;
-      let sector_angle = 0.6;
-      let heading_rad = (heading_degrees - 90.0).to_radians();
-      let mut points = Vec::with_capacity(10);
-      points.push(center);
-      for index in 0..=8 {
-        #[allow(clippy::cast_precision_loss)]
-        let angle = heading_rad - sector_angle / 2.0 + sector_angle * index as f32 / 8.0;
-        let direction = Vec2::new(angle.cos(), -angle.sin());
-        points.push(center + direction * radius);
-      }
-      draw_heading_lines(gizmos, &points, color);
-      if let Some(last) = points.last().copied() {
-        gizmos.line_2d(last, center, color);
-      }
-    }
-    HeadingStyle::Rectangle => {
-      let half_length = (POINT_RADIUS + 6.0) / 2.0;
-      let half_width = 1.5;
-      let corners = [
-        center + forward * half_length + right * half_width,
-        center + forward * half_length - right * half_width,
-        center - forward * half_length - right * half_width,
-        center - forward * half_length + right * half_width,
-      ];
-      draw_line_loop(gizmos, &corners, color);
-    }
-  }
-}
-
-fn heading_vectors(heading_degrees: f32) -> (Vec2, Vec2) {
-  let heading_rad = (heading_degrees - 90.0).to_radians();
-  let forward = Vec2::new(heading_rad.cos(), -heading_rad.sin());
-  let right = Vec2::new(forward.y, -forward.x);
-  (forward, right)
-}
-
-fn draw_line_loop(gizmos: &mut Gizmos<BevyGeometryGizmos>, points: &[Vec2], color: Color) {
-  draw_heading_lines(gizmos, points, color);
-  if let (Some(first), Some(last)) = (points.first(), points.last()) {
-    gizmos.line_2d(*last, *first, color);
-  }
-}
-
-fn draw_heading_lines(gizmos: &mut Gizmos<BevyGeometryGizmos>, points: &[Vec2], color: Color) {
-  for segment in points.windows(2) {
-    gizmos.line_2d(segment[0], segment[1], color);
-  }
-}
-
 fn segment_screen_positions(
   start: PixelCoordinate,
   end: PixelCoordinate,
@@ -1256,21 +1059,6 @@ fn segment_intersects_rect(start: PixelPosition, end: PixelPosition, rect: Pixel
   segment_rect.intersects(rect)
 }
 
-fn style_color(style: Option<&Style>) -> Color {
-  map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color().gamma_multiply(0.7))
-}
-
-fn point_fill_color(style: Option<&Style>) -> Color {
-  let style = style.unwrap_or(&DEFAULT_STYLE);
-  let fill_color = style.fill_color();
-  let color = if fill_color.a() == 0 {
-    style.color()
-  } else {
-    fill_color
-  };
-  map_color_to_bevy(color)
-}
-
 fn highlight_color(style: Option<&Style>) -> Color {
   map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color())
 }
@@ -1324,26 +1112,4 @@ fn stat_row(ui: &mut egui::Ui, label: &str, value: usize) {
     ui.label(label);
     ui.label(value.to_string());
   });
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn point_fill_color_prefers_fill_without_dimming() {
-    let stroke = MapColor::from_rgb(10, 20, 30);
-    let fill = MapColor::from_rgb(255, 48, 0);
-    let style = Style::default().with_color(stroke).with_fill_color(fill);
-
-    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(fill));
-  }
-
-  #[test]
-  fn point_fill_color_falls_back_to_stroke_without_dimming() {
-    let stroke = MapColor::from_rgb(255, 48, 0);
-    let style = Style::default().with_color(stroke);
-
-    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(stroke));
-  }
 }
