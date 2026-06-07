@@ -1,0 +1,414 @@
+diff --git b/src/bin/mapvas-loadtest/main.rs b/src/bin/mapvas-loadtest/main.rs
+new file mode 100644
+index 0000000..8338a6a
+--- /dev/null
++++ b/src/bin/mapvas-loadtest/main.rs
+@@ -0,0 +1,408 @@
++use std::{
++  path::PathBuf,
++  process::Stdio,
++  time::{Duration, Instant},
++};
++
++use clap::Parser;
++use mapvas::map::{
++  color::Color,
++  coordinates::{PixelCoordinate, WGS84Coordinate},
++  geometry_collection::{Geometry, Label, Metadata, Style},
++  map_event::{Layer, MapEvent},
++};
++
++const DEFAULT_URL: &str = "http://localhost:12345";
++
++#[derive(Parser, Debug)]
++#[command(author, version, about = "Generate synthetic mapvas geometry load")]
++struct Args {
++  /// mapvas remote endpoint base URL.
++  #[arg(long, default_value = DEFAULT_URL)]
++  url: String,
++
++  /// Start a mapvas process if the remote endpoint is not reachable.
++  #[arg(long)]
++  spawn: bool,
++
++  /// Seconds to wait for a spawned mapvas process to become reachable.
++  #[arg(long, default_value_t = 20)]
++  startup_timeout_secs: u64,
++
++  /// Clear existing map data before inserting generated geometry.
++  #[arg(long)]
++  reset: bool,
++
++  /// Do not send a final focus event after loading.
++  #[arg(long)]
++  no_focus: bool,
++
++  /// Synthetic point count.
++  #[arg(long, default_value_t = 100_000)]
++  points: usize,
++
++  /// Synthetic line string count.
++  #[arg(long, default_value_t = 10_000)]
++  lines: usize,
++
++  /// Synthetic polygon count.
++  #[arg(long, default_value_t = 5_000)]
++  polygons: usize,
++
++  /// Coordinates per line string.
++  #[arg(long, default_value_t = 12)]
++  line_points: usize,
++
++  /// Vertices per polygon, before the closing coordinate is added.
++  #[arg(long, default_value_t = 6)]
++  polygon_vertices: usize,
++
++  /// Geometries per Layer event.
++  #[arg(long, default_value_t = 1_000)]
++  chunk_size: usize,
++
++  /// Optional pause between chunk requests, in milliseconds.
++  #[arg(long, default_value_t = 0)]
++  pause_ms: u64,
++
++  /// Prefix used for generated layer ids.
++  #[arg(long, default_value = "loadtest")]
++  layer_prefix: String,
++
++  /// Add labels to generated shapes.
++  #[arg(long)]
++  labels: bool,
++
++  /// Center latitude for generated data.
++  #[arg(long, default_value_t = 52.52)]
++  center_lat: f32,
++
++  /// Center longitude for generated data.
++  #[arg(long, default_value_t = 13.405)]
++  center_lon: f32,
++
++  /// Width and height of the generated area, in degrees.
++  #[arg(long, default_value_t = 0.25)]
++  extent_degrees: f32,
++}
++
++#[tokio::main]
++async fn main() {
++  env_logger::init();
++
++  let args = Args::parse();
++  if args.chunk_size == 0 {
++    eprintln!("--chunk-size must be greater than zero");
++    std::process::exit(2);
++  }
++  if args.line_points < 2 {
++    eprintln!("--line-points must be at least 2");
++    std::process::exit(2);
++  }
++  if args.polygon_vertices < 3 {
++    eprintln!("--polygon-vertices must be at least 3");
++    std::process::exit(2);
++  }
++
++  let endpoint = endpoint(&args.url);
++  let client = reqwest::Client::new();
++  if args.spawn {
++    spawn_mapvas_if_needed(&client, &args).await;
++  }
++  ensure_mapvas_is_reachable(&client, &endpoint).await;
++
++  let started = Instant::now();
++  let mut sent_chunks = 0usize;
++  let mut sent_geometries = 0usize;
++
++  if args.reset {
++    send_event(&client, &endpoint, &MapEvent::Clear).await;
++  }
++
++  let pause = Duration::from_millis(args.pause_ms);
++
++  let point_style = Style::default().with_color(Color::RED);
++  let line_style = Style::default().with_color(Color::BLUE);
++  let polygon_style = Style::default()
++    .with_color(Color::DARK_GREEN)
++    .with_fill_color(Color::from_rgba_unmultiplied(0, 255, 0, 48));
++
++  send_generated_chunks(
++    &client,
++    &endpoint,
++    format!("{}-points", args.layer_prefix),
++    args.points,
++    args.chunk_size,
++    pause,
++    &mut sent_chunks,
++    &mut sent_geometries,
++    |index| generate_point(index, &args, point_style.clone()),
++  )
++  .await;
++
++  send_generated_chunks(
++    &client,
++    &endpoint,
++    format!("{}-lines", args.layer_prefix),
++    args.lines,
++    args.chunk_size,
++    pause,
++    &mut sent_chunks,
++    &mut sent_geometries,
++    |index| generate_line(index, &args, line_style.clone()),
++  )
++  .await;
++
++  send_generated_chunks(
++    &client,
++    &endpoint,
++    format!("{}-polygons", args.layer_prefix),
++    args.polygons,
++    args.chunk_size,
++    pause,
++    &mut sent_chunks,
++    &mut sent_geometries,
++    |index| generate_polygon(index, &args, polygon_style.clone()),
++  )
++  .await;
++
++  if !args.no_focus {
++    send_event(&client, &endpoint, &MapEvent::Focus).await;
++  }
++
++  println!(
++    "sent {sent_geometries} geometries in {sent_chunks} chunks in {:.2}s",
++    started.elapsed().as_secs_f64()
++  );
++}
++
++async fn send_generated_chunks(
++  client: &reqwest::Client,
++  endpoint: &str,
++  layer_id: String,
++  count: usize,
++  chunk_size: usize,
++  pause: Duration,
++  sent_chunks: &mut usize,
++  sent_geometries: &mut usize,
++  mut generate: impl FnMut(usize) -> Geometry<PixelCoordinate>,
++) {
++  for chunk_start in (0..count).step_by(chunk_size) {
++    let chunk_end = (chunk_start + chunk_size).min(count);
++    let geometries = (chunk_start..chunk_end)
++      .map(&mut generate)
++      .collect::<Vec<_>>();
++    let chunk_len = geometries.len();
++    send_event(
++      client,
++      endpoint,
++      &MapEvent::Layer(Layer {
++        id: layer_id.clone(),
++        geometries,
++      }),
++    )
++    .await;
++    *sent_chunks += 1;
++    *sent_geometries += chunk_len;
++    println!("sent {layer_id}: {chunk_end}/{count} ({sent_geometries} total geometries)");
++    if !pause.is_zero() {
++      tokio::time::sleep(pause).await;
++    }
++  }
++}
++
++fn generate_point(index: usize, args: &Args, style: Style) -> Geometry<PixelCoordinate> {
++  Geometry::Point(
++    generated_coord(index, args),
++    metadata(args, "point", index, style),
++  )
++}
++
++fn generate_line(index: usize, args: &Args, style: Style) -> Geometry<PixelCoordinate> {
++  let center = generated_wgs84(index, args);
++  let mid = (args.line_points.saturating_sub(1)) as f32 * 0.5;
++  let step = args.extent_degrees.max(0.0001) / 900.0;
++  let points = (0..args.line_points)
++    .map(|point_index| {
++      let offset = point_index as f32 - mid;
++      let angle = index as f32 * 0.137 + point_index as f32 * 0.911;
++      PixelCoordinate::from(WGS84Coordinate::new(
++        center.lat + offset * step * angle.sin(),
++        center.lon + offset * step * angle.cos(),
++      ))
++    })
++    .collect::<Vec<_>>();
++  Geometry::LineString(points, metadata(args, "line", index, style))
++}
++
++fn generate_polygon(index: usize, args: &Args, style: Style) -> Geometry<PixelCoordinate> {
++  let center = generated_wgs84(index, args);
++  let radius = args.extent_degrees.max(0.0001) / 650.0;
++  let wobble = 0.25;
++  let mut points = (0..args.polygon_vertices)
++    .map(|vertex| {
++      let angle =
++        std::f32::consts::TAU * vertex as f32 / args.polygon_vertices as f32 + index as f32 * 0.01;
++      let vertex_radius = radius * (1.0 + wobble * (index as f32 * 0.17 + vertex as f32).sin());
++      PixelCoordinate::from(WGS84Coordinate::new(
++        center.lat + vertex_radius * angle.sin(),
++        center.lon + vertex_radius * angle.cos(),
++      ))
++    })
++    .collect::<Vec<_>>();
++  if let Some(first) = points.first().copied() {
++    points.push(first);
++  }
++  Geometry::Polygon(points, metadata(args, "polygon", index, style))
++}
++
++fn metadata(args: &Args, kind: &str, index: usize, style: Style) -> Metadata {
++  let metadata = Metadata::default().with_style(style);
++  if args.labels {
++    metadata.with_structured_label(Label::new(format!("loadtest {kind} {index}")))
++  } else {
++    metadata
++  }
++}
++
++fn generated_coord(index: usize, args: &Args) -> PixelCoordinate {
++  PixelCoordinate::from(generated_wgs84(index, args))
++}
++
++fn generated_wgs84(index: usize, args: &Args) -> WGS84Coordinate {
++  let u = halton(index + 1, 2);
++  let v = halton(index + 1, 3);
++  let extent = args.extent_degrees.max(0.0001);
++  WGS84Coordinate::new(
++    args.center_lat + (v - 0.5) * extent,
++    args.center_lon + (u - 0.5) * extent,
++  )
++}
++
++fn halton(mut index: usize, base: usize) -> f32 {
++  let mut factor = 1.0_f32;
++  let mut value = 0.0_f32;
++  while index > 0 {
++    factor /= base as f32;
++    value += factor * (index % base) as f32;
++    index /= base;
++  }
++  value
++}
++
++fn endpoint(base_url: &str) -> String {
++  base_url.trim_end_matches('/').to_string()
++}
++
++async fn ensure_mapvas_is_reachable(client: &reqwest::Client, endpoint: &str) {
++  if healthcheck(client, endpoint).await {
++    return;
++  }
++  eprintln!("mapvas is not reachable at {endpoint}. Start mapvas first or pass --spawn.");
++  std::process::exit(1);
++}
++
++async fn spawn_mapvas_if_needed(client: &reqwest::Client, args: &Args) {
++  let endpoint = endpoint(&args.url);
++  if healthcheck(client, &endpoint).await {
++    return;
++  }
++
++  let program = sibling_mapvas_binary().unwrap_or_else(|| PathBuf::from("mapvas"));
++  if let Err(error) = std::process::Command::new(&program)
++    .stderr(Stdio::null())
++    .stdout(Stdio::null())
++    .spawn()
++  {
++    eprintln!("failed to spawn {}: {error}", program.display());
++    std::process::exit(1);
++  }
++
++  let deadline = Instant::now() + Duration::from_secs(args.startup_timeout_secs);
++  while Instant::now() < deadline {
++    if healthcheck(client, &endpoint).await {
++      return;
++    }
++    tokio::time::sleep(Duration::from_millis(100)).await;
++  }
++
++  eprintln!(
++    "spawned {}, but mapvas did not become reachable at {endpoint}",
++    program.display()
++  );
++  std::process::exit(1);
++}
++
++fn sibling_mapvas_binary() -> Option<PathBuf> {
++  let current_exe = std::env::current_exe().ok()?;
++  let dir = current_exe.parent()?;
++  let candidate = dir.join("mapvas");
++  candidate.exists().then_some(candidate)
++}
++
++async fn healthcheck(client: &reqwest::Client, endpoint: &str) -> bool {
++  client
++    .get(format!("{endpoint}/healthcheck"))
++    .send()
++    .await
++    .is_ok_and(|response| response.status().is_success())
++}
++
++async fn send_event(client: &reqwest::Client, endpoint: &str, event: &MapEvent) {
++  let response = client.post(endpoint).json(event).send().await;
++  match response {
++    Ok(response) if response.status().is_success() => {}
++    Ok(response) => {
++      eprintln!("mapvas returned HTTP {}", response.status());
++      std::process::exit(1);
++    }
++    Err(error) => {
++      eprintln!("failed to send event to mapvas: {error}");
++      std::process::exit(1);
++    }
++  }
++}
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  fn args() -> Args {
++    Args {
++      url: DEFAULT_URL.to_string(),
++      spawn: false,
++      startup_timeout_secs: 20,
++      reset: false,
++      no_focus: false,
++      points: 10,
++      lines: 10,
++      polygons: 10,
++      line_points: 4,
++      polygon_vertices: 5,
++      chunk_size: 10,
++      pause_ms: 0,
++      layer_prefix: "loadtest".to_string(),
++      labels: true,
++      center_lat: 52.52,
++      center_lon: 13.405,
++      extent_degrees: 0.25,
++    }
++  }
++
++  #[test]
++  fn generated_coordinates_are_deterministic_and_valid() {
++    let args = args();
++    assert_eq!(generated_coord(42, &args), generated_coord(42, &args));
++    assert!(generated_coord(42, &args).is_valid());
++  }
++
++  #[test]
++  fn generated_polygon_is_closed() {
++    let args = args();
++    let Geometry::Polygon(points, _) = generate_polygon(7, &args, Style::default()) else {
++      panic!("expected polygon");
++    };
++    assert_eq!(points.first(), points.last());
++    assert_eq!(points.len(), args.polygon_vertices + 1);
++  }
++}

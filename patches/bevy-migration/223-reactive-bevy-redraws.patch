@@ -1,0 +1,422 @@
+diff --git a/src/bevy_renderer/app.rs b/src/bevy_renderer/app.rs
+index df4027e..5a3b6f3 100644
+--- a/src/bevy_renderer/app.rs
++++ b/src/bevy_renderer/app.rs
+@@ -8,7 +8,7 @@ use bevy::{
+   log::LogPlugin,
+   prelude::*,
+   window::{PrimaryWindow, WindowResolution},
+-  winit::WINIT_WINDOWS,
++  winit::{WINIT_WINDOWS, WinitSettings},
+ };
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use tokio_metrics::RuntimeMonitor;
+@@ -17,7 +17,7 @@ use winit::window::Icon;
+ use super::{
+   geometry::{BevyGeometryLayer, BevyGeometryPlugin},
+   map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
+-  repaint::{BevyRepaintPlugin, BevyRepaintRequests},
++  repaint::{BevyRepaintPlugin, BevyRepaintRequests, BevyWakeup},
+   screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
+   surface::BevyRenderSurfacePlugin,
+   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
+@@ -328,9 +328,12 @@ pub fn run() {
+   let runtime_handle = runtime.handle().clone();
+   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
+   let config = Config::new();
+-  let (repaint_signal, repaint_requests) = BevyRepaintRequests::channel();
++  let wakeup = BevyWakeup::default();
++  let (repaint_signal, repaint_requests) = BevyRepaintRequests::channel(wakeup.clone());
+ 
+   App::new()
++    .insert_resource(WinitSettings::desktop_app())
++    .insert_resource(wakeup.clone())
+     .insert_resource(repaint_requests)
+     .insert_non_send_resource(MapvasBevyState::new(
+       runtime,
+@@ -340,7 +343,7 @@ pub fn run() {
+     ))
+     .init_resource::<BevyGeometryLayer>()
+     .insert_resource(BevyTileRuntime(runtime_handle))
+-    .insert_resource(BevyTileLayer::new(config))
++    .insert_resource(BevyTileLayer::new(config, wakeup))
+     .add_plugins(
+       DefaultPlugins
+         .set(WindowPlugin {
+diff --git a/src/bevy_renderer/headless.rs b/src/bevy_renderer/headless.rs
+index 7a2aacc..22938f0 100644
+--- a/src/bevy_renderer/headless.rs
++++ b/src/bevy_renderer/headless.rs
+@@ -37,6 +37,7 @@ use super::{
+   app::build_runtime,
+   geometry::BevyGeometryLayer,
+   map::BevyMapViewport,
++  repaint::BevyWakeup,
+   surface::BevyRenderSurface,
+   tiles::{BevyTileLayer, BevyTileRuntime},
+ };
+@@ -118,7 +119,7 @@ impl BevyHeadlessRenderer {
+       remote.handle_map_event(event.clone());
+     }
+ 
+-    let mut tile_layer = BevyTileLayer::new(self.config.clone());
++    let mut tile_layer = BevyTileLayer::new(self.config.clone(), BevyWakeup::default());
+     tile_layer.set_preload_enabled(false);
+     if self.no_map {
+       tile_layer.set_visible(false);
+diff --git a/src/bevy_renderer/repaint.rs b/src/bevy_renderer/repaint.rs
+index d2d9836..6ecbffe 100644
+--- a/src/bevy_renderer/repaint.rs
++++ b/src/bevy_renderer/repaint.rs
+@@ -1,16 +1,48 @@
+ use std::sync::{
+-  Mutex,
++  Arc, Mutex,
+   mpsc::{self, Receiver},
+ };
+ 
+ use crate::remote::RepaintSignal;
+-use bevy::{prelude::*, window::RequestRedraw};
++use bevy::{
++  prelude::*,
++  window::RequestRedraw,
++  winit::{EventLoopProxyWrapper, WinitUserEvent},
++};
++use winit::event_loop::EventLoopProxy;
+ 
+ pub struct BevyRepaintPlugin;
+ 
+ impl Plugin for BevyRepaintPlugin {
+   fn build(&self, app: &mut App) {
+-    app.add_systems(Update, issue_bevy_repaints);
++    app
++      .init_resource::<BevyWakeup>()
++      .add_systems(Startup, install_bevy_wakeup_proxy)
++      .add_systems(Update, issue_bevy_repaints);
++  }
++}
++
++#[derive(Clone, Default, Resource)]
++pub struct BevyWakeup {
++  event_loop_proxy: Arc<Mutex<Option<EventLoopProxy<WinitUserEvent>>>>,
++}
++
++impl BevyWakeup {
++  pub fn set_event_loop_proxy(&self, proxy: EventLoopProxy<WinitUserEvent>) {
++    if let Ok(mut event_loop_proxy) = self.event_loop_proxy.lock() {
++      *event_loop_proxy = Some(proxy);
++    }
++  }
++
++  pub fn wake(&self) {
++    let proxy = self
++      .event_loop_proxy
++      .lock()
++      .ok()
++      .and_then(|event_loop_proxy| event_loop_proxy.clone());
++    if let Some(proxy) = proxy {
++      let _ = proxy.send_event(WinitUserEvent::WakeUp);
++    }
+   }
+ }
+ 
+@@ -20,10 +52,14 @@ pub struct BevyRepaintRequests {
+ }
+ 
+ impl BevyRepaintRequests {
+-  pub fn channel() -> (RepaintSignal, Self) {
++  pub fn channel(wakeup: BevyWakeup) -> (RepaintSignal, Self) {
+     let (sender, receiver) = mpsc::channel();
++    let signal_wakeup = wakeup.clone();
+     (
+-      RepaintSignal::channel(sender),
++      RepaintSignal::from_fn(move || {
++        let _ = sender.send(());
++        signal_wakeup.wake();
++      }),
+       Self {
+         receiver: Mutex::new(receiver),
+       },
+@@ -31,6 +67,16 @@ impl BevyRepaintRequests {
+   }
+ }
+ 
++fn install_bevy_wakeup_proxy(
++  wakeup: Res<BevyWakeup>,
++  event_loop_proxy: Option<Res<EventLoopProxyWrapper>>,
++) {
++  let Some(event_loop_proxy) = event_loop_proxy else {
++    return;
++  };
++  wakeup.set_event_loop_proxy((*event_loop_proxy).clone());
++}
++
+ fn issue_bevy_repaints(
+   requests: Res<BevyRepaintRequests>,
+   mut redraw: MessageWriter<RequestRedraw>,
+diff --git a/src/bevy_renderer/tiles.rs b/src/bevy_renderer/tiles.rs
+index e857589..ff90dee 100644
+--- a/src/bevy_renderer/tiles.rs
++++ b/src/bevy_renderer/tiles.rs
+@@ -23,6 +23,8 @@ use crate::{
+ };
+ use bevy::prelude::*;
+ 
++use super::repaint::BevyWakeup;
++
+ mod detail;
+ mod fonts;
+ mod native_vector;
+@@ -248,6 +250,7 @@ enum BevyTileResult {
+ pub struct BevyTileLayer {
+   receiver: Mutex<Receiver<BevyTileResult>>,
+   sender: Sender<BevyTileResult>,
++  wakeup: BevyWakeup,
+   all_tile_loader: Vec<Arc<CachedTileLoader>>,
+   tile_loader_index: usize,
+   tile_providers: Vec<TileProvider>,
+@@ -282,11 +285,12 @@ fn configure_bevy_tile_overlay_gizmos(mut config_store: ResMut<GizmoConfigStore>
+ 
+ impl BevyTileLayer {
+   #[must_use]
+-  pub fn new(config: Config) -> Self {
++  pub fn new(config: Config, wakeup: BevyWakeup) -> Self {
+     let (sender, receiver) = std::sync::mpsc::channel();
+     Self {
+       receiver: Mutex::new(receiver),
+       sender,
++      wakeup,
+       all_tile_loader: CachedTileLoader::from_config(&config)
+         .map(Arc::new)
+         .collect(),
+@@ -680,6 +684,7 @@ impl BevyTileLayer {
+     self.in_flight_tiles.insert(tile);
+ 
+     let sender = self.sender.clone();
++    let wakeup = self.wakeup.clone();
+     let renderer = self.renderer_for_tile_type(tile_type);
+     let tile_source = self.tile_source;
+     let generation = self.generation;
+@@ -691,7 +696,11 @@ impl BevyTileLayer {
+         .tile_data_with_priority(&tile, tile_source, priority)
+         .await
+       else {
+-        let _ = sender.send(BevyTileResult::Failed { generation, tile });
++        send_tile_result(
++          &sender,
++          &wakeup,
++          BevyTileResult::Failed { generation, tile },
++        );
+         return;
+       };
+ 
+@@ -702,16 +711,24 @@ impl BevyTileLayer {
+       let image = match render_result {
+         Ok(Ok(Ok(image))) => image,
+         _ => {
+-          let _ = sender.send(BevyTileResult::Failed { generation, tile });
++          send_tile_result(
++            &sender,
++            &wakeup,
++            BevyTileResult::Failed { generation, tile },
++          );
+           return;
+         }
+       };
+ 
+-      let _ = sender.send(BevyTileResult::Ready {
+-        generation,
+-        tile,
+-        image,
+-      });
++      send_tile_result(
++        &sender,
++        &wakeup,
++        BevyTileResult::Ready {
++          generation,
++          tile,
++          image,
++        },
++      );
+     });
+   }
+ 
+@@ -764,6 +781,7 @@ impl BevyTileLayer {
+     }
+ 
+     let sender = self.sender.clone();
++    let wakeup = self.wakeup.clone();
+     let renderer = self.vector_renderer.clone();
+     let tile_source = self.tile_source;
+     let generation = self.generation;
+@@ -778,7 +796,7 @@ impl BevyTileLayer {
+         .tile_data_with_priority(&parent_tile, tile_source, priority)
+         .await
+       else {
+-        send_failed_tiles(&sender, generation, &child_tiles);
++        send_failed_tiles(&sender, &wakeup, generation, &child_tiles);
+         return;
+       };
+ 
+@@ -790,7 +808,7 @@ impl BevyTileLayer {
+       let image = match render_result {
+         Ok(Ok(Ok(image))) => image,
+         _ => {
+-          send_failed_tiles(&sender, generation, &child_tiles);
++          send_failed_tiles(&sender, &wakeup, generation, &child_tiles);
+           return;
+         }
+       };
+@@ -800,11 +818,15 @@ impl BevyTileLayer {
+         .copied()
+         .zip(split_image_into_tiles(&image, grid_size))
+       {
+-        let _ = sender.send(BevyTileResult::Ready {
+-          generation,
+-          tile,
+-          image,
+-        });
++        send_tile_result(
++          &sender,
++          &wakeup,
++          BevyTileResult::Ready {
++            generation,
++            tile,
++            image,
++          },
++        );
+       }
+     });
+   }
+@@ -831,6 +853,7 @@ impl BevyTileLayer {
+     self.in_flight_tiles.insert(tile);
+ 
+     let sender = self.sender.clone();
++    let wakeup = self.wakeup.clone();
+     let tile_source = self.tile_source;
+     let generation = self.generation;
+     let style_zoom = native_vector_style_zoom(tile.zoom, self.tile_detail_factor);
+@@ -845,7 +868,11 @@ impl BevyTileLayer {
+         .tile_data_with_priority(&tile, tile_source, priority)
+         .await
+       else {
+-        let _ = sender.send(BevyTileResult::Failed { generation, tile });
++        send_tile_result(
++          &sender,
++          &wakeup,
++          BevyTileResult::Failed { generation, tile },
++        );
+         return;
+       };
+ 
+@@ -857,18 +884,26 @@ impl BevyTileLayer {
+       let content = match render_result {
+         Ok(Ok(Ok(content))) => content,
+         _ => {
+-          let _ = sender.send(BevyTileResult::Failed { generation, tile });
++          send_tile_result(
++            &sender,
++            &wakeup,
++            BevyTileResult::Failed { generation, tile },
++          );
+           return;
+         }
+       };
+ 
+-      let _ = sender.send(BevyTileResult::NativeVectorReady {
+-        generation,
+-        tile,
+-        meshes: content.meshes,
+-        labels: content.labels,
+-        debug_features: content.debug_features,
+-      });
++      send_tile_result(
++        &sender,
++        &wakeup,
++        BevyTileResult::NativeVectorReady {
++          generation,
++          tile,
++          meshes: content.meshes,
++          labels: content.labels,
++          debug_features: content.debug_features,
++        },
++      );
+     });
+   }
+ 
+@@ -917,12 +952,26 @@ impl BevyTileLayer {
+   }
+ }
+ 
+-fn send_failed_tiles(sender: &Sender<BevyTileResult>, generation: u64, tiles: &[Tile]) {
++fn send_tile_result(sender: &Sender<BevyTileResult>, wakeup: &BevyWakeup, result: BevyTileResult) {
++  let _ = sender.send(result);
++  wakeup.wake();
++}
++
++fn send_failed_tiles(
++  sender: &Sender<BevyTileResult>,
++  wakeup: &BevyWakeup,
++  generation: u64,
++  tiles: &[Tile],
++) {
+   for tile in tiles {
+-    let _ = sender.send(BevyTileResult::Failed {
+-      generation,
+-      tile: *tile,
+-    });
++    send_tile_result(
++      sender,
++      wakeup,
++      BevyTileResult::Failed {
++        generation,
++        tile: *tile,
++      },
++    );
+   }
+ }
+ 
+diff --git a/src/remote.rs b/src/remote.rs
+index a5fc1d4..3b749a2 100644
+--- a/src/remote.rs
++++ b/src/remote.rs
+@@ -27,6 +27,10 @@ struct ChannelRepaintRequester {
+   sender: Sender<()>,
+ }
+ 
++struct FnRepaintRequester {
++  request: Box<dyn Fn() + Send + Sync>,
++}
++
+ impl RepaintRequester for EguiRepaintRequester {
+   fn request_repaint(&self) {
+     self.ctx.request_repaint();
+@@ -39,6 +43,12 @@ impl RepaintRequester for ChannelRepaintRequester {
+   }
+ }
+ 
++impl RepaintRequester for FnRepaintRequester {
++  fn request_repaint(&self) {
++    (self.request)();
++  }
++}
++
+ #[derive(Clone)]
+ pub struct RepaintSignal {
+   requester: Arc<dyn RepaintRequester>,
+@@ -59,6 +69,15 @@ impl RepaintSignal {
+     }
+   }
+ 
++  #[must_use]
++  pub fn from_fn(request: impl Fn() + Send + Sync + 'static) -> Self {
++    Self {
++      requester: Arc::new(FnRepaintRequester {
++        request: Box::new(request),
++      }),
++    }
++  }
++
+   pub fn request_repaint(&self) {
+     self.requester.request_repaint();
+   }

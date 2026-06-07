@@ -826,7 +826,7 @@ fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Ve
       }
       fills.push(PointFillSpec {
         coord: *coord,
-        color: style_color(metadata.style.as_ref()),
+        color: point_fill_color(metadata.style.as_ref()),
       });
     }
     Geometry::LineString(_, _) | Geometry::Polygon(_, _) | Geometry::Heatmap(_, _) => {}
@@ -929,11 +929,10 @@ fn draw_geometry(
         return;
       }
 
-      let color = style_color(metadata.style.as_ref());
       for screen in &screens {
-        let center = screen_to_bevy(*screen, surface);
-        gizmos.circle_2d(center, POINT_RADIUS, color);
         if let Some(heading) = metadata.heading {
+          let color = point_fill_color(metadata.style.as_ref());
+          let center = screen_to_bevy(*screen, surface);
           draw_heading(gizmos, center, heading, color, heading_style);
         }
       }
@@ -1261,6 +1260,17 @@ fn style_color(style: Option<&Style>) -> Color {
   map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color().gamma_multiply(0.7))
 }
 
+fn point_fill_color(style: Option<&Style>) -> Color {
+  let style = style.unwrap_or(&DEFAULT_STYLE);
+  let fill_color = style.fill_color();
+  let color = if fill_color.a() == 0 {
+    style.color()
+  } else {
+    fill_color
+  };
+  map_color_to_bevy(color)
+}
+
 fn highlight_color(style: Option<&Style>) -> Color {
   map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color())
 }
@@ -1314,4 +1324,26 @@ fn stat_row(ui: &mut egui::Ui, label: &str, value: usize) {
     ui.label(label);
     ui.label(value.to_string());
   });
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn point_fill_color_prefers_fill_without_dimming() {
+    let stroke = MapColor::from_rgb(10, 20, 30);
+    let fill = MapColor::from_rgb(255, 48, 0);
+    let style = Style::default().with_color(stroke).with_fill_color(fill);
+
+    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(fill));
+  }
+
+  #[test]
+  fn point_fill_color_falls_back_to_stroke_without_dimming() {
+    let stroke = MapColor::from_rgb(255, 48, 0);
+    let style = Style::default().with_color(stroke);
+
+    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(stroke));
+  }
 }

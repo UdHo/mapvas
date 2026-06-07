@@ -1,0 +1,171 @@
+diff --git a/src/bin/mapvas-loadtest/main.rs b/src/bin/mapvas-loadtest/main.rs
+index 8338a6a..fa4f652 100644
+--- a/src/bin/mapvas-loadtest/main.rs
++++ b/src/bin/mapvas-loadtest/main.rs
+@@ -11,6 +11,7 @@ use mapvas::map::{
+   geometry_collection::{Geometry, Label, Metadata, Style},
+   map_event::{Layer, MapEvent},
+ };
++use mapvas::remote::MapState;
+ 
+ const DEFAULT_URL: &str = "http://localhost:12345";
+ 
+@@ -29,6 +30,10 @@ struct Args {
+   #[arg(long, default_value_t = 20)]
+   startup_timeout_secs: u64,
+ 
++  /// Seconds to wait for a reset clear to be processed by mapvas.
++  #[arg(long, default_value_t = 20)]
++  clear_timeout_secs: u64,
++
+   /// Clear existing map data before inserting generated geometry.
+   #[arg(long)]
+   reset: bool,
+@@ -116,7 +121,15 @@ async fn main() {
+   let mut sent_geometries = 0usize;
+ 
+   if args.reset {
++    let clear_generation = current_clear_generation(&client, &endpoint).await;
+     send_event(&client, &endpoint, &MapEvent::Clear).await;
++    wait_for_clear_generation(
++      &client,
++      &endpoint,
++      clear_generation,
++      Duration::from_secs(args.clear_timeout_secs),
++    )
++    .await;
+   }
+ 
+   let pause = Duration::from_millis(args.pause_ms);
+@@ -302,6 +315,46 @@ async fn ensure_mapvas_is_reachable(client: &reqwest::Client, endpoint: &str) {
+   std::process::exit(1);
+ }
+ 
++async fn current_clear_generation(client: &reqwest::Client, endpoint: &str) -> u64 {
++  remote_state(client, endpoint)
++    .await
++    .map_or(0, |state| state.clear_generation)
++}
++
++async fn wait_for_clear_generation(
++  client: &reqwest::Client,
++  endpoint: &str,
++  previous_generation: u64,
++  timeout: Duration,
++) {
++  let deadline = Instant::now() + timeout;
++  while Instant::now() < deadline {
++    if let Some(state) = remote_state(client, endpoint).await
++      && state.clear_generation != previous_generation
++      && state.layers.is_empty()
++    {
++      return;
++    }
++    tokio::time::sleep(Duration::from_millis(50)).await;
++  }
++
++  eprintln!("timed out waiting for mapvas to process clear at {endpoint}");
++  std::process::exit(1);
++}
++
++async fn remote_state(client: &reqwest::Client, endpoint: &str) -> Option<MapState> {
++  client
++    .get(format!("{endpoint}/state"))
++    .send()
++    .await
++    .ok()?
++    .error_for_status()
++    .ok()?
++    .json()
++    .await
++    .ok()
++}
++
+ async fn spawn_mapvas_if_needed(client: &reqwest::Client, args: &Args) {
+   let endpoint = endpoint(&args.url);
+   if healthcheck(client, &endpoint).await {
+@@ -372,6 +425,7 @@ mod tests {
+       url: DEFAULT_URL.to_string(),
+       spawn: false,
+       startup_timeout_secs: 20,
++      clear_timeout_secs: 20,
+       reset: false,
+       no_focus: false,
+       points: 10,
+diff --git a/src/map/mapvas_egui/layer/shape_layer.rs b/src/map/mapvas_egui/layer/shape_layer.rs
+index 139b70d..d36acf6 100644
+--- a/src/map/mapvas_egui/layer/shape_layer.rs
++++ b/src/map/mapvas_egui/layer/shape_layer.rs
+@@ -1103,6 +1103,7 @@ impl Layer for ShapeLayer {
+     self.nested_geometry_visibility.clear();
+     self.tile_cache.clear();
+     self.spatial_index = RTree::new();
++    self.update_shape_info_cache();
+     self.invalidate_cache();
+   }
+ 
+diff --git a/src/map/mapvas_egui.rs b/src/map/mapvas_egui.rs
+index 38ad8ad..2fd1ec2 100644
+--- a/src/map/mapvas_egui.rs
++++ b/src/map/mapvas_egui.rs
+@@ -57,6 +57,7 @@ pub struct Map {
+   bevy_pointer_blocking_rects: Vec<PixelRect>,
+   screenshot_target: ScreenshotTarget,
+   shutdown_requested: bool,
++  clear_generation: u64,
+ }
+ 
+ enum ScreenshotTarget {
+@@ -208,6 +209,7 @@ impl Map {
+         bevy_pointer_blocking_rects: Vec::new(),
+         screenshot_target,
+         shutdown_requested: false,
++        clear_generation: 0,
+       },
+       remote,
+       map_data_holder,
+@@ -573,6 +575,8 @@ impl Map {
+   }
+ 
+   pub fn clear(&mut self) {
++    self.clear_generation = self.clear_generation.wrapping_add(1);
++
+     // First, discard any pending layer events to prevent them from being processed later
+     self
+       .layers
+@@ -580,6 +584,7 @@ impl Map {
+ 
+     // Then clear the actual layer data
+     self.layers.for_each_neutral_mut(|layer| layer.clear());
++    self.update_state_snapshot();
+   }
+ 
+   pub fn handle_dropped_file(&self, file_path: PathBuf) {
+@@ -883,6 +888,7 @@ impl Map {
+     let Ok(mut state) = self.map_state.try_write() else {
+       return;
+     };
++    state.clear_generation = self.clear_generation;
+     state.layers = sub_layers;
+   }
+ 
+diff --git a/src/remote.rs b/src/remote.rs
+index 3b749a2..24a80da 100644
+--- a/src/remote.rs
++++ b/src/remote.rs
+@@ -83,12 +83,13 @@ impl RepaintSignal {
+   }
+ }
+ 
+-#[derive(serde::Serialize, Clone, Default)]
++#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+ pub struct MapState {
++  pub clear_generation: u64,
+   pub layers: Vec<LayerInfo>,
+ }
+ 
+-#[derive(serde::Serialize, Clone)]
++#[derive(serde::Serialize, serde::Deserialize, Clone)]
+ pub struct LayerInfo {
+   pub id: String,
+   pub visible: bool,

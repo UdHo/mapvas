@@ -1,0 +1,117 @@
+diff --git a/src/bevy_renderer/geometry.rs b/src/bevy_renderer/geometry.rs
+index 1eb4490..3f1f003 100644
+--- a/src/bevy_renderer/geometry.rs
++++ b/src/bevy_renderer/geometry.rs
+@@ -826,7 +826,7 @@ fn collect_point_fill_specs(geometry: &Geometry<PixelCoordinate>, fills: &mut Ve
+       }
+       fills.push(PointFillSpec {
+         coord: *coord,
+-        color: style_color(metadata.style.as_ref()),
++        color: point_fill_color(metadata.style.as_ref()),
+       });
+     }
+     Geometry::LineString(_, _) | Geometry::Polygon(_, _) | Geometry::Heatmap(_, _) => {}
+@@ -929,11 +929,10 @@ fn draw_geometry(
+         return;
+       }
+ 
+-      let color = style_color(metadata.style.as_ref());
+       for screen in &screens {
+-        let center = screen_to_bevy(*screen, surface);
+-        gizmos.circle_2d(center, POINT_RADIUS, color);
+         if let Some(heading) = metadata.heading {
++          let color = point_fill_color(metadata.style.as_ref());
++          let center = screen_to_bevy(*screen, surface);
+           draw_heading(gizmos, center, heading, color, heading_style);
+         }
+       }
+@@ -1261,6 +1260,17 @@ fn style_color(style: Option<&Style>) -> Color {
+   map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color().gamma_multiply(0.7))
+ }
+ 
++fn point_fill_color(style: Option<&Style>) -> Color {
++  let style = style.unwrap_or(&DEFAULT_STYLE);
++  let fill_color = style.fill_color();
++  let color = if fill_color.a() == 0 {
++    style.color()
++  } else {
++    fill_color
++  };
++  map_color_to_bevy(color)
++}
++
+ fn highlight_color(style: Option<&Style>) -> Color {
+   map_color_to_bevy(style.unwrap_or(&DEFAULT_STYLE).color())
+ }
+@@ -1315,3 +1325,25 @@ fn stat_row(ui: &mut egui::Ui, label: &str, value: usize) {
+     ui.label(value.to_string());
+   });
+ }
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  #[test]
++  fn point_fill_color_prefers_fill_without_dimming() {
++    let stroke = MapColor::from_rgb(10, 20, 30);
++    let fill = MapColor::from_rgb(255, 48, 0);
++    let style = Style::default().with_color(stroke).with_fill_color(fill);
++
++    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(fill));
++  }
++
++  #[test]
++  fn point_fill_color_falls_back_to_stroke_without_dimming() {
++    let stroke = MapColor::from_rgb(255, 48, 0);
++    let style = Style::default().with_color(stroke);
++
++    assert_eq!(point_fill_color(Some(&style)), map_color_to_bevy(stroke));
++  }
++}
+diff --git a/src/bin/mapvas-loadtest/main.rs b/src/bin/mapvas-loadtest/main.rs
+index fa4f652..3b18b4b 100644
+--- a/src/bin/mapvas-loadtest/main.rs
++++ b/src/bin/mapvas-loadtest/main.rs
+@@ -134,7 +134,7 @@ async fn main() {
+ 
+   let pause = Duration::from_millis(args.pause_ms);
+ 
+-  let point_style = Style::default().with_color(Color::RED);
++  let point_style = loadtest_point_style();
+   let line_style = Style::default().with_color(Color::BLUE);
+   let polygon_style = Style::default()
+     .with_color(Color::DARK_GREEN)
+@@ -231,6 +231,13 @@ fn generate_point(index: usize, args: &Args, style: Style) -> Geometry<PixelCoor
+   )
+ }
+ 
++fn loadtest_point_style() -> Style {
++  let point_color = Color::from_rgb(255, 48, 0);
++  Style::default()
++    .with_color(point_color)
++    .with_fill_color(point_color)
++}
++
+ fn generate_line(index: usize, args: &Args, style: Style) -> Geometry<PixelCoordinate> {
+   let center = generated_wgs84(index, args);
+   let mid = (args.line_points.saturating_sub(1)) as f32 * 0.5;
+@@ -450,6 +457,18 @@ mod tests {
+     assert!(generated_coord(42, &args).is_valid());
+   }
+ 
++  #[test]
++  fn generated_points_are_bright_filled_circles() {
++    let args = args();
++    let point_color = Color::from_rgb(255, 48, 0);
++    let Geometry::Point(_, metadata) = generate_point(0, &args, loadtest_point_style()) else {
++      panic!("expected point");
++    };
++    let style = metadata.style.expect("point should have style");
++    assert_eq!(style.color(), point_color);
++    assert_eq!(style.fill_color(), point_color);
++  }
++
+   #[test]
+   fn generated_polygon_is_closed() {
+     let args = args();
