@@ -4603,6 +4603,7 @@ dependencies = [
  "kml",
  "log",
  "mvt-reader",
+ "objc",
  "open",
  "polyline",
  "puffin",
@@ -4625,6 +4626,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+ "winit",
 ]
 
 [[package]]
