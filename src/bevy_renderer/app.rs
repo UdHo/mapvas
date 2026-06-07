@@ -4,9 +4,15 @@ use crate::{
   mapvas_ui::{KnownBevyGeometrySnapshot, MapApp, MapAppOutput},
   remote::{RepaintSignal, spawn_remote_runner_on_handle},
 };
-use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
+use bevy::{
+  log::LogPlugin,
+  prelude::*,
+  window::{PrimaryWindow, WindowResolution},
+  winit::WINIT_WINDOWS,
+};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use tokio_metrics::RuntimeMonitor;
+use winit::window::Icon;
 
 use super::{
   geometry::{BevyGeometryLayer, BevyGeometryPlugin},
@@ -16,6 +22,10 @@ use super::{
   surface::BevyRenderSurfacePlugin,
   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
 };
+
+const MAPVAS_WINDOW_ICON: &[u8] = include_bytes!("../../logo.png");
+#[cfg(target_os = "macos")]
+const MAPVAS_MACOS_APP_ICON: &[u8] = include_bytes!("../../mapvas_logo.png");
 
 #[derive(Clone, Copy)]
 pub struct MapvasBevyRenderPlugin {
@@ -242,6 +252,77 @@ fn setup_camera(mut commands: Commands) {
   commands.spawn((Camera2d, PrimaryEguiContext));
 }
 
+fn setup_window_icon(primary_window: Query<Entity, With<PrimaryWindow>>) {
+  #[cfg(target_os = "macos")]
+  setup_macos_application_icon();
+
+  let Ok(window_entity) = primary_window.single() else {
+    return;
+  };
+  let icon = match load_mapvas_window_icon() {
+    Ok(icon) => icon,
+    Err(error) => {
+      log::warn!("Failed to load mapvas window icon: {error}");
+      return;
+    }
+  };
+  WINIT_WINDOWS.with_borrow(|windows| {
+    if let Some(window) = windows.get_window(window_entity) {
+      window.set_window_icon(Some(icon));
+    }
+  });
+}
+
+fn load_mapvas_window_icon() -> Result<Icon, String> {
+  let image = image::load_from_memory(MAPVAS_WINDOW_ICON)
+    .map_err(|error| format!("decode logo.png: {error}"))?
+    .into_rgba8();
+  let (width, height) = image.dimensions();
+  Icon::from_rgba(image.into_raw(), width, height)
+    .map_err(|error| format!("create winit icon: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn setup_macos_application_icon() {
+  if let Err(error) = set_macos_application_icon(MAPVAS_MACOS_APP_ICON) {
+    log::warn!("Failed to set macOS application icon: {error}");
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_application_icon(icon_png: &[u8]) -> Result<(), String> {
+  use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+
+  unsafe {
+    let data: *mut Object =
+      msg_send![class!(NSData), dataWithBytes: icon_png.as_ptr() length: icon_png.len()];
+    if data.is_null() {
+      return Err("create NSData from icon bytes".to_string());
+    }
+
+    let image: *mut Object = msg_send![class!(NSImage), alloc];
+    if image.is_null() {
+      return Err("allocate NSImage".to_string());
+    }
+
+    let image: *mut Object = msg_send![image, initWithData: data];
+    if image.is_null() {
+      return Err("initialize NSImage from icon bytes".to_string());
+    }
+
+    let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+    if app.is_null() {
+      let _: () = msg_send![image, release];
+      return Err("get shared NSApplication".to_string());
+    }
+
+    let _: () = msg_send![app, setApplicationIconImage: image];
+    let _: () = msg_send![image, release];
+  }
+
+  Ok(())
+}
+
 pub fn run() {
   let runtime = build_runtime();
   let runtime_handle = runtime.handle().clone();
@@ -274,7 +355,23 @@ pub fn run() {
     )
     .add_plugins(EguiPlugin::default())
     .add_plugins(MapvasBevyRenderPlugin::interactive())
-    .add_systems(Startup, setup_camera)
+    .add_systems(Startup, (setup_camera, setup_window_icon))
     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
     .run();
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn mapvas_window_icon_loads_from_embedded_logo() {
+    assert!(load_mapvas_window_icon().is_ok());
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn mapvas_macos_application_icon_source_decodes() {
+    assert!(image::load_from_memory(MAPVAS_MACOS_APP_ICON).is_ok());
+  }
 }

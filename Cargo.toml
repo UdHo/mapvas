@@ -33,6 +33,7 @@ arboard = "3.6.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 bevy = "0.18.1"
 bevy_egui = "0.39.1"
+winit = "0.30.13"
 egui ={version =  "0.33.3", features = ["serde","bytemuck"]}
 egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 puffin = { version = "0.20", optional = true }
@@ -56,6 +57,9 @@ egui_kittest = { version = "0.33.3", features = ["snapshot", "wgpu"] }
 rstar = "0.13.0"
 earcut = "0.4.5"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+
 [features]
 default = []
 profiling = ["puffin", "puffin_egui", "puffin_http"]
@@ -65,8 +69,18 @@ assert_approx_eq = "1.1.0"
 futures = "0.3"
 rstest = "0.26"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}
 module_name_repetitions = "allow"
 missing_panics_doc = "allow"
 similar_names = "allow"
+
+[package.metadata.bundle]
+name = "mapvas"
+identifier = "io.github.udho.mapvas"
+icon = ["assets/macos/mapvas.icns"]
+category = "public.app-category.graphics-design"
+short_description = "A map viewer with drawing functionality"

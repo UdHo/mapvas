@@ -1,0 +1,107 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index bbec316..48a540b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4670,6 +4670,7 @@ dependencies = [
+  "tracing",
+  "tracing-subscriber",
+  "urlencoding",
++ "winit",
+ ]
+ 
+ [[package]]
+diff --git a/Cargo.toml b/Cargo.toml
+index 1604eea..13f0cc9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -33,6 +33,7 @@ arboard = "3.6.1"
+ chrono = { version = "0.4.44", features = ["serde"] }
+ bevy = "0.18.1"
+ bevy_egui = "0.39.1"
++winit = "0.30.13"
+ egui ={version =  "0.33.3", features = ["serde","bytemuck"]}
+ egui_extras = { version = "0.33.3", features = ["all_loaders"] }
+ puffin = { version = "0.20", optional = true }
+diff --git a/src/bevy_renderer/app.rs b/src/bevy_renderer/app.rs
+index 2561114..9a41bcb 100644
+--- a/src/bevy_renderer/app.rs
++++ b/src/bevy_renderer/app.rs
+@@ -4,9 +4,15 @@ use crate::{
+   mapvas_ui::{KnownBevyGeometrySnapshot, MapApp, MapAppOutput},
+   remote::{RepaintSignal, spawn_remote_runner_on_handle},
+ };
+-use bevy::{log::LogPlugin, prelude::*, window::WindowResolution};
++use bevy::{
++  log::LogPlugin,
++  prelude::*,
++  window::{PrimaryWindow, WindowResolution},
++  winit::WINIT_WINDOWS,
++};
+ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
+ use tokio_metrics::RuntimeMonitor;
++use winit::window::Icon;
+ 
+ use super::{
+   geometry::{BevyGeometryLayer, BevyGeometryPlugin},
+@@ -17,6 +23,8 @@ use super::{
+   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
+ };
+ 
++const MAPVAS_WINDOW_ICON: &[u8] = include_bytes!("../../logo.png");
++
+ #[derive(Clone, Copy)]
+ pub struct MapvasBevyRenderPlugin {
+   interactive: bool,
+@@ -242,6 +250,33 @@ fn setup_camera(mut commands: Commands) {
+   commands.spawn((Camera2d, PrimaryEguiContext));
+ }
+ 
++fn setup_window_icon(primary_window: Query<Entity, With<PrimaryWindow>>) {
++  let Ok(window_entity) = primary_window.single() else {
++    return;
++  };
++  let icon = match load_mapvas_window_icon() {
++    Ok(icon) => icon,
++    Err(error) => {
++      log::warn!("Failed to load mapvas window icon: {error}");
++      return;
++    }
++  };
++  WINIT_WINDOWS.with_borrow(|windows| {
++    if let Some(window) = windows.get_window(window_entity) {
++      window.set_window_icon(Some(icon));
++    }
++  });
++}
++
++fn load_mapvas_window_icon() -> Result<Icon, String> {
++  let image = image::load_from_memory(MAPVAS_WINDOW_ICON)
++    .map_err(|error| format!("decode logo.png: {error}"))?
++    .into_rgba8();
++  let (width, height) = image.dimensions();
++  Icon::from_rgba(image.into_raw(), width, height)
++    .map_err(|error| format!("create winit icon: {error}"))
++}
++
+ pub fn run() {
+   let runtime = build_runtime();
+   let runtime_handle = runtime.handle().clone();
+@@ -274,7 +309,17 @@ pub fn run() {
+     )
+     .add_plugins(EguiPlugin::default())
+     .add_plugins(MapvasBevyRenderPlugin::interactive())
+-    .add_systems(Startup, setup_camera)
++    .add_systems(Startup, (setup_camera, setup_window_icon))
+     .add_systems(EguiPrimaryContextPass, mapvas_ui_system)
+     .run();
+ }
++
++#[cfg(test)]
++mod tests {
++  use super::*;
++
++  #[test]
++  fn mapvas_window_icon_loads_from_embedded_logo() {
++    assert!(load_mapvas_window_icon().is_ok());
++  }
++}
