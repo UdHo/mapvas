@@ -8,7 +8,7 @@ use bevy::{
   log::LogPlugin,
   prelude::*,
   window::{PrimaryWindow, WindowResolution},
-  winit::WINIT_WINDOWS,
+  winit::{WINIT_WINDOWS, WinitSettings},
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use tokio_metrics::RuntimeMonitor;
@@ -17,7 +17,7 @@ use winit::window::Icon;
 use super::{
   geometry::{BevyGeometryLayer, BevyGeometryPlugin},
   map::{BevyMapAction, BevyMapControl, BevyMapPlugin, BevyMapShortcut, BevyMapViewport},
-  repaint::{BevyRepaintPlugin, BevyRepaintRequests},
+  repaint::{BevyRepaintPlugin, BevyRepaintRequests, BevyWakeup},
   screenshot::{BevyScreenshotPlugin, BevyScreenshotRequests},
   surface::BevyRenderSurfacePlugin,
   tiles::{BevyTileLayer, BevyTilePlugin, BevyTileRuntime},
@@ -328,9 +328,12 @@ pub fn run() {
   let runtime_handle = runtime.handle().clone();
   let runtime_monitor = RuntimeMonitor::new(&runtime_handle);
   let config = Config::new();
-  let (repaint_signal, repaint_requests) = BevyRepaintRequests::channel();
+  let wakeup = BevyWakeup::default();
+  let (repaint_signal, repaint_requests) = BevyRepaintRequests::channel(wakeup.clone());
 
   App::new()
+    .insert_resource(WinitSettings::desktop_app())
+    .insert_resource(wakeup.clone())
     .insert_resource(repaint_requests)
     .insert_non_send_resource(MapvasBevyState::new(
       runtime,
@@ -340,7 +343,7 @@ pub fn run() {
     ))
     .init_resource::<BevyGeometryLayer>()
     .insert_resource(BevyTileRuntime(runtime_handle))
-    .insert_resource(BevyTileLayer::new(config))
+    .insert_resource(BevyTileLayer::new(config, wakeup))
     .add_plugins(
       DefaultPlugins
         .set(WindowPlugin {

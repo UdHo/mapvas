@@ -57,6 +57,7 @@ pub struct Map {
   bevy_pointer_blocking_rects: Vec<PixelRect>,
   screenshot_target: ScreenshotTarget,
   shutdown_requested: bool,
+  clear_generation: u64,
 }
 
 enum ScreenshotTarget {
@@ -208,6 +209,7 @@ impl Map {
         bevy_pointer_blocking_rects: Vec::new(),
         screenshot_target,
         shutdown_requested: false,
+        clear_generation: 0,
       },
       remote,
       map_data_holder,
@@ -573,6 +575,8 @@ impl Map {
   }
 
   pub fn clear(&mut self) {
+    self.clear_generation = self.clear_generation.wrapping_add(1);
+
     // First, discard any pending layer events to prevent them from being processed later
     self
       .layers
@@ -580,6 +584,7 @@ impl Map {
 
     // Then clear the actual layer data
     self.layers.for_each_neutral_mut(|layer| layer.clear());
+    self.update_state_snapshot();
   }
 
   pub fn handle_dropped_file(&self, file_path: PathBuf) {
@@ -883,6 +888,7 @@ impl Map {
     let Ok(mut state) = self.map_state.try_write() else {
       return;
     };
+    state.clear_generation = self.clear_generation;
     state.layers = sub_layers;
   }
 

@@ -37,6 +37,7 @@ use super::{
   app::build_runtime,
   geometry::BevyGeometryLayer,
   map::BevyMapViewport,
+  repaint::BevyWakeup,
   surface::BevyRenderSurface,
   tiles::{BevyTileLayer, BevyTileRuntime},
 };
@@ -118,7 +119,7 @@ impl BevyHeadlessRenderer {
       remote.handle_map_event(event.clone());
     }
 
-    let mut tile_layer = BevyTileLayer::new(self.config.clone());
+    let mut tile_layer = BevyTileLayer::new(self.config.clone(), BevyWakeup::default());
     tile_layer.set_preload_enabled(false);
     if self.no_map {
       tile_layer.set_visible(false);

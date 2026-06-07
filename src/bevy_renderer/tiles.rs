@@ -23,6 +23,8 @@ use crate::{
 };
 use bevy::prelude::*;
 
+use super::repaint::BevyWakeup;
+
 mod detail;
 mod fonts;
 mod native_vector;
@@ -248,6 +250,7 @@ enum BevyTileResult {
 pub struct BevyTileLayer {
   receiver: Mutex<Receiver<BevyTileResult>>,
   sender: Sender<BevyTileResult>,
+  wakeup: BevyWakeup,
   all_tile_loader: Vec<Arc<CachedTileLoader>>,
   tile_loader_index: usize,
   tile_providers: Vec<TileProvider>,
@@ -282,11 +285,12 @@ fn configure_bevy_tile_overlay_gizmos(mut config_store: ResMut<GizmoConfigStore>
 
 impl BevyTileLayer {
   #[must_use]
-  pub fn new(config: Config) -> Self {
+  pub fn new(config: Config, wakeup: BevyWakeup) -> Self {
     let (sender, receiver) = std::sync::mpsc::channel();
     Self {
       receiver: Mutex::new(receiver),
       sender,
+      wakeup,
       all_tile_loader: CachedTileLoader::from_config(&config)
         .map(Arc::new)
         .collect(),
@@ -680,6 +684,7 @@ impl BevyTileLayer {
     self.in_flight_tiles.insert(tile);
 
     let sender = self.sender.clone();
+    let wakeup = self.wakeup.clone();
     let renderer = self.renderer_for_tile_type(tile_type);
     let tile_source = self.tile_source;
     let generation = self.generation;
@@ -691,7 +696,11 @@ impl BevyTileLayer {
         .tile_data_with_priority(&tile, tile_source, priority)
         .await
       else {
-        let _ = sender.send(BevyTileResult::Failed { generation, tile });
+        send_tile_result(
+          &sender,
+          &wakeup,
+          BevyTileResult::Failed { generation, tile },
+        );
         return;
       };
 
@@ -702,16 +711,24 @@ impl BevyTileLayer {
       let image = match render_result {
         Ok(Ok(Ok(image))) => image,
         _ => {
-          let _ = sender.send(BevyTileResult::Failed { generation, tile });
+          send_tile_result(
+            &sender,
+            &wakeup,
+            BevyTileResult::Failed { generation, tile },
+          );
           return;
         }
       };
 
-      let _ = sender.send(BevyTileResult::Ready {
-        generation,
-        tile,
-        image,
-      });
+      send_tile_result(
+        &sender,
+        &wakeup,
+        BevyTileResult::Ready {
+          generation,
+          tile,
+          image,
+        },
+      );
     });
   }
 
@@ -764,6 +781,7 @@ impl BevyTileLayer {
     }
 
     let sender = self.sender.clone();
+    let wakeup = self.wakeup.clone();
     let renderer = self.vector_renderer.clone();
     let tile_source = self.tile_source;
     let generation = self.generation;
@@ -778,7 +796,7 @@ impl BevyTileLayer {
         .tile_data_with_priority(&parent_tile, tile_source, priority)
         .await
       else {
-        send_failed_tiles(&sender, generation, &child_tiles);
+        send_failed_tiles(&sender, &wakeup, generation, &child_tiles);
         return;
       };
 
@@ -790,7 +808,7 @@ impl BevyTileLayer {
       let image = match render_result {
         Ok(Ok(Ok(image))) => image,
         _ => {
-          send_failed_tiles(&sender, generation, &child_tiles);
+          send_failed_tiles(&sender, &wakeup, generation, &child_tiles);
           return;
         }
       };
@@ -800,11 +818,15 @@ impl BevyTileLayer {
         .copied()
         .zip(split_image_into_tiles(&image, grid_size))
       {
-        let _ = sender.send(BevyTileResult::Ready {
-          generation,
-          tile,
-          image,
-        });
+        send_tile_result(
+          &sender,
+          &wakeup,
+          BevyTileResult::Ready {
+            generation,
+            tile,
+            image,
+          },
+        );
       }
     });
   }
@@ -831,6 +853,7 @@ impl BevyTileLayer {
     self.in_flight_tiles.insert(tile);
 
     let sender = self.sender.clone();
+    let wakeup = self.wakeup.clone();
     let tile_source = self.tile_source;
     let generation = self.generation;
     let style_zoom = native_vector_style_zoom(tile.zoom, self.tile_detail_factor);
@@ -845,7 +868,11 @@ impl BevyTileLayer {
         .tile_data_with_priority(&tile, tile_source, priority)
         .await
       else {
-        let _ = sender.send(BevyTileResult::Failed { generation, tile });
+        send_tile_result(
+          &sender,
+          &wakeup,
+          BevyTileResult::Failed { generation, tile },
+        );
         return;
       };
 
@@ -857,18 +884,26 @@ impl BevyTileLayer {
       let content = match render_result {
         Ok(Ok(Ok(content))) => content,
         _ => {
-          let _ = sender.send(BevyTileResult::Failed { generation, tile });
+          send_tile_result(
+            &sender,
+            &wakeup,
+            BevyTileResult::Failed { generation, tile },
+          );
           return;
         }
       };
 
-      let _ = sender.send(BevyTileResult::NativeVectorReady {
-        generation,
-        tile,
-        meshes: content.meshes,
-        labels: content.labels,
-        debug_features: content.debug_features,
-      });
+      send_tile_result(
+        &sender,
+        &wakeup,
+        BevyTileResult::NativeVectorReady {
+          generation,
+          tile,
+          meshes: content.meshes,
+          labels: content.labels,
+          debug_features: content.debug_features,
+        },
+      );
     });
   }
 
@@ -917,12 +952,26 @@ impl BevyTileLayer {
   }
 }
 
-fn send_failed_tiles(sender: &Sender<BevyTileResult>, generation: u64, tiles: &[Tile]) {
+fn send_tile_result(sender: &Sender<BevyTileResult>, wakeup: &BevyWakeup, result: BevyTileResult) {
+  let _ = sender.send(result);
+  wakeup.wake();
+}
+
+fn send_failed_tiles(
+  sender: &Sender<BevyTileResult>,
+  wakeup: &BevyWakeup,
+  generation: u64,
+  tiles: &[Tile],
+) {
   for tile in tiles {
-    let _ = sender.send(BevyTileResult::Failed {
-      generation,
-      tile: *tile,
-    });
+    send_tile_result(
+      sender,
+      wakeup,
+      BevyTileResult::Failed {
+        generation,
+        tile: *tile,
+      },
+    );
   }
 }
 

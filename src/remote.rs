@@ -27,6 +27,10 @@ struct ChannelRepaintRequester {
   sender: Sender<()>,
 }
 
+struct FnRepaintRequester {
+  request: Box<dyn Fn() + Send + Sync>,
+}
+
 impl RepaintRequester for EguiRepaintRequester {
   fn request_repaint(&self) {
     self.ctx.request_repaint();
@@ -36,6 +40,12 @@ impl RepaintRequester for EguiRepaintRequester {
 impl RepaintRequester for ChannelRepaintRequester {
   fn request_repaint(&self) {
     let _ = self.sender.send(());
+  }
+}
+
+impl RepaintRequester for FnRepaintRequester {
+  fn request_repaint(&self) {
+    (self.request)();
   }
 }
 
@@ -59,17 +69,27 @@ impl RepaintSignal {
     }
   }
 
+  #[must_use]
+  pub fn from_fn(request: impl Fn() + Send + Sync + 'static) -> Self {
+    Self {
+      requester: Arc::new(FnRepaintRequester {
+        request: Box::new(request),
+      }),
+    }
+  }
+
   pub fn request_repaint(&self) {
     self.requester.request_repaint();
   }
 }
 
-#[derive(serde::Serialize, Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 pub struct MapState {
+  pub clear_generation: u64,
   pub layers: Vec<LayerInfo>,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct LayerInfo {
   pub id: String,
   pub visible: bool,

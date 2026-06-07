@@ -1103,6 +1103,7 @@ impl Layer for ShapeLayer {
     self.nested_geometry_visibility.clear();
     self.tile_cache.clear();
     self.spatial_index = RTree::new();
+    self.update_shape_info_cache();
     self.invalidate_cache();
   }
 
