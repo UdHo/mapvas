@@ -23,6 +23,7 @@ const NATIVE_VECTOR_WATER_Z: f32 = -28.0;
 const NATIVE_VECTOR_BUILDING_Z: f32 = -27.0;
 const NATIVE_VECTOR_ROAD_CASING_Z: f32 = -26.0;
 const NATIVE_VECTOR_ROAD_INNER_Z: f32 = -25.0;
+const NATIVE_VECTOR_LINE_JOIN_SEGMENTS: usize = 12;
 
 struct NativeVectorMeshBatch {
   color_key: [u8; 4],
@@ -710,35 +711,79 @@ fn append_native_vector_line_mesh(
     .collect::<Vec<_>>();
 
   for segment in points.windows(2) {
-    let [x0, y0] = segment[0];
-    let [x1, y1] = segment[1];
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    let len = (dx * dx + dy * dy).sqrt();
-    if len <= f32::EPSILON {
-      continue;
-    }
-
-    let nx = -dy / len * half_width;
-    let ny = dx / len * half_width;
-    let base_index = batch.positions.len() as u32;
-    batch.positions.extend([
-      [x0 + nx, y0 + ny, 0.0],
-      [x1 + nx, y1 + ny, 0.0],
-      [x1 - nx, y1 - ny, 0.0],
-      [x0 - nx, y0 - ny, 0.0],
-    ]);
-    batch.indices.extend([
-      base_index,
-      base_index + 1,
-      base_index + 2,
-      base_index,
-      base_index + 2,
-      base_index + 3,
-    ]);
-    include_native_vector_local_point_with_padding(batch, tile_origin, x0, y0, half_width);
-    include_native_vector_local_point_with_padding(batch, tile_origin, x1, y1, half_width);
+    append_native_vector_line_segment_mesh(batch, tile_origin, segment[0], segment[1], half_width);
   }
+
+  for point in points {
+    append_native_vector_line_join_mesh(batch, tile_origin, point, half_width);
+  }
+}
+
+fn append_native_vector_line_segment_mesh(
+  batch: &mut NativeVectorMeshBatch,
+  tile_origin: PixelCoordinate,
+  start: [f32; 2],
+  end: [f32; 2],
+  half_width: f32,
+) {
+  let [x0, y0] = start;
+  let [x1, y1] = end;
+  let dx = x1 - x0;
+  let dy = y1 - y0;
+  let len = (dx * dx + dy * dy).sqrt();
+  if len <= f32::EPSILON {
+    return;
+  }
+
+  let nx = -dy / len * half_width;
+  let ny = dx / len * half_width;
+  let base_index = batch.positions.len() as u32;
+  batch.positions.extend([
+    [x0 + nx, y0 + ny, 0.0],
+    [x1 + nx, y1 + ny, 0.0],
+    [x1 - nx, y1 - ny, 0.0],
+    [x0 - nx, y0 - ny, 0.0],
+  ]);
+  batch.indices.extend([
+    base_index,
+    base_index + 1,
+    base_index + 2,
+    base_index,
+    base_index + 2,
+    base_index + 3,
+  ]);
+  include_native_vector_local_point_with_padding(batch, tile_origin, x0, y0, half_width);
+  include_native_vector_local_point_with_padding(batch, tile_origin, x1, y1, half_width);
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn append_native_vector_line_join_mesh(
+  batch: &mut NativeVectorMeshBatch,
+  tile_origin: PixelCoordinate,
+  center: [f32; 2],
+  radius: f32,
+) {
+  if radius <= 0.0 {
+    return;
+  }
+
+  let [cx, cy] = center;
+  let base_index = batch.positions.len() as u32;
+  batch.positions.push([cx, cy, 0.0]);
+  for index in 0..NATIVE_VECTOR_LINE_JOIN_SEGMENTS {
+    let angle = std::f32::consts::TAU * index as f32 / NATIVE_VECTOR_LINE_JOIN_SEGMENTS as f32;
+    batch
+      .positions
+      .push([cx + angle.cos() * radius, cy + angle.sin() * radius, 0.0]);
+  }
+
+  for index in 0..NATIVE_VECTOR_LINE_JOIN_SEGMENTS {
+    let current = base_index + 1 + index as u32;
+    let next = base_index + 1 + ((index + 1) % NATIVE_VECTOR_LINE_JOIN_SEGMENTS) as u32;
+    batch.indices.extend([base_index, current, next]);
+  }
+
+  include_native_vector_local_point_with_padding(batch, tile_origin, cx, cy, radius);
 }
 
 fn append_native_vector_rect(
