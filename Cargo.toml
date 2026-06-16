@@ -13,7 +13,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 axum = "0.8.9"
 image = "0.25.10"
-itertools = "0.14.0"
+itertools = "0.15.0"
 log = "0.4.32"
 rayon = "1.12.0"
 serde = "1.0.219"
@@ -22,7 +22,7 @@ thiserror = "2.0.17"
 tokio = {version = "1.52.3", features = ["full", "tracing"]}
 tokio-metrics = { version = "0.5", features = ["rt"] }
 tracing-subscriber = {version = "0.3.23", features = ["env-filter"]}
-tower-http = {version = "0.6.11", features = ["trace"]}
+tower-http = {version = "0.7.0", features = ["trace"]}
 tracing = "0.1.44"
 serde_json = "1.0.150"
 env_logger = "0.11.10"
