@@ -26,7 +26,7 @@ use metadata::{
 };
 use styling::{
   background_color, get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
-  should_show_place, should_show_place_point_label, style_config,
+  should_show_line_label, should_show_place, should_show_place_point_label, style_config,
 };
 
 use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
@@ -159,20 +159,15 @@ impl VectorTileRenderer {
           line_count += 1;
 
           // For Protomaps roads layer: use 'kind_detail' which has the actual road type
-          let road_class = if layer_name == "roads" {
-            feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
-          } else {
-            feature_class
-          };
+          let road_class =
+            Self::line_feature_class(layer_name, feature_class, feature_kind, feature_kind_detail);
 
           Self::render_linestring_with_class(
             pixmap, line, layer_name, road_class, scale, tile_zoom,
           );
 
           // Collect water AND road features with names for labeling
-          if feature_name.is_some()
-            && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads")
-          {
+          if feature_name.is_some() && should_show_line_label(layer_name, road_class, tile_zoom) {
             line_labels.push((
               line.clone(),
               feature_name.unwrap().to_string(),
@@ -185,11 +180,12 @@ impl VectorTileRenderer {
             line_count += 1;
 
             // For Protomaps roads layer: use 'kind_detail' which has the actual road type
-            let road_class = if layer_name == "roads" {
-              feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
-            } else {
-              feature_class
-            };
+            let road_class = Self::line_feature_class(
+              layer_name,
+              feature_class,
+              feature_kind,
+              feature_kind_detail,
+            );
 
             Self::render_linestring_with_class(
               pixmap, line, layer_name, road_class, scale, tile_zoom,
@@ -197,7 +193,7 @@ impl VectorTileRenderer {
 
             // Collect water and road features with names for labeling (only first line of multi)
             if feature_name.is_some()
-              && (layer_name == "water" || layer_name == "waterway" || layer_name == "roads")
+              && should_show_line_label(layer_name, road_class, tile_zoom)
               && line_count == 1
             {
               line_labels.push((
@@ -435,6 +431,23 @@ impl VectorTileRenderer {
       );
     }
   }
+
+  fn line_label_is_road(layer_name: &str) -> bool {
+    matches!(layer_name, "road" | "roads" | "transportation" | "highway")
+  }
+
+  fn line_feature_class<'a>(
+    layer_name: &str,
+    feature_class: &'a str,
+    feature_kind: Option<&'a str>,
+    feature_kind_detail: Option<&'a str>,
+  ) -> &'a str {
+    if Self::line_label_is_road(layer_name) {
+      feature_kind_detail.unwrap_or(feature_kind.unwrap_or(feature_class))
+    } else {
+      feature_class
+    }
+  }
 }
 
 impl TileRenderer for VectorTileRenderer {
@@ -592,7 +605,7 @@ impl TileRenderer for VectorTileRenderer {
       }
 
       // Different colors for roads vs water features
-      let (color, font_size_base) = if layer_name == "roads" {
+      let (color, font_size_base) = if Self::line_label_is_road(&layer_name) {
         (cfg.road_label.to_color(), cfg.font_sizes.road_label)
       } else {
         (cfg.water_label.to_color(), cfg.font_sizes.water_label)

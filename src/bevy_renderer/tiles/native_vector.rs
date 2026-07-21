@@ -675,7 +675,8 @@ fn update_native_vector_tile_label_instance(
       bevy_pos.x + text_offset_x,
       bevy_pos.y,
       NATIVE_VECTOR_LABEL_TEXT_Z,
-    );
+    )
+    .with_rotation(Quat::from_rotation_z(-label.rotation_radians));
     let existing = label.entities.get(entity_index).copied();
     let marker = update_native_vector_tile_label_marker(
       commands,

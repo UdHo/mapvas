@@ -1133,6 +1133,31 @@ pub fn get_road_styling(
   )
 }
 
+#[must_use]
+pub fn should_show_line_label(layer_name: &str, feature_class: &str, tile_zoom: u8) -> bool {
+  if matches!(layer_name, "water" | "waterway") {
+    return tile_zoom >= 10;
+  }
+
+  if !matches!(layer_name, "road" | "roads" | "transportation" | "highway") {
+    return false;
+  }
+
+  let min_zoom = match feature_class {
+    "motorway" | "trunk" => 11,
+    "primary" => 12,
+    "secondary" => 13,
+    "tertiary" => 14,
+    "residential" | "unclassified" => 15,
+    "service" | "minor" => 16,
+    "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" | "tertiary_link" => 16,
+    "path" | "footway" | "pedestrian" | "cycleway" => 17,
+    _ => 15,
+  };
+
+  tile_zoom >= min_zoom
+}
+
 /// Get font size for a place feature based on its type and importance
 #[must_use]
 pub fn get_place_font_size(

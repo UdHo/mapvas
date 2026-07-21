@@ -76,6 +76,7 @@ pub(super) fn collect_finished_tiles(
             text: spec.text,
             base_font_size: spec.base_font_size,
             text_color: spec.text_color,
+            rotation_radians: spec.rotation_radians,
             show_marker: spec.show_marker,
             centered: spec.centered,
             max_point_zoom: spec.max_point_zoom,

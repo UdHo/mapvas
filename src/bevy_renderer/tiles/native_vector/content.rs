@@ -1,9 +1,10 @@
 use crate::map::{
   coordinates::{PixelCoordinate, Tile},
   tile_renderer::{
-    TileRenderError, background_color, feature_is_national_capital, feature_string_property,
-    get_fill_color, get_place_font_size, get_place_label_style, get_road_styling,
-    label_feature_kind_detail, label_population_rank, should_show_place, style_config,
+    StyleConfig, TileRenderError, background_color, feature_is_national_capital,
+    feature_string_property, get_fill_color, get_place_font_size, get_place_label_style,
+    get_road_styling, label_feature_kind_detail, label_population_rank, should_show_line_label,
+    should_show_place, style_config,
   },
 };
 use bevy::{
@@ -213,6 +214,18 @@ fn append_native_vector_layer(
           mvt_to_world,
           style_pixel_to_world,
         );
+        append_native_vector_line_label(
+          labels,
+          line,
+          layer_name,
+          line_class,
+          feature_name,
+          style_zoom,
+          tile_origin,
+          tile_world_size,
+          mvt_to_world,
+          style_pixel_to_world,
+        );
       }
       geo_types::Geometry::MultiLineString(multi) => {
         let line_class =
@@ -225,6 +238,18 @@ fn append_native_vector_layer(
             line_class,
             style_zoom,
             tile_origin,
+            mvt_to_world,
+            style_pixel_to_world,
+          );
+          append_native_vector_line_label(
+            labels,
+            line,
+            layer_name,
+            line_class,
+            feature_name,
+            style_zoom,
+            tile_origin,
+            tile_world_size,
             mvt_to_world,
             style_pixel_to_world,
           );
@@ -576,11 +601,132 @@ fn append_native_vector_label(
     text: label_text.to_string(),
     base_font_size: get_place_font_size(feature_kind_detail, is_capital, population_rank),
     text_color: native_vector_color(label_style.text_color),
+    rotation_radians: 0.0,
     show_marker: label_style.show_marker,
     centered: label_style.centered,
     max_point_zoom: label_style.max_point_zoom,
     tile_world_size,
   });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_native_vector_line_label(
+  labels: &mut Vec<NativeVectorTileLabelSpec>,
+  line: &geo_types::LineString<f32>,
+  layer_name: &str,
+  feature_class: &str,
+  feature_name: Option<&str>,
+  tile_zoom: u8,
+  tile_origin: PixelCoordinate,
+  tile_world_size: f32,
+  mvt_to_world: f32,
+  style_pixel_to_world: f32,
+) {
+  let Some(label_text) = feature_name.map(str::trim).filter(|name| !name.is_empty()) else {
+    return;
+  };
+  let cfg = style_config();
+  let Some((text_color, base_font_size)) = native_vector_line_label_style(layer_name, &cfg) else {
+    return;
+  };
+  if !should_show_line_label(layer_name, feature_class, tile_zoom) {
+    return;
+  }
+
+  let points = line
+    .coords()
+    .map(|coord| [coord.x * mvt_to_world, coord.y * mvt_to_world])
+    .collect::<Vec<_>>();
+  if points.len() < 2 {
+    return;
+  }
+
+  let path_length = native_vector_path_length(&points);
+  let estimated_text_width = label_text.chars().count() as f32
+    * base_font_size
+    * cfg.font_sizes.char_width_ratio
+    * style_pixel_to_world;
+  if path_length <= 0.0 || estimated_text_width > path_length * cfg.font_sizes.max_path_coverage {
+    return;
+  }
+
+  let Some((coord, angle)) = native_vector_point_along_path(&points, path_length * 0.5) else {
+    return;
+  };
+
+  labels.push(NativeVectorTileLabelSpec {
+    coord: PixelCoordinate {
+      x: tile_origin.x + coord[0],
+      y: tile_origin.y + coord[1],
+    },
+    text: label_text.to_string(),
+    base_font_size,
+    text_color: native_vector_color(text_color),
+    rotation_radians: readable_native_vector_label_angle(angle),
+    show_marker: false,
+    centered: true,
+    max_point_zoom: None,
+    tile_world_size,
+  });
+}
+
+fn native_vector_line_label_style(
+  layer_name: &str,
+  cfg: &StyleConfig,
+) -> Option<(tiny_skia::Color, f32)> {
+  if matches!(layer_name, "road" | "roads" | "transportation" | "highway") {
+    Some((cfg.road_label.to_color(), cfg.font_sizes.road_label))
+  } else if matches!(layer_name, "water" | "waterway") {
+    Some((cfg.water_label.to_color(), cfg.font_sizes.water_label))
+  } else {
+    None
+  }
+}
+
+fn native_vector_path_length(points: &[[f32; 2]]) -> f32 {
+  points
+    .windows(2)
+    .map(|segment| {
+      let dx = segment[1][0] - segment[0][0];
+      let dy = segment[1][1] - segment[0][1];
+      (dx * dx + dy * dy).sqrt()
+    })
+    .sum()
+}
+
+fn native_vector_point_along_path(points: &[[f32; 2]], distance: f32) -> Option<([f32; 2], f32)> {
+  let mut remaining = distance;
+  for segment in points.windows(2) {
+    let start = segment[0];
+    let end = segment[1];
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let segment_length = (dx * dx + dy * dy).sqrt();
+    if segment_length <= f32::EPSILON {
+      continue;
+    }
+    if remaining <= segment_length {
+      let t = remaining / segment_length;
+      return Some(([start[0] + t * dx, start[1] + t * dy], dy.atan2(dx)));
+    }
+    remaining -= segment_length;
+  }
+
+  let segment = points.windows(2).last()?;
+  Some((
+    segment[1],
+    (segment[1][1] - segment[0][1]).atan2(segment[1][0] - segment[0][0]),
+  ))
+}
+
+fn readable_native_vector_label_angle(angle: f32) -> f32 {
+  if angle > std::f32::consts::FRAC_PI_2 {
+    angle - std::f32::consts::PI
+  } else if angle < -std::f32::consts::FRAC_PI_2 {
+    angle + std::f32::consts::PI
+  } else {
+    angle
+  }
 }
 
 fn append_native_vector_polygon(
