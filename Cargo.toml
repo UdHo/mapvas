@@ -62,7 +62,7 @@ profiling = ["puffin", "puffin_egui", "puffin_http"]
 [dev-dependencies]
 assert_approx_eq = "1.1.0"
 futures = "0.3"
-rstest = "0.26"
+rstest = "0.27"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}
