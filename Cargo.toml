@@ -43,7 +43,7 @@ dirs = "7.0.0"
 open = "5"
 async-trait = "0.1.89"
 urlencoding = "2.1.3"
-kml = "0.14.0"
+kml = "0.15.0"
 gpx = "0.10.0"
 geo-types = "0.7.19"
 time = "0.3.44"
@@ -62,7 +62,7 @@ profiling = ["puffin", "puffin_egui", "puffin_http"]
 [dev-dependencies]
 assert_approx_eq = "1.1.0"
 futures = "0.3"
-rstest = "0.27"
+rstest = "0.28"
 
 [lints.clippy]
 pedantic = {level = "warn", priority = -1}
