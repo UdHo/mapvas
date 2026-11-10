@@ -497,7 +497,7 @@ fn update_tile_labels(
           Text2d::new(label.text),
           TextFont::from_font_size(TILE_LABEL_FONT_SIZE),
           TextColor(Color::WHITE),
-          TextLayout::new_with_justify(Justify::Left),
+          TextLayout::justify(Justify::Left),
           Anchor::TOP_LEFT,
           transform_for_screen_pos(label.text_pos, surface, TILE_LABEL_TEXT_Z),
           BevyTileLabelText,
@@ -577,7 +577,7 @@ fn update_osm_attribution(
       Text2d::new(OSM_ATTRIBUTION_TEXT),
       TextFont::from_font_size(OSM_ATTRIBUTION_FONT_SIZE),
       TextColor(Color::srgb(35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0)),
-      TextLayout::new_with_justify(Justify::Center),
+      TextLayout::justify(Justify::Center),
       transform_for_screen_rect_at_z(rect, surface, OSM_ATTRIBUTION_TEXT_Z),
       BevyOsmAttributionText,
     ));

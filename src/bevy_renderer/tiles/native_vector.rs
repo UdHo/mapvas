@@ -775,8 +775,8 @@ fn update_native_vector_tile_label_text(
       *text_transform = transform;
       text.0.clear();
       text.0.push_str(value);
-      font.font = label_font.clone();
-      font.font_size = font_size;
+      font.font = FontSource::Handle(label_font.clone());
+      font.font_size = FontSize::Px(font_size);
       text_color.0 = color;
       *text_anchor = anchor;
       *visibility = Visibility::Visible;
@@ -790,7 +790,7 @@ fn update_native_vector_tile_label_text(
       Text2d::new(value.to_string()),
       TextFont::from_font_size(font_size).with_font(label_font.clone()),
       TextColor(color),
-      TextLayout::new_with_justify(Justify::Left),
+      TextLayout::justify(Justify::Left),
       anchor,
       transform,
       BevyNativeVectorTileLabelText,

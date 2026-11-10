@@ -103,7 +103,7 @@ fn smooth_metric(previous: Option<f64>, current: f64) -> f64 {
 impl MapUiMode {
   fn map_frame(self, ctx: &egui::Context) -> egui::Frame {
     match self {
-      Self::Egui => egui::Frame::default().fill(ctx.style().visuals.panel_fill),
+      Self::Egui => egui::Frame::default().fill(ctx.global_style().visuals.panel_fill),
       Self::Bevy => egui::Frame::NONE,
     }
   }
@@ -469,11 +469,11 @@ impl MapApp {
 
     if effective_width > 1.0 {
       profile_scope!("MapApp::sidebar");
-      egui::SidePanel::left("sidebar")
-        .default_width(self.sidebar.width)
-        .width_range(200.0..=600.0)
+      egui::Panel::left("sidebar")
+        .default_size(self.sidebar.width)
+        .size_range(200.0..=600.0)
         .resizable(true) // Use egui's built-in resize handle
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
           let alpha = self.sidebar.get_content_alpha();
           ui.set_opacity(alpha);
 
@@ -506,7 +506,7 @@ impl MapApp {
 
     egui::CentralPanel::default()
       .frame(self.ui_mode.map_frame(ctx))
-      .show_inside(ui, |ui| {
+      .show(ui, |ui| {
         profile_scope!("MapApp::central_panel");
         match self.ui_mode {
           MapUiMode::Egui => {

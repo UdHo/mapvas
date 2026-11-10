@@ -471,11 +471,7 @@ impl Map {
           i.events
             .iter()
             .find_map(move |e| match e {
-              egui::Event::MouseWheel {
-                unit: _,
-                delta,
-                modifiers: _,
-              } => Some(delta),
+              egui::Event::MouseWheel { delta, .. } => Some(delta),
               _ => None,
             })
             .copied()
@@ -601,9 +597,7 @@ impl Map {
 
   fn handle_dropped_files(&self, ctx: &egui::Context) {
     for file in ctx.input(|i| i.raw.dropped_files.clone()) {
-      if let Some(file_path) = file.path {
-        self.handle_dropped_file(file_path);
-      }
+      self.handle_dropped_file(file.path().to_path_buf());
     }
   }
 

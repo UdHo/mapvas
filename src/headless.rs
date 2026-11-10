@@ -80,7 +80,7 @@ impl HeadlessRenderer {
   pub fn render(&self, events: &[MapEvent], width: u32, height: u32) -> image::RgbaImage {
     let ctx = egui::Context::default();
     if let Some(color) = self.background_color {
-      ctx.style_mut(|s| {
+      ctx.global_style_mut(|s| {
         s.visuals.panel_fill = color;
         s.visuals.window_fill = color;
       });

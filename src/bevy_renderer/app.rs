@@ -202,9 +202,16 @@ fn mapvas_ui_system(
   state.initialize(&egui_ctx);
 
   let mut output = None;
+  let mut root_ui = egui::Ui::new(
+    egui_ctx.clone(),
+    "mapvas_root".into(),
+    egui::UiBuilder::new()
+      .layer_id(egui::LayerId::background())
+      .max_rect(egui_ctx.viewport_rect()),
+  );
   egui::CentralPanel::default()
     .frame(egui::Frame::NONE)
-    .show(&egui_ctx, |ui| {
+    .show(&mut root_ui, |ui| {
       if let Some(app) = state.app.as_mut() {
         for action in bevy_map.take_actions() {
           match action {
@@ -335,7 +342,7 @@ pub fn run() {
     .insert_resource(WinitSettings::desktop_app())
     .insert_resource(wakeup.clone())
     .insert_resource(repaint_requests)
-    .insert_non_send_resource(MapvasBevyState::new(
+    .insert_non_send(MapvasBevyState::new(
       runtime,
       runtime_monitor,
       config.clone(),

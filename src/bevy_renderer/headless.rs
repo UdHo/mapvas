@@ -129,7 +129,7 @@ impl BevyHeadlessRenderer {
     let mut app = catch_bevy_headless_panic(|| {
       let mut app = App::new();
       app
-        .insert_non_send_resource(BevyHeadlessState::new(
+        .insert_non_send(BevyHeadlessState::new(
           map,
           self.config.clone(),
           width,
@@ -232,7 +232,7 @@ fn setup_headless_camera(
   let mut image = Image::new_target_texture(
     state.width,
     state.height,
-    TextureFormat::bevy_default(),
+    TextureFormat::Rgba8UnormSrgb,
     None,
   );
   image.texture_descriptor.usage |= TextureUsages::COPY_SRC;

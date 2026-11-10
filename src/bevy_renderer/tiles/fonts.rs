@@ -33,10 +33,7 @@ fn load_preferred_map_label_font(fonts: &mut Assets<Font>) -> Handle<Font> {
     }
   }
 
-  fonts.add(
-    Font::try_from_bytes(EMBEDDED_MAP_LABEL_FONT_DATA.to_vec())
-      .expect("embedded Roboto map label font must be valid"),
-  )
+  fonts.add(Font::from_bytes(EMBEDDED_MAP_LABEL_FONT_DATA.to_vec()))
 }
 
 fn load_font_from_path(path: &str) -> Option<Font> {
@@ -45,5 +42,8 @@ fn load_font_from_path(path: &str) -> Option<Font> {
   }
   std::fs::read(path)
     .ok()
-    .and_then(|bytes| Font::try_from_bytes(bytes).ok())
+    .filter(|bytes| {
+      fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).is_ok()
+    })
+    .map(Font::from_bytes)
 }
